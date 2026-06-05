@@ -64,23 +64,26 @@ async def order_lunch(message: Message):
         await message.answer(t(lang, "no_menu"))
         return
 
-    has_photos = any(item.get("photo_id") for item in menu)
+    # Отправляем каждое блюдо со своим фото
+    for item in menu:
+        if item.get("photo_id"):
+            await message.answer_photo(
+                photo=item["photo_id"],
+                caption=f"{item['item_number']}. *{item['name']}* — {item['price']:,} сум",
+                parse_mode="Markdown"
+            )
+        else:
+            await message.answer(
+                f"{item['item_number']}. *{item['name']}* — {item['price']:,} сум",
+                parse_mode="Markdown"
+            )
 
+    # Потом кнопки выбора
     text = f"{t(lang, 'menu_title')} {day_name}* ({tomorrow}):\n\n"
     for item in menu:
-        text += f"{item['item_number']}. {item['name']} — {item['price']:,} сум\n"
+        text += f"{item['item_number']}. {item['name']}\n"
     text += f"\n{t(lang, 'free_delivery')}\n{t(lang, 'choose_dish')}"
-
-    first_photo = next((i for i in menu if i.get("photo_id")), None)
-    if has_photos and first_photo:
-        await message.answer_photo(
-            photo=first_photo["photo_id"],
-            caption=text,
-            parse_mode="Markdown",
-            reply_markup=menu_keyboard(menu)
-        )
-    else:
-        await message.answer(text, parse_mode="Markdown", reply_markup=menu_keyboard(menu))
+    await message.answer(text, parse_mode="Markdown", reply_markup=menu_keyboard(menu))
 
 
 @router.callback_query(F.data.startswith("order_"))
