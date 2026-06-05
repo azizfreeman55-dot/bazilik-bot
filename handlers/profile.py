@@ -60,16 +60,25 @@ async def invite_colleague(message: Message):
 
     bot_username = (await message.bot.get_me()).username
     invite_link = f"https://t.me/{bot_username}?start={user['referral_code']}"
+    share_link = f"https://t.me/share/url?url={invite_link}&text=Bazilik+Catering+botiga+qo'shiling!"
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="📤 Ulashish / Поделиться",
+        url=share_link
+    )
+    builder.adjust(1)
 
     await message.answer(
         f"{t(lang, 'invite_text')}\n\n"
         f"{t(lang, 'code_label')}: `{user['referral_code']}`\n"
-        f"{t(lang, 'your_link')}\n{invite_link}\n\n"
+        f"{t(lang, 'your_link')}\n`{invite_link}`\n\n"
         f"{t(lang, 'you_get')}\n"
         f"{t(lang, 'friend_gets')}",
-        parse_mode="Markdown"
+        parse_mode="Markdown",
+        reply_markup=builder.as_markup()
     )
-
 
 @router.message(F.text.in_({"🏆 Рейтинг", "🏆 Reyting"}))
 async def company_ranking(message: Message):
