@@ -112,7 +112,6 @@ async def get_delivery_routes() -> list:
         db.row_factory = aiosqlite.Row
         async with db.execute("""
             SELECT c.name as company, COUNT(*) as count,
-            COALESCE(c.address, '') as address,
             COALESCE(c.maps_link, '') as maps_link
             FROM orders o
             JOIN users u ON o.user_id = u.id
