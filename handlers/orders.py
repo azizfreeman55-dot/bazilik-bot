@@ -1,0 +1,216 @@
+from datetime import date, datetime
+from aiogram import Router, F
+from aiogram.types import Message, CallbackQuery
+from aiogram.fsm.context import FSMContext
+
+from database.db import (
+    get_user, get_menu, get_today_order,
+    create_order, cancel_order, get_user_lang
+)
+from langs import t
+from keyboards.keyboards import (
+    menu_keyboard, order_actions_keyboard,
+    confirm_cancel_keyboard, back_keyboard
+)
+from config import ORDER_CLOSE_TIME
+
+router = Router()
+
+
+def is_orders_open() -> bool:
+    now = datetime.now().strftime("%H:%M")
+    return now < ORDER_CLOSE_TIME
+
+
+def get_tomorrow_date() -> str:
+    from datetime import timedelta
+    tomorrow = date.today() + timedelta(days=1)
+    return str(tomorrow)
+
+
+def get_day_name(date_str: str) -> str:
+    days = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
+    d = date.fromisoformat(date_str)
+    return days[d.weekday()]
+
+
+@router.message(F.text.in_({"🍽️ Заказать обед", "🍽️ Tushlik buyurtma qilish"}))
+async def order_lunch(message: Message):
+    user = await get_user(message.from_user.id)
+    lang = await get_user_lang(message.from_user.id)
+    if not user:
+        await message.answer("❌ /start")
+        return
+
+    if not is_orders_open():
+        await message.answer(t(lang, "orders_closed"), parse_mode="Markdown")
+        return
+
+    tomorrow = get_tomorrow_date()
+    day_name = get_day_name(tomorrow)
+
+    existing_order = await get_today_order(message.from_user.id, tomorrow)
+    if existing_order:
+        await message.answer(
+            f"✅ *{existing_order['meal_name']}*\n\n"
+            f"{t(lang, 'change_btn')} / {t(lang, 'cancel_btn')}?",
+            parse_mode="Markdown",
+            reply_markup=order_actions_keyboard(True)
+        )
+        return
+
+    menu = await get_menu(tomorrow)
+    if not menu:
+        await message.answer(t(lang, "no_menu"))
+        return
+
+    has_photos = any(item.get("photo_id") for item in menu)
+
+    text = f"{t(lang, 'menu_title')} {day_name}* ({tomorrow}):\n\n"
+    for item in menu:
+        text += f"{item['item_number']}. {item['name']} — {item['price']:,} сум\n"
+    text += f"\n{t(lang, 'free_delivery')}\n{t(lang, 'choose_dish')}"
+
+    first_photo = next((i for i in menu if i.get("photo_id")), None)
+    if has_photos and first_photo:
+        await message.answer_photo(
+            photo=first_photo["photo_id"],
+            caption=text,
+            parse_mode="Markdown",
+            reply_markup=menu_keyboard(menu)
+        )
+    else:
+        await message.answer(text, parse_mode="Markdown", reply_markup=menu_keyboard(menu))
+
+
+@router.callback_query(F.data.startswith("order_"))
+async def process_order_selection(callback: CallbackQuery):
+    lang = await get_user_lang(callback.from_user.id)
+    if not is_orders_open():
+        await callback.answer(t(lang, "orders_closed")[:200], show_alert=True)
+        return
+
+    menu_id = int(callback.data.split("_")[1])
+    tomorrow = get_tomorrow_date()
+
+    order = await create_order(callback.from_user.id, menu_id, tomorrow)
+    user = await get_user(callback.from_user.id)
+    if not order:
+        await callback.answer("❌", show_alert=True)
+        return
+
+    reward_text = ""
+    points = user["points"]
+    if points >= 500:
+        reward_text = f"\n{t(lang, 'reward_vip')}"
+    elif points >= 200:
+        reward_text = f"\n{t(lang, 'reward_lunch')}"
+    elif points >= 100:
+        reward_text = f"\n{t(lang, 'reward_dessert')}"
+    elif points >= 50:
+        reward_text = f"\n{t(lang, 'reward_drink')}"
+
+    text = (
+        f"{t(lang, 'order_accepted')}\n\n"
+        f"🍱 {order['meal_name']}\n"
+        f"{t(lang, 'delivery_time')}\n\n"
+        f"{t(lang, 'points')}: *{user['points']}* (+5)\n"
+        f"{t(lang, 'orders')}: {user['total_orders']}"
+        f"{reward_text}"
+    )
+    try:
+        await callback.message.edit_text(
+            text, parse_mode="Markdown",
+            reply_markup=order_actions_keyboard(True)
+        )
+    except Exception:
+        await callback.message.answer(
+            text, parse_mode="Markdown",
+            reply_markup=order_actions_keyboard(True)
+        )
+    await callback.answer()
+
+
+@router.message(F.text.in_({"📝 Мой заказ", "📝 Mening buyurtmam"}))
+async def my_order(message: Message):
+    lang = await get_user_lang(message.from_user.id)
+    tomorrow = get_tomorrow_date()
+    day_name = get_day_name(tomorrow)
+    order = await get_today_order(message.from_user.id, tomorrow)
+
+    if not order:
+        if is_orders_open():
+            text = f"{t(lang, 'no_order')}\n\n*{t(lang, 'btn_order')}*"
+        else:
+            text = t(lang, "orders_closed")
+        await message.answer(text, parse_mode="Markdown")
+        return
+
+    status_emoji = {"pending": "⏳", "confirmed": "✅", "delivered": "🚚", "cancelled": "❌"}
+    status_ru = {"pending": "Ожидает", "confirmed": "Подтверждён", "delivered": "Доставлен", "cancelled": "Отменён"}
+    status_uz = {"pending": "Kutilmoqda", "confirmed": "Tasdiqlandi", "delivered": "Yetkazildi", "cancelled": "Bekor qilindi"}
+    status = order.get("status", "pending")
+    st = status_ru if lang == "ru" else status_uz
+
+    await message.answer(
+        f"{t(lang, 'my_order')} {day_name}*\n\n"
+        f"🍱 {order['meal_name']}\n"
+        f"📊 {status_emoji.get(status, '⏳')} {st.get(status, status)}\n"
+        f"{t(lang, 'delivery_time')}",
+        parse_mode="Markdown",
+        reply_markup=order_actions_keyboard(status == "pending")
+    )
+
+
+@router.callback_query(F.data == "change_order")
+async def change_order(callback: CallbackQuery):
+    lang = await get_user_lang(callback.from_user.id)
+    if not is_orders_open():
+        await callback.answer(t(lang, "orders_closed")[:200], show_alert=True)
+        return
+
+    tomorrow = get_tomorrow_date()
+    menu = await get_menu(tomorrow)
+    day_name = get_day_name(tomorrow)
+    text = f"✏️ *{day_name}*\n\n{t(lang, 'choose_dish')}"
+    await callback.message.edit_text(
+        text, parse_mode="Markdown", reply_markup=menu_keyboard(menu)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "cancel_order")
+async def ask_cancel_order(callback: CallbackQuery):
+    lang = await get_user_lang(callback.from_user.id)
+    if not is_orders_open():
+        await callback.answer(t(lang, "orders_closed")[:200], show_alert=True)
+        return
+    await callback.message.edit_text(
+        t(lang, "confirm_cancel"),
+        reply_markup=confirm_cancel_keyboard()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "confirm_cancel")
+async def confirm_cancel_order(callback: CallbackQuery):
+    lang = await get_user_lang(callback.from_user.id)
+    tomorrow = get_tomorrow_date()
+    await cancel_order(callback.from_user.id, tomorrow)
+    await callback.message.edit_text(t(lang, "order_cancelled"))
+    await callback.answer()
+
+
+@router.callback_query(F.data == "back_to_order")
+async def back_to_order(callback: CallbackQuery):
+    lang = await get_user_lang(callback.from_user.id)
+    tomorrow = get_tomorrow_date()
+    day_name = get_day_name(tomorrow)
+    order = await get_today_order(callback.from_user.id, tomorrow)
+    if order:
+        await callback.message.edit_text(
+            f"{t(lang, 'my_order')} {day_name}*\n\n🍱 {order['meal_name']}",
+            parse_mode="Markdown",
+            reply_markup=order_actions_keyboard(True)
+        )
+    await callback.answer()
