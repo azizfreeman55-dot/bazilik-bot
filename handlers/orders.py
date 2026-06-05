@@ -153,13 +153,12 @@ async def my_order(message: Message):
     st = status_ru if lang == "ru" else status_uz
 
     await message.answer(
-        f"{t(lang, 'my_order')} {day_name}*\n\n"
-        f"🍱 {order['meal_name']}\n"
-        f"📊 {status_emoji.get(status, '⏳')} {st.get(status, status)}\n"
-        f"{t(lang, 'delivery_time')}",
-        parse_mode="Markdown",
-        reply_markup=order_actions_keyboard(status == "pending")
-    )
+    f"{t(lang, 'my_order')} {day_name}\n\n"
+    f"🍱 {order['meal_name']}\n"
+    f"📊 {status_emoji.get(status, '⏳')} {st.get(status, status)}\n"
+    f"{t(lang, 'delivery_time')}",
+    reply_markup=order_actions_keyboard(status == "pending")
+)
 
 
 @router.callback_query(F.data == "change_order")
