@@ -5,6 +5,7 @@ from .profile import router as profile_router
 from .admin import router as admin_router
 from .weekly import router as weekly_router
 from .analytics import router as analytics_router
+from .gifts import router as gifts_router
 
 
 def register_all_handlers(dp: Dispatcher):
@@ -14,3 +15,4 @@ def register_all_handlers(dp: Dispatcher):
     dp.include_router(profile_router)
     dp.include_router(admin_router)
     dp.include_router(weekly_router)
+    dp.include_router(gifts_router)
