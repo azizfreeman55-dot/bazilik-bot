@@ -80,7 +80,7 @@ def gifts_keyboard(lang: str) -> object:
     return builder.as_markup()
 
 
-@router.message(F.text.in_({"🎁 Подарки", "🎁 Sovg'alar"}))
+@router.message(F.text.in_({"🎁 Подарки", "🎁 Sovg'alar", "🎁 Sovg`alar"}))
 async def show_gifts(message: Message):
     user = await get_user(message.from_user.id)
     lang = await get_user_lang(message.from_user.id)
