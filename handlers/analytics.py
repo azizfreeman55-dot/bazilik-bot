@@ -82,6 +82,7 @@ async def admin_panel_updated(message: Message):
     builder.button(text="👥 Все пользователи", callback_data="admin_users")
     builder.button(text="📈 Аналитика", callback_data="analytics_main")
     builder.button(text="🚚 Маршруты", callback_data="analytics_routes")
+    builder.button(text="🎁 Фото подарков", callback_data="admin_gift_photos")
     builder.adjust(2)
     await message.answer(
         "🔧 *Панель администратора*",
