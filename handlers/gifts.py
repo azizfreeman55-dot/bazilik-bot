@@ -183,12 +183,15 @@ async def back_to_gifts(callback: CallbackQuery):
         if next_gift else "🎉 Siz barcha sovg'alarni oldingiz!"
     )
 
+    title = "🎁 Подарки и награды" if lang == "ru" else "Sovgalar va mukofotlar"
+    desc = "Нажмите на подарок чтобы узнать подробнее 👇" if lang == "ru" else "Batafsil malumot uchun sovgani bosing 👇"
+    
     try:
         await callback.message.edit_text(
-            f"🎁 *{'Подарки и награды' if lang == 'ru' else 'Sovg'alar va mukofotlar'}*\n\n"
+            f"🎁 *{title}*\n\n"
             f"💰 {'Ваши баллы' if lang == 'ru' else 'Sizning ballaringiz'}: *{points}*\n"
             f"📍 {next_text}\n\n"
-            f"{'Нажмите на подарок чтобы узнать подробнее 👇' if lang == 'ru' else 'Batafsil ma'lumot uchun sovg'ani bosing 👇'}",
+            f"{desc}",
             parse_mode="Markdown",
             reply_markup=gifts_keyboard(lang)
         )
