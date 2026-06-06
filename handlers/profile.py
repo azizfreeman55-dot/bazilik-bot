@@ -2,10 +2,9 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from database.db import get_user, get_company_ranking, get_user_lang
-from keyboards.keyboards import settings_keyboard
+from database.db import get_user, get_company_ranking, get_user_lang, get_pool
 from langs import t
-from config import LOYALTY_LEVELS
+from config import LOYALTY_LEVELS, ADMIN_IDS
 
 router = Router()
 
@@ -19,7 +18,7 @@ def get_loyalty_progress(points: int, lang: str) -> str:
             text += f"✅ {milestone} — {reward}\n"
         else:
             remaining = milestone - points
-            text += f"🔘 {milestone} — {reward} ({remaining})\n"
+            text += f"🔘 {milestone} — {reward} (ещё {remaining})\n"
     return text
 
 
@@ -62,12 +61,8 @@ async def invite_colleague(message: Message):
     invite_link = f"https://t.me/{bot_username}?start={user['referral_code']}"
     share_link = f"https://t.me/share/url?url={invite_link}&text=Bazilik+Catering+botiga+qo'shiling!"
 
-    from aiogram.utils.keyboard import InlineKeyboardBuilder
     builder = InlineKeyboardBuilder()
-    builder.button(
-        text="📤 Ulashish / Поделиться",
-        url=share_link
-    )
+    builder.button(text="📤 Ulashish / Поделиться", url=share_link)
     builder.adjust(1)
 
     await message.answer(
@@ -79,6 +74,7 @@ async def invite_colleague(message: Message):
         parse_mode="Markdown",
         reply_markup=builder.as_markup()
     )
+
 
 @router.message(F.text.in_({"🏆 Рейтинг", "🏆 Reyting"}))
 async def company_ranking(message: Message):
@@ -93,7 +89,7 @@ async def company_ranking(message: Message):
     for i, company in enumerate(companies):
         medal = medals[i] if i < len(medals) else f"{i+1}."
         highlight = " ◀️" if user and company["name"] == user.get("company_name") else ""
-        text += f"{medal} {company['name']} — {company['month_orders']}\n{highlight}"
+        text += f"{medal} {company['name']} — {company['month_orders']} заказов{highlight}\n"
 
     if not companies:
         text += "—"
@@ -109,16 +105,12 @@ async def settings(message: Message):
         await message.answer("❌ /start")
         return
 
-    auto_on = t(lang, "btn_auto_on")
-    auto_off = t(lang, "btn_auto_off")
-    weekly = t(lang, "btn_weekly")
-
     builder = InlineKeyboardBuilder()
     builder.button(
-        text=auto_on if user.get("auto_order") else auto_off,
+        text=t(lang, "btn_auto_on") if user.get("auto_order") else t(lang, "btn_auto_off"),
         callback_data="toggle_auto_order"
     )
-    builder.button(text=weekly, callback_data="weekly_menu")
+    builder.button(text=t(lang, "btn_weekly"), callback_data="weekly_menu")
     builder.adjust(1)
 
     await message.answer(
@@ -134,17 +126,14 @@ async def toggle_auto_order(callback: CallbackQuery):
     lang = await get_user_lang(callback.from_user.id)
     new_status = 0 if user["auto_order"] else 1
 
-    import aiosqlite
-    from config import DATABASE_URL
-    async with aiosqlite.connect(DATABASE_URL) as db:
+    pool = await get_pool()
+    async with pool.acquire() as db:
         await db.execute(
-            "UPDATE users SET auto_order = ? WHERE telegram_id = ?",
-            (new_status, callback.from_user.id)
+            "UPDATE users SET auto_order = $1 WHERE telegram_id = $2",
+            new_status, callback.from_user.id
         )
-        await db.commit()
 
-    status_text = t(lang, "btn_auto_on") if new_status else t(lang, "btn_auto_off")
-    await callback.answer(status_text)
+    await callback.answer(t(lang, "btn_auto_on") if new_status else t(lang, "btn_auto_off"))
 
     builder = InlineKeyboardBuilder()
     builder.button(

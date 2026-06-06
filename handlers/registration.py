@@ -9,9 +9,10 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import CommandStart
 
-from database.db import get_user, create_user, get_or_create_company
+from database.db import get_user, create_user, get_or_create_company, get_user_lang, set_user_lang, save_user_phone, get_pool
 from keyboards.keyboards import main_menu_keyboard
 from config import ADMIN_IDS
+from langs import t
 
 router = Router()
 
@@ -36,8 +37,6 @@ async def cmd_start(message: Message, state: FSMContext):
 
     if user:
         is_admin = message.from_user.id in ADMIN_IDS
-        from database.db import get_user_lang
-        from langs import t
         lang = await get_user_lang(message.from_user.id)
         await message.answer(
             f"{t(lang, 'welcome_back')}, {user['full_name']}!\n\n"
@@ -80,12 +79,8 @@ async def process_lang(callback: CallbackQuery, state: FSMContext):
     lang = callback.data.replace("lang_", "")
     await state.update_data(lang=lang)
     await state.set_state(Registration.waiting_name)
-    from langs import t
     await callback.answer()
-    await callback.message.answer(
-        t(lang, "enter_name"),
-        parse_mode="Markdown"
-    )
+    await callback.message.answer(t(lang, "enter_name"), parse_mode="Markdown")
 
 
 @router.message(Registration.waiting_name)
@@ -98,7 +93,6 @@ async def process_name(message: Message, state: FSMContext):
     await state.update_data(name=name)
     data = await state.get_data()
     lang = data.get("lang", "ru")
-    from langs import t
     kb = ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text=t(lang, "share_phone"), request_contact=True)]],
         resize_keyboard=True, one_time_keyboard=True
@@ -117,7 +111,6 @@ async def process_phone_contact(message: Message, state: FSMContext):
     await state.update_data(phone=phone)
     data = await state.get_data()
     lang = data.get("lang", "ru")
-    from langs import t
     await state.set_state(Registration.waiting_company)
     await message.answer(
         f"✅ {t(lang, 'phone_saved')} +{phone}\n\n{t(lang, 'enter_company')}",
@@ -131,18 +124,13 @@ async def process_phone_text(message: Message, state: FSMContext):
     phone = message.text.strip().replace("+", "").replace(" ", "").replace("-", "")
     data = await state.get_data()
     lang = data.get("lang", "ru")
-    from langs import t
 
     if not phone.isdigit() or len(phone) < 9:
         kb = ReplyKeyboardMarkup(
             keyboard=[[KeyboardButton(text=t(lang, "share_phone"), request_contact=True)]],
             resize_keyboard=True, one_time_keyboard=True
         )
-        await message.answer(
-            "❌ " + t(lang, "enter_phone"),
-            parse_mode="Markdown",
-            reply_markup=kb
-        )
+        await message.answer("❌ " + t(lang, "enter_phone"), parse_mode="Markdown", reply_markup=kb)
         return
 
     await state.update_data(phone=phone)
@@ -196,19 +184,12 @@ async def process_location(message: Message, state: FSMContext):
     company_id = data["company_id"]
     referral_code = generate_referral_code(data["name"])
 
-    import aiosqlite
-    from config import DATABASE_URL
-    async with aiosqlite.connect(DATABASE_URL) as db:
-        try:
-            await db.execute("ALTER TABLE companies ADD COLUMN maps_link TEXT")
-            await db.commit()
-        except Exception:
-            pass
+    pool = await get_pool()
+    async with pool.acquire() as db:
         await db.execute(
-            "UPDATE companies SET maps_link = ? WHERE id = ?",
-            (maps_link, company_id)
+            "UPDATE companies SET maps_link = $1 WHERE id = $2",
+            maps_link, company_id
         )
-        await db.commit()
 
     await save_user_phone(message.from_user.id, data.get("phone", ""))
 
@@ -221,7 +202,6 @@ async def process_location(message: Message, state: FSMContext):
         referred_by_code=data.get("ref_code")
     )
 
-    from database.db import set_user_lang
     await set_user_lang(message.from_user.id, lang)
 
     bonus_text = ""
@@ -229,7 +209,6 @@ async def process_location(message: Message, state: FSMContext):
         bonus_text = "\n🎁 *+10 баллов* за приглашение друга!"
 
     is_admin = message.from_user.id in ADMIN_IDS
-    from langs import t
     await state.clear()
     await message.answer(
         f"{t(lang, 'reg_done')}\n\n"
@@ -244,19 +223,3 @@ async def process_location(message: Message, state: FSMContext):
         parse_mode="Markdown",
         reply_markup=main_menu_keyboard(is_admin, lang)
     )
-
-
-async def save_user_phone(telegram_id: int, phone: str):
-    import aiosqlite
-    from config import DATABASE_URL
-    async with aiosqlite.connect(DATABASE_URL) as db:
-        try:
-            await db.execute("ALTER TABLE users ADD COLUMN phone TEXT")
-            await db.commit()
-        except Exception:
-            pass
-        await db.execute(
-            "UPDATE users SET phone = ? WHERE telegram_id = ?",
-            (phone, telegram_id)
-        )
-        await db.commit()
