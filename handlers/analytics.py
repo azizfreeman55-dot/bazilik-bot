@@ -4,6 +4,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from datetime import date, timedelta
 from database.db import get_pool
 from config import ADMIN_IDS
+from aiogram.fsm.context import FSMContext
 
 router = Router()
 
@@ -191,3 +192,93 @@ async def analytics_routes(callback: CallbackQuery):
     builder.button(text="◀️ Назад", callback_data="analytics_main")
     await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=builder.as_markup())
     await callback.answer()
+@router.callback_query(F.data == "admin_gift_photos")
+async def admin_gift_photos(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+
+    builder = InlineKeyboardBuilder()
+    gifts = [
+        ("drink", "🥤 Напиток"),
+        ("dessert", "🍰 Десерт"),
+        ("lunch", "🍱 Бесплатный обед"),
+        ("vip", "👑 VIP статус"),
+    ]
+    for gift_id, name in gifts:
+        builder.button(text=f"📸 {name}", callback_data=f"set_gift_photo_{gift_id}")
+    builder.button(text="◀️ Назад", callback_data="back_admin")
+    builder.adjust(1)
+
+    await callback.message.edit_text(
+        "🎁 *Фото подарков*\n\nВыберите подарок чтобы загрузить фото:",
+        parse_mode="Markdown",
+        reply_markup=builder.as_markup()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("set_gift_photo_"))
+async def set_gift_photo_start(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+
+    gift_id = callback.data.replace("set_gift_photo_", "")
+    await state.update_data(gift_id=gift_id)
+
+    names = {
+        "drink": "Напиток 🥤",
+        "dessert": "Десерт 🍰",
+        "lunch": "Бесплатный обед 🍱",
+        "vip": "VIP статус 👑"
+    }
+    await callback.message.answer(
+        f"📸 Отправьте фото для *{names.get(gift_id, gift_id)}*:",
+        parse_mode="Markdown"
+    )
+    await state.set_state("waiting_gift_photo")
+    await callback.answer()
+
+
+@router.message(F.photo)
+async def save_gift_photo(message: Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+
+    current_state = await state.get_state()
+    if current_state != "waiting_gift_photo":
+        return
+
+    data = await state.get_data()
+    gift_id = data.get("gift_id")
+    if not gift_id:
+        return
+
+    photo_id = message.photo[-1].file_id
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS gift_photos (
+                gift_id TEXT PRIMARY KEY,
+                photo_id TEXT
+            )
+        """)
+        await db.execute(
+            """INSERT INTO gift_photos (gift_id, photo_id)
+               VALUES ($1, $2)
+               ON CONFLICT (gift_id) DO UPDATE SET photo_id = $2""",
+            gift_id, photo_id
+        )
+
+    await state.clear()
+    names = {
+        "drink": "Напиток 🥤",
+        "dessert": "Десерт 🍰",
+        "lunch": "Бесплатный обед 🍱",
+        "vip": "VIP статус 👑"
+    }
+    await message.answer(
+        f"✅ Фото для *{names.get(gift_id, gift_id)}* сохранено!",
+        parse_mode="Markdown"
+    )
