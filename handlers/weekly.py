@@ -11,6 +11,11 @@ DAYS_RU = {
     3: "Четверг", 4: "Пятница", 5: "Суббота", 6: "Воскресенье"
 }
 
+DAYS_UZ = {
+    0: "Dushanba", 1: "Seshanba", 2: "Chorshanba",
+    3: "Payshanba", 4: "Juma", 5: "Shanba", 6: "Yakshanba"
+}
+
 
 async def get_weekly_orders(user_id: int) -> dict:
     pool = await get_pool()
@@ -42,14 +47,17 @@ async def delete_weekly_order(user_id: int, day: int):
         )
 
 
-def weekly_menu_keyboard(weekly: dict) -> object:
+def weekly_menu_keyboard(weekly: dict, lang: str = "ru") -> object:
     builder = InlineKeyboardBuilder()
-    for day_num, day_name in DAYS_RU.items():
+    days = DAYS_RU if lang == "ru" else DAYS_UZ
+    for day_num, day_name in days.items():
         item = weekly.get(day_num)
-        text = f"✅ {day_name} — блюдо {item}" if item else f"➕ {day_name}"
+        text = f"✅ {day_name} — {'блюдо' if lang == 'ru' else 'taom'} {item}" if item else f"➕ {day_name}"
         builder.button(text=text, callback_data=f"weekly_day_{day_num}")
-    builder.button(text="❌ Очистить всё", callback_data="weekly_clear_all")
-    builder.button(text="◀️ Назад", callback_data="weekly_back")
+    clear = "❌ Очистить всё" if lang == "ru" else "❌ Hammasini tozalash"
+    back = "◀️ Назад" if lang == "ru" else "◀️ Orqaga"
+    builder.button(text=clear, callback_data="weekly_clear_all")
+    builder.button(text=back, callback_data="weekly_back")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -73,12 +81,16 @@ def day_items_keyboard(day: int, menu_items: list, current_item: int = None) -> 
 
 @router.callback_query(F.data == "weekly_menu")
 async def weekly_menu(callback: CallbackQuery):
+    from database.db import get_user_lang
+    lang = await get_user_lang(callback.from_user.id)
     user = await get_user(callback.from_user.id)
     weekly = await get_weekly_orders(user["id"])
+    title = "📅 *Меню на неделю*" if lang == "ru" else "📅 *Haftalik menyu*"
+    desc = "✅ — настроено\n➕ — нажми чтобы выбрать" if lang == "ru" else "✅ — sozlangan\n➕ — tanlash uchun bosing"
     await callback.message.edit_text(
-        "📅 *Меню на неделю*\n\nВыберите день:\n✅ — настроено\n➕ — нажми чтобы выбрать",
+        f"{title}\n\n{desc}",
         parse_mode="Markdown",
-        reply_markup=weekly_menu_keyboard(weekly)
+        reply_markup=weekly_menu_keyboard(weekly, lang)
     )
     await callback.answer()
 
