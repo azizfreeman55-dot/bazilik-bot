@@ -32,3 +32,8 @@ COMPANY_STATUSES = {
 # Реферальная программа
 REFERRAL_BONUS_INVITER = 5    # Баллов за приглашение
 REFERRAL_BONUS_INVITED = 10   # Баллов новому пользователю (напиток при первом заказе)
+# Click настройки
+CLICK_SERVICE_ID = os.getenv("CLICK_SERVICE_ID")
+CLICK_MERCHANT_ID = os.getenv("CLICK_MERCHANT_ID")
+CLICK_SECRET_KEY = os.getenv("CLICK_SECRET_KEY")
+CLICK_MERCHANT_USER_ID = os.getenv("CLICK_MERCHANT_USER_ID")
