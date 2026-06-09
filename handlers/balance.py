@@ -134,7 +134,6 @@ async def my_balance(message: Message):
 @router.callback_query(F.data.startswith("topup_"))
 async def process_topup(callback: CallbackQuery):
     lang = await get_user_lang(callback.from_user.id)
-    amount = int(callback.data.replace("topup_", ""))
 
     # Здесь будет интеграция с Payme/Click
     # Пока показываем реквизиты для ручного пополнения
