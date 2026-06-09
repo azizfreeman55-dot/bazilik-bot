@@ -107,8 +107,6 @@ async def my_balance(message: Message):
     )
 
 
-@router.callback_query(F.data == "topup_balance")
-async def topup_balance(callback: CallbackQuery):
     lang = await get_user_lang(callback.from_user.id)
 
     builder = InlineKeyboardBuilder()
