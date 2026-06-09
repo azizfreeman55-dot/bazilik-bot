@@ -19,3 +19,4 @@ def register_all_handlers(dp: Dispatcher):
     dp.include_router(weekly_router)
     dp.include_router(gifts_router)
     dp.include_router(balance_router)
+    dp.include_router(payment_router)
