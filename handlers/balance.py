@@ -66,7 +66,7 @@ async def deduct_balance(user_id: int, amount: int, description: str) -> bool:
         return True
 
 
-@router.message(F.text.in_({"💳 Мой баланс", "💳 Mening hisobim"}))
+@router.message(F.text.contains("баланс") | F.text.contains("hisobim"))
 async def my_balance(message: Message):
     user = await get_user(message.from_user.id)
     lang = await get_user_lang(message.from_user.id)
