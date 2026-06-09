@@ -7,6 +7,7 @@ from .weekly import router as weekly_router
 from .analytics import router as analytics_router
 from .gifts import router as gifts_router
 from .balance import router as balance_router
+from .payment import router as payment_router
 
 
 def register_all_handlers(dp: Dispatcher):
