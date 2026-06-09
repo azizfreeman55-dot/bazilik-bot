@@ -86,6 +86,24 @@ async def init_db():
                 UNIQUE(user_id, day_of_week)
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS balance_transactions (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id),
+                amount INTEGER NOT NULL,
+                type TEXT NOT NULL,
+                description TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS user_balance (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id) UNIQUE,
+                balance INTEGER DEFAULT 0,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
     logger.info("✅ Таблицы созданы")
 
 
