@@ -2,7 +2,6 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from database.db import get_user, get_user_lang, get_pool
-from langs import t
 
 router = Router()
 
@@ -55,7 +54,7 @@ async def deduct_balance(user_id: int, amount: int, description: str) -> bool:
         if current < amount:
             return False
         await db.execute(
-            """UPDATE user_balance SET balance = balance - $1 WHERE user_id = $2""",
+            "UPDATE user_balance SET balance = balance - $1 WHERE user_id = $2",
             amount, user_id
         )
         await db.execute(
@@ -79,7 +78,6 @@ async def my_balance(message: Message):
 
     title = "💳 *Мой баланс*" if lang == "ru" else "💳 *Mening hisobim*"
     balance_text = f"{'Баланс' if lang == 'ru' else 'Hisob'}: *{balance:,} сум*"
-
     history_title = "📊 *История операций:*" if lang == "ru" else "📊 *Operatsiyalar tarixi:*"
     history_text = ""
 
@@ -99,23 +97,20 @@ async def my_balance(message: Message):
     builder.adjust(1)
 
     await message.answer(
-        f"{title}\n\n"
-        f"{balance_text}\n\n"
-        f"{history_title}\n{history_text}",
+        f"{title}\n\n{balance_text}\n\n{history_title}\n{history_text}",
         parse_mode="Markdown",
         reply_markup=builder.as_markup()
     )
 
 
+@router.callback_query(F.data == "topup_balance")
+async def topup_balance(callback: CallbackQuery):
     lang = await get_user_lang(callback.from_user.id)
 
     builder = InlineKeyboardBuilder()
     amounts = [50000, 100000, 200000, 500000]
     for amount in amounts:
-        builder.button(
-            text=f"{amount:,} сум",
-            callback_data=f"topup_{amount}"
-        )
+        builder.button(text=f"{amount:,} сум", callback_data=f"topup_{amount}")
     builder.button(
         text="◀️ Назад" if lang == "ru" else "◀️ Orqaga",
         callback_data="back_balance"
@@ -127,37 +122,6 @@ async def my_balance(message: Message):
         else "➕ *Hisob to'ldirish*\n\nSummani tanlang:",
         parse_mode="Markdown",
         reply_markup=builder.as_markup()
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("topup_"))
-async def process_topup(callback: CallbackQuery):
-    lang = await get_user_lang(callback.from_user.id)
-
-    # Здесь будет интеграция с Payme/Click
-    # Пока показываем реквизиты для ручного пополнения
-    await callback.message.edit_text(
-        f"💳 *Пополнение на {amount:,} сум*\n\n"
-        f"Для пополнения баланса переведите *{amount:,} сум* на:\n\n"
-        f"🏦 Банк: *Uzum Bank*\n"
-        f"💳 Карта: *8600 XXXX XXXX XXXX*\n"
-        f"👤 Получатель: *Bazilik Catering*\n\n"
-        f"После оплаты отправьте скриншот администратору!\n"
-        f"📞 +998 77 181 50 00"
-        if lang == "ru" else
-        f"💳 *{amount:,} sum to'ldirish*\n\n"
-        f"Hisobni to'ldirish uchun *{amount:,} sum* o'tkazing:\n\n"
-        f"🏦 Bank: *Uzum Bank*\n"
-        f"💳 Karta: *8600 XXXX XXXX XXXX*\n"
-        f"👤 Oluvchi: *Bazilik Catering*\n\n"
-        f"To'lovdan so'ng skrinshot adminga yuboring!\n"
-        f"📞 +998 77 181 50 00",
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardBuilder().button(
-            text="◀️ Назад" if lang == "ru" else "◀️ Orqaga",
-            callback_data="topup_balance"
-        ).as_markup()
     )
     await callback.answer()
 
