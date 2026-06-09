@@ -7,12 +7,11 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 def main_menu_keyboard(is_admin: bool = False, lang: str = "ru") -> ReplyKeyboardMarkup:
     from langs import t
-   buttons = [
+    buttons = [
         [KeyboardButton(text=t(lang, "btn_order")), KeyboardButton(text=t(lang, "btn_my_order"))],
         [KeyboardButton(text=t(lang, "btn_profile")), KeyboardButton(text=t(lang, "btn_rating"))],
         [KeyboardButton(text=t(lang, "btn_invite")), KeyboardButton(text=t(lang, "btn_settings"))],
-        [KeyboardButton(text="🎁 Подарки" if lang == "ru" else "🎁 Sovg'alar"),
-         KeyboardButton(text="💳 Мой баланс" if lang == "ru" else "💳 Mening hisobim")],
+        [KeyboardButton(text="🎁 Подарки" if lang == "ru" else "🎁 Sovg'alar"), KeyboardButton(text="💳 Мой баланс" if lang == "ru" else "💳 Mening hisobim")],
     ]
     if is_admin:
         buttons.append([KeyboardButton(text=t(lang, "btn_admin"))])
