@@ -16,8 +16,6 @@ from langs import t
 
 router = Router()
 
-dp.include_router(balance_router)
-
 class Registration(StatesGroup):
     waiting_lang = State()
     waiting_name = State()
