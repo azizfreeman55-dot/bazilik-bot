@@ -112,18 +112,94 @@ async def topup_balance(callback: CallbackQuery):
     for amount in amounts:
         builder.button(text=f"{amount:,} сум", callback_data=f"topup_{amount}")
     builder.button(
+        text="✏️ Своя сумма" if lang == "ru" else "✏️ O'z summasi",
+        callback_data="topup_custom"
+    )
+    builder.button(
         text="◀️ Назад" if lang == "ru" else "◀️ Orqaga",
         callback_data="back_balance"
     )
     builder.adjust(2)
 
     await callback.message.edit_text(
-        "➕ *Пополнение баланса*\n\nВыберите сумму:" if lang == "ru"
-        else "➕ *Hisob to'ldirish*\n\nSummani tanlang:",
+        "➕ *Пополнение баланса*\n\nВыберите сумму или введите свою:" if lang == "ru"
+        else "➕ *Hisob to'ldirish*\n\nSummani tanlang yoki o'zingiz kiriting:",
         parse_mode="Markdown",
         reply_markup=builder.as_markup()
     )
     await callback.answer()
+
+
+@router.callback_query(F.data == "topup_custom")
+async def topup_custom(callback: CallbackQuery, state):
+    lang = await get_user_lang(callback.from_user.id)
+    from aiogram.fsm.context import FSMContext
+    from aiogram.fsm.state import State, StatesGroup
+
+    await state.set_state("waiting_custom_amount")
+    await callback.message.answer(
+        "✏️ *Введите сумму пополнения:*\nНапример: 150000" if lang == "ru"
+        else "✏️ *To'ldirish summasini kiriting:*\nMasalan: 150000",
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.message(F.text.regexp(r'^\d+$'))
+async def process_custom_amount(message: Message, state):
+    current_state = await state.get_state()
+    if current_state != "waiting_custom_amount":
+        return
+
+    lang = await get_user_lang(message.from_user.id)
+    amount = int(message.text.strip())
+
+    if amount < 10000:
+        await message.answer(
+            "❌ Минимальная сумма 10,000 сум" if lang == "ru"
+            else "❌ Minimal summa 10,000 sum"
+        )
+        return
+
+    if amount > 10000000:
+        await message.answer(
+            "❌ Максимальная сумма 10,000,000 сум" if lang == "ru"
+            else "❌ Maksimal summa 10,000,000 sum"
+        )
+        return
+
+    await state.clear()
+
+    from config import CLICK_SERVICE_ID, CLICK_MERCHANT_ID
+    user = await get_user(message.from_user.id)
+    order_id = f"balance_{user['id']}_{amount}"
+    click_link = (
+        f"https://my.click.uz/services/pay?"
+        f"service_id={CLICK_SERVICE_ID}"
+        f"&merchant_id={CLICK_MERCHANT_ID}"
+        f"&amount={amount}"
+        f"&transaction_param={order_id}"
+        f"&return_url=https://t.me/BazilikCateringBot"
+    )
+
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="💳 Оплатить через Click" if lang == "ru" else "💳 Click orqali to'lash",
+        url=click_link
+    )
+    builder.button(
+        text="✅ Я оплатил" if lang == "ru" else "✅ To'ladim",
+        callback_data=f"check_payment_balance_{user['id']}_{amount}_{amount}"
+    )
+    builder.adjust(1)
+
+    await message.answer(
+        f"💳 *{'Пополнение баланса' if lang == 'ru' else 'Hisob toʻldirish'}*\n\n"
+        f"{'Сумма' if lang == 'ru' else 'Summa'}: *{amount:,} сум*\n\n"
+        f"{'Нажмите кнопку для оплаты через Click' if lang == 'ru' else 'Click orqali toʻlash uchun tugmani bosing'}:",
+        parse_mode="Markdown",
+        reply_markup=builder.as_markup()
+    )
 
 
 @router.callback_query(F.data == "back_balance")
