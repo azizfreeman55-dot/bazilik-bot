@@ -146,9 +146,74 @@ async def close_orders_notification(bot: Bot):
     logger.info(f"✅ Заказы закрыты. Всего: {summary['total']}")
 
 
+async def send_birthday_greetings(bot: Bot):
+    """
+    Каждый день в 9:00 поздравляет именинников и начисляет +50 баллов.
+    Требует поля birthday (DATE) в таблице users.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        users = await db.fetch(
+            """SELECT id, telegram_id, full_name, lang
+               FROM users
+               WHERE birthday IS NOT NULL
+               AND EXTRACT(MONTH FROM birthday) = EXTRACT(MONTH FROM CURRENT_DATE)
+               AND EXTRACT(DAY FROM birthday) = EXTRACT(DAY FROM CURRENT_DATE)"""
+        )
+
+    if not users:
+        return
+
+    logger.info(f"🎂 Именинников сегодня: {len(users)}")
+
+    for user in users:
+        try:
+            lang = user["lang"] or "ru"
+            name = user["full_name"] or ("Дорогой клиент" if lang == "ru" else "Hurmatli mijoz")
+
+            # Начисляем +50 баллов в подарок
+            async with pool.acquire() as db:
+                await db.execute(
+                    "UPDATE users SET points = points + 50 WHERE id = $1",
+                    user["id"]
+                )
+                await db.execute(
+                    """INSERT INTO balance_transactions (user_id, amount, type, description)
+                       VALUES ($1, 50, 'credit', $2)""",
+                    user["id"],
+                    "🎂 Подарок в день рождения" if lang == "ru" else "🎂 Tug'ilgan kun sovg'asi"
+                )
+
+            if lang == "uz":
+                text = (
+                    f"🎂 *Tug'ilgan kuningiz bilan, {name}!*\n\n"
+                    f"Bazilik Catering jamoasi sizni tabriklayman! 🎉\n\n"
+                    f"🎁 Sovg'a sifatida *+50 ball* hisobingizga qo'shildi!\n\n"
+                    f"Sizga sog'lik, baxt va mazali tushliklar tilaymiz! 🍱"
+                )
+            else:
+                text = (
+                    f"🎂 *С Днём Рождения, {name}!*\n\n"
+                    f"Команда Bazilik Catering поздравляет вас! 🎉\n\n"
+                    f"🎁 В подарок вам начислено *+50 баллов*!\n\n"
+                    f"Желаем здоровья, счастья и вкусных обедов! 🍱"
+                )
+
+            await bot.send_message(user["telegram_id"], text, parse_mode="Markdown")
+            logger.info(f"🎂 Поздравление отправлено: {user['telegram_id']}")
+
+        except Exception as e:
+            logger.error(f"Birthday error for {user['telegram_id']}: {e}")
+
+
 def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone="Asia/Tashkent")
 
+    scheduler.add_job(
+        send_birthday_greetings,
+        trigger=CronTrigger(hour=9, minute=0),
+        args=[bot], id="birthday_greetings", replace_existing=True
+    )
     scheduler.add_job(
         send_menu_notification,
         trigger=CronTrigger(hour=10, minute=0),
@@ -165,5 +230,5 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         args=[bot], id="close_orders", replace_existing=True
     )
 
-    logger.info("✅ Планировщик настроен (10:00, 16:00, 20:00 по Ташкенту)")
+    logger.info("✅ Планировщик настроен (09:00 ДР, 10:00 меню, 16:00 напоминание, 20:00 закрытие)")
     return scheduler
