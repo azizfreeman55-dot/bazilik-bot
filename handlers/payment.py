@@ -58,9 +58,14 @@ async def process_topup_click(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("check_payment_"))
 async def check_payment(callback: CallbackQuery):
     lang = await get_user_lang(callback.from_user.id)
-    parts = callback.data.replace("check_payment_", "").split("_")
-    amount = int(parts[-1])
-    user = await get_user(callback.from_user.id)
+    
+    await callback.message.edit_text(
+        f"⏳ *{'Ожидаем подтверждение от Click...' if lang == 'ru' else 'Click dan tasdiqlash kutilmoqda...'}*\n\n"
+        f"{'Баланс пополнится автоматически после подтверждения оплаты.' if lang == 'ru' else 'Tolov tasdiqlangandan so ng hisob avtomatik to ldiriladi.'}\n\n"
+        f"{'Обычно это занимает 1-2 минуты.' if lang == 'ru' else 'Bu odatda 1-2 daqiqa oladi.'}",
+        parse_mode="Markdown"
+    )
+    await callback.answer()
 
     # Пополняем баланс
     pool = await get_pool()
