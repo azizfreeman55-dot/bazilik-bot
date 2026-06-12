@@ -5,7 +5,7 @@ from aiogram.fsm.context import FSMContext
 
 from database.db import (
     get_user, get_menu, get_today_order,
-    create_order, cancel_order, get_user_lang
+    create_order, cancel_order, get_user_lang, get_pool
 )
 from langs import t
 from keyboards.keyboards import (
@@ -32,6 +32,36 @@ def get_day_name(date_str: str) -> str:
     days = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
     d = date.fromisoformat(date_str)
     return days[d.weekday()]
+
+
+async def get_user_balance(user_id: int) -> int:
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        row = await db.fetchrow(
+            "SELECT balance FROM user_balance WHERE user_id = $1", user_id
+        )
+    return row["balance"] if row else 0
+
+
+async def deduct_balance(user_id: int, amount: int, description: str) -> bool:
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        row = await db.fetchrow(
+            "SELECT balance FROM user_balance WHERE user_id = $1", user_id
+        )
+        current = row["balance"] if row else 0
+        if current < amount:
+            return False
+        await db.execute(
+            "UPDATE user_balance SET balance = balance - $1 WHERE user_id = $2",
+            amount, user_id
+        )
+        await db.execute(
+            """INSERT INTO balance_transactions (user_id, amount, type, description)
+               VALUES ($1, $2, 'debit', $3)""",
+            user_id, amount, description
+        )
+    return True
 
 
 @router.message(F.text.in_({"🍽️ Заказать обед", "🍽️ Tushlik buyurtma qilish"}))
@@ -64,26 +94,42 @@ async def order_lunch(message: Message):
         await message.answer(t(lang, "no_menu"))
         return
 
-    # Отправляем каждое блюдо со своим фото
-    for item in menu:
-        if item.get("photo_id"):
-            await message.answer_photo(
-                photo=item["photo_id"],
-                caption=f"{item['item_number']}. *{item['name']}* — {item['price']:,} сум",
-                parse_mode="Markdown"
-            )
-        else:
-            await message.answer(
-                f"{item['item_number']}. *{item['name']}* — {item['price']:,} сум",
-                parse_mode="Markdown"
-            )
+    # Показываем баланс клиента
+    balance = await get_user_balance(user["id"])
+    meal_price = 35000
+    balance_info = ""
+    if balance >= meal_price:
+        balance_info = f"\n💳 {'Ваш баланс' if lang == 'ru' else 'Sizning hisobingiz'}: *{balance:,} сум* ✅"
+    else:
+        balance_info = f"\n💳 {'Ваш баланс' if lang == 'ru' else 'Sizning hisobingiz'}: *{balance:,} сум* ⚠️"
 
-    # Потом кнопки выбора
     text = f"{t(lang, 'menu_title')} {day_name}* ({tomorrow}):\n\n"
     for item in menu:
-        text += f"{item['item_number']}. {item['name']}\n"
+        text += f"{item['item_number']}. {item['name']} — {item['price']:,} сум\n"
     text += f"\n{t(lang, 'free_delivery')}\n{t(lang, 'choose_dish')}"
-    await message.answer(text, parse_mode="Markdown", reply_markup=menu_keyboard(menu))
+    text += balance_info
+
+    first_photo = next((i for i in menu if i.get("photo_id")), None)
+    if first_photo:
+        for item in menu:
+            if item.get("photo_id"):
+                await message.answer_photo(
+                    photo=item["photo_id"],
+                    caption=f"{item['item_number']}. *{item['name']}* — {item['price']:,} сум",
+                    parse_mode="Markdown"
+                )
+            else:
+                await message.answer(
+                    f"{item['item_number']}. *{item['name']}* — {item['price']:,} сум",
+                    parse_mode="Markdown"
+                )
+        await message.answer(
+            f"{t(lang, 'free_delivery')}\n{t(lang, 'choose_dish')}{balance_info}",
+            parse_mode="Markdown",
+            reply_markup=menu_keyboard(menu)
+        )
+    else:
+        await message.answer(text, parse_mode="Markdown", reply_markup=menu_keyboard(menu))
 
 
 @router.callback_query(F.data.startswith("order_"))
@@ -102,6 +148,16 @@ async def process_order_selection(callback: CallbackQuery):
         await callback.answer("❌", show_alert=True)
         return
 
+    # Списываем с баланса
+    meal_price = 35000
+    balance_text = ""
+    deducted = await deduct_balance(user["id"], meal_price, "Заказ обеда" if lang == "ru" else "Tushlik buyurtmasi")
+    if deducted:
+        balance_text = f"\n💳 {'Списано' if lang == 'ru' else 'Hisobdan ayirildi'}: -{meal_price:,} сум"
+    else:
+        balance = await get_user_balance(user["id"])
+        balance_text = f"\n💳 {'Баланс' if lang == 'ru' else 'Hisob'}: {balance:,} сум"
+
     reward_text = ""
     points = user["points"]
     if points >= 500:
@@ -119,6 +175,7 @@ async def process_order_selection(callback: CallbackQuery):
         f"{t(lang, 'delivery_time')}\n\n"
         f"{t(lang, 'points')}: *{user['points']}* (+5)\n"
         f"{t(lang, 'orders')}: {user['total_orders']}"
+        f"{balance_text}"
         f"{reward_text}"
     )
     try:
@@ -156,12 +213,13 @@ async def my_order(message: Message):
     st = status_ru if lang == "ru" else status_uz
 
     await message.answer(
-    f"{t(lang, 'my_order')} {day_name}\n\n"
-    f"🍱 {order['meal_name']}\n"
-    f"📊 {status_emoji.get(status, '⏳')} {st.get(status, status)}\n"
-    f"{t(lang, 'delivery_time')}",
-    reply_markup=order_actions_keyboard(status == "pending")
-)
+        f"{t(lang, 'my_order')} {day_name}\n\n"
+        f"🍱 {order['meal_name']}\n"
+        f"📊 {status_emoji.get(status, '⏳')} {st.get(status, status)}\n"
+        f"{t(lang, 'delivery_time')}",
+        parse_mode="Markdown",
+        reply_markup=order_actions_keyboard(status == "pending")
+    )
 
 
 @router.callback_query(F.data == "change_order")
@@ -198,8 +256,29 @@ async def ask_cancel_order(callback: CallbackQuery):
 async def confirm_cancel_order(callback: CallbackQuery):
     lang = await get_user_lang(callback.from_user.id)
     tomorrow = get_tomorrow_date()
+
+    # Возвращаем баланс при отмене
+    user = await get_user(callback.from_user.id)
+    meal_price = 35000
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            """INSERT INTO user_balance (user_id, balance)
+               VALUES ($1, $2)
+               ON CONFLICT (user_id) DO UPDATE SET balance = user_balance.balance + $2""",
+            user["id"], meal_price
+        )
+        await db.execute(
+            """INSERT INTO balance_transactions (user_id, amount, type, description)
+               VALUES ($1, $2, 'credit', $3)""",
+            user["id"], meal_price,
+            "Возврат за отмену заказа" if lang == "ru" else "Buyurtma bekor qilingani uchun qaytarish"
+        )
+
     await cancel_order(callback.from_user.id, tomorrow)
-    await callback.message.edit_text(t(lang, "order_cancelled"))
+    await callback.message.edit_text(
+        f"{t(lang, 'order_cancelled')}\n💳 +{meal_price:,} сум {'возвращено на баланс' if lang == 'ru' else 'hisobga qaytarildi'}"
+    )
     await callback.answer()
 
 
@@ -211,7 +290,7 @@ async def back_to_order(callback: CallbackQuery):
     order = await get_today_order(callback.from_user.id, tomorrow)
     if order:
         await callback.message.edit_text(
-            f"{t(lang, 'my_order')} {day_name}*\n\n🍱 {order['meal_name']}",
+            f"{t(lang, 'my_order')} {day_name}\n\n🍱 {order['meal_name']}",
             parse_mode="Markdown",
             reply_markup=order_actions_keyboard(True)
         )
