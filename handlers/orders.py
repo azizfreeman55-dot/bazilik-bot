@@ -44,6 +44,10 @@ async def get_user_balance(user_id: int) -> int:
 
 
 async def deduct_balance(user_id: int, amount: int, description: str) -> bool:
+    """
+    Списывает сумму с баланса.
+    Возвращает True если списание прошло, False если баланса недостаточно.
+    """
     pool = await get_pool()
     async with pool.acquire() as db:
         row = await db.fetchrow(
@@ -62,6 +66,42 @@ async def deduct_balance(user_id: int, amount: int, description: str) -> bool:
             user_id, amount, description
         )
     return True
+
+
+async def refund_balance(user_id: int, amount: int, description: str):
+    """Возвращает сумму на баланс (при отмене заказа)"""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            """INSERT INTO user_balance (user_id, balance)
+               VALUES ($1, $2)
+               ON CONFLICT (user_id) DO UPDATE SET balance = user_balance.balance + $2,
+               updated_at = CURRENT_TIMESTAMP""",
+            user_id, amount
+        )
+        await db.execute(
+            """INSERT INTO balance_transactions (user_id, amount, type, description)
+               VALUES ($1, $2, 'credit', $3)""",
+            user_id, amount, description
+        )
+
+
+async def was_balance_deducted_for_order(user_id: int, order_date: str) -> bool:
+    """
+    Проверяет, было ли реальное списание с баланса за заказ на эту дату.
+    Смотрим в balance_transactions — есть ли debit запись в день заказа.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        row = await db.fetchrow(
+            """SELECT id FROM balance_transactions
+               WHERE user_id = $1
+               AND type = 'debit'
+               AND description IN ('Заказ обеда', 'Tushlik buyurtmasi')
+               AND DATE(created_at) = $2::date""",
+            user_id, order_date
+        )
+    return row is not None
 
 
 @router.message(F.text.in_({"🍽️ Заказать обед", "🍽️ Tushlik buyurtma qilish"}))
@@ -97,7 +137,6 @@ async def order_lunch(message: Message):
     # Показываем баланс клиента
     balance = await get_user_balance(user["id"])
     meal_price = 35000
-    balance_info = ""
     if balance >= meal_price:
         balance_info = f"\n💳 {'Ваш баланс' if lang == 'ru' else 'Sizning hisobingiz'}: *{balance:,} сум* ✅"
     else:
@@ -148,15 +187,24 @@ async def process_order_selection(callback: CallbackQuery):
         await callback.answer("❌", show_alert=True)
         return
 
-    # Списываем с баланса
+    # Пробуем списать с баланса
     meal_price = 35000
-    balance_text = ""
-    deducted = await deduct_balance(user["id"], meal_price, "Заказ обеда" if lang == "ru" else "Tushlik buyurtmasi")
+    deducted = await deduct_balance(
+        user["id"], meal_price,
+        "Заказ обеда" if lang == "ru" else "Tushlik buyurtmasi"
+    )
+
     if deducted:
-        balance_text = f"\n💳 {'Списано' if lang == 'ru' else 'Hisobdan ayirildi'}: -{meal_price:,} сум"
+        balance_text = (
+            f"\n💳 {'Списано с баланса' if lang == 'ru' else 'Hisobdan ayirildi'}: "
+            f"*-{meal_price:,} сум*"
+        )
     else:
         balance = await get_user_balance(user["id"])
-        balance_text = f"\n💳 {'Баланс' if lang == 'ru' else 'Hisob'}: {balance:,} сум"
+        balance_text = (
+            f"\n💳 {'Баланс' if lang == 'ru' else 'Hisob'}: *{balance:,} сум* "
+            f"({'оплата при получении' if lang == 'ru' else 'olishda toʻlov'})"
+        )
 
     reward_text = ""
     points = user["points"]
@@ -256,28 +304,28 @@ async def ask_cancel_order(callback: CallbackQuery):
 async def confirm_cancel_order(callback: CallbackQuery):
     lang = await get_user_lang(callback.from_user.id)
     tomorrow = get_tomorrow_date()
-
-    # Возвращаем баланс при отмене
     user = await get_user(callback.from_user.id)
     meal_price = 35000
-    pool = await get_pool()
-    async with pool.acquire() as db:
-        await db.execute(
-            """INSERT INTO user_balance (user_id, balance)
-               VALUES ($1, $2)
-               ON CONFLICT (user_id) DO UPDATE SET balance = user_balance.balance + $2""",
-            user["id"], meal_price
-        )
-        await db.execute(
-            """INSERT INTO balance_transactions (user_id, amount, type, description)
-               VALUES ($1, $2, 'credit', $3)""",
+
+    # Возвращаем баланс ТОЛЬКО если при заказе реально списывалось
+    was_deducted = await was_balance_deducted_for_order(user["id"], tomorrow)
+
+    await cancel_order(callback.from_user.id, tomorrow)
+
+    if was_deducted:
+        await refund_balance(
             user["id"], meal_price,
             "Возврат за отмену заказа" if lang == "ru" else "Buyurtma bekor qilingani uchun qaytarish"
         )
+        refund_text = (
+            f"\n💳 +{meal_price:,} сум "
+            f"{'возвращено на баланс' if lang == 'ru' else 'hisobga qaytarildi'}"
+        )
+    else:
+        refund_text = ""
 
-    await cancel_order(callback.from_user.id, tomorrow)
     await callback.message.edit_text(
-        f"{t(lang, 'order_cancelled')}\n💳 +{meal_price:,} сум {'возвращено на баланс' if lang == 'ru' else 'hisobga qaytarildi'}"
+        f"{t(lang, 'order_cancelled')}{refund_text}"
     )
     await callback.answer()
 
