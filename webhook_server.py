@@ -10,7 +10,6 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CLICK_SECRET_KEY = os.getenv("CLICK_SECRET_KEY")
-CLICK_SERVICE_ID = os.getenv("CLICK_SERVICE_ID")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 logging.basicConfig(level=logging.INFO)
@@ -49,23 +48,23 @@ async def handle_click_prepare(request):
 
     try:
         data = await request.json()
-        logger.info(f"Click Prepare: {data}")
+        logger.info(f"Click Prepare received: {data}")
 
         click_trans_id = data.get("click_trans_id")
         service_id = data.get("service_id")
         merchant_trans_id = data.get("merchant_trans_id")
         amount = float(data.get("amount", 0))
-        action = data.get("action", 1)
         sign_time = data.get("sign_time")
         sign_string = data.get("sign_string")
 
-        # Проверяем подпись
+        # Проверяем подпись (action=1 для Prepare)
         my_sign = hashlib.md5(
-            f"{click_trans_id}{service_id}{CLICK_SECRET_KEY}{merchant_trans_id}{amount}{action}{sign_time}".encode()
+            f"{click_trans_id}{service_id}{CLICK_SECRET_KEY}{merchant_trans_id}{amount}{1}{sign_time}".encode()
         ).hexdigest()
 
+        logger.info(f"Prepare sign check: my={my_sign}, received={sign_string}")
+
         if my_sign != sign_string:
-            logger.warning(f"Sign mismatch: {my_sign} != {sign_string}")
             return web.json_response({
                 "error": -1,
                 "error_note": "SIGN CHECK FAILED!"
@@ -90,25 +89,25 @@ async def handle_click_complete(request):
 
     try:
         data = await request.json()
-        logger.info(f"Click Complete: {data}")
+        logger.info(f"Click Complete received: {data}")
 
         click_trans_id = data.get("click_trans_id")
         service_id = data.get("service_id")
         merchant_trans_id = data.get("merchant_trans_id")
         merchant_prepare_id = data.get("merchant_prepare_id")
         amount = float(data.get("amount", 0))
-        action = data.get("action", 2)
         sign_time = data.get("sign_time")
         sign_string = data.get("sign_string")
         error = int(data.get("error", 0))
 
-        # Проверяем подпись
+        # Проверяем подпись (action=2 для Complete)
         my_sign = hashlib.md5(
-            f"{click_trans_id}{service_id}{CLICK_SECRET_KEY}{merchant_trans_id}{merchant_prepare_id}{amount}{action}{sign_time}".encode()
+            f"{click_trans_id}{service_id}{CLICK_SECRET_KEY}{merchant_trans_id}{merchant_prepare_id}{amount}{2}{sign_time}".encode()
         ).hexdigest()
 
+        logger.info(f"Complete sign check: my={my_sign}, received={sign_string}")
+
         if my_sign != sign_string:
-            logger.warning(f"Sign mismatch: {my_sign} != {sign_string}")
             return web.json_response({
                 "error": -1,
                 "error_note": "SIGN CHECK FAILED!"
