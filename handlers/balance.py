@@ -154,13 +154,13 @@ async def process_custom_amount(message: Message, state):
     lang = await get_user_lang(message.from_user.id)
     amount = int(message.text.strip())
 
-    if amount < 10000:
+    if amount < 1000:
         await message.answer(
-            "❌ Минимальная сумма 10,000 сум" if lang == "ru"
-            else "❌ Minimal summa 10,000 sum"
+            "❌ Минимальная сумма 1,000 сум" if lang == "ru"
+            else "❌ Minimal summa 1,000 sum"
         )
         return
-
+        
     if amount > 10000000:
         await message.answer(
             "❌ Максимальная сумма 10,000,000 сум" if lang == "ru"
