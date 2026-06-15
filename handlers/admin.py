@@ -4,15 +4,23 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Filter
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from database.db import (
     get_daily_summary, get_all_users_for_notification,
-    close_orders_for_date, get_pool
+    close_orders_for_date, get_pool, set_menu
 )
 from keyboards.keyboards import admin_keyboard
 from config import ADMIN_IDS
 
 router = Router()
+
+CATEGORIES = {
+    "main":    {"ru": "🍱 Основные блюда",  "uz": "🍱 Asosiy taomlar",   "emoji": "🍱"},
+    "salad":   {"ru": "🥗 Салаты",           "uz": "🥗 Salatlar",          "emoji": "🥗"},
+    "dessert": {"ru": "🍰 Десерты",          "uz": "🍰 Desertlar",         "emoji": "🍰"},
+    "drink":   {"ru": "🥤 Напитки",          "uz": "🥤 Ichimliklar",       "emoji": "🥤"},
+}
 
 
 class IsAdmin(Filter):
@@ -21,6 +29,7 @@ class IsAdmin(Filter):
 
 
 class AddMenu(StatesGroup):
+    waiting_category = State()
     waiting_photo = State()
     waiting_name = State()
     waiting_price = State()
@@ -49,9 +58,21 @@ async def admin_summary(callback: CallbackQuery):
         return
 
     text = f"📊 *Сводка заказов на {tomorrow}:*\n\n"
+
+    # Группируем по категории
+    by_category = {}
     for item in summary["items"]:
-        text += f"• {item['name']}: *{item['count']} порций*\n"
-    text += f"\n📦 Всего: *{summary['total']} обедов*"
+        cat = item.get("category", "main")
+        by_category.setdefault(cat, []).append(item)
+
+    for cat, items in by_category.items():
+        cat_name = CATEGORIES.get(cat, {}).get("ru", cat)
+        text += f"*{cat_name}:*\n"
+        for item in items:
+            text += f"  • {item['name']}: *{item['count']} шт.*\n"
+        text += "\n"
+
+    text += f"📦 Всего: *{summary['total']} позиций*"
 
     await callback.answer()
     await callback.message.edit_text(
@@ -65,7 +86,6 @@ async def admin_add_menu_start(callback: CallbackQuery, state: FSMContext):
         await callback.answer("❌ Нет доступа", show_alert=True)
         return
 
-    from aiogram.utils.keyboard import InlineKeyboardBuilder
     builder = InlineKeyboardBuilder()
     days = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
     today = date.today()
@@ -89,12 +109,37 @@ async def admin_menu_date_selected(callback: CallbackQuery, state: FSMContext):
         return
 
     menu_date = callback.data.replace("menu_date_", "")
-    await state.set_state(AddMenu.waiting_photo)
     await state.update_data(menu_date=menu_date, items=[], item_number=1)
+    await state.set_state(AddMenu.waiting_category)
+
+    builder = InlineKeyboardBuilder()
+    for key, names in CATEGORIES.items():
+        builder.button(
+            text=names["ru"],
+            callback_data=f"menu_cat_{key}"
+        )
+    builder.adjust(2)
+
+    await callback.answer()
+    await callback.message.edit_text(
+        f"📅 *Дата: {menu_date}*\n\nВыберите категорию для добавления:",
+        parse_mode="Markdown",
+        reply_markup=builder.as_markup()
+    )
+
+
+@router.callback_query(F.data.startswith("menu_cat_"))
+async def admin_category_selected(callback: CallbackQuery, state: FSMContext):
+    category = callback.data.replace("menu_cat_", "")
+    cat_name = CATEGORIES.get(category, {}).get("ru", category)
+
+    await state.update_data(category=category, items=[], item_number=1)
+    await state.set_state(AddMenu.waiting_photo)
+
     await callback.answer()
     await callback.message.answer(
-        f"🍽️ *Добавление меню на {menu_date}*\n\n"
-        f"*Блюдо 1:*\n📸 Отправьте фото блюда:\n_(или напишите 'нет' если фото нет)_",
+        f"*Категория: {cat_name}*\n\n"
+        f"*Позиция 1:*\n📸 Отправьте фото или напишите *нет*:",
         parse_mode="Markdown"
     )
 
@@ -102,11 +147,18 @@ async def admin_menu_date_selected(callback: CallbackQuery, state: FSMContext):
 @router.message(AddMenu.waiting_photo)
 async def process_menu_photo(message: Message, state: FSMContext):
     data = await state.get_data()
-    photo_id = message.photo[-1].file_id if message.photo else None
+    if message.photo:
+        photo_id = message.photo[-1].file_id
+    elif message.text and message.text.lower() in ("нет", "yo'q", "-"):
+        photo_id = None
+    else:
+        await message.answer("📸 Отправьте фото или напишите *нет*", parse_mode="Markdown")
+        return
+
     await state.update_data(current_photo=photo_id)
     await state.set_state(AddMenu.waiting_name)
     await message.answer(
-        f"✅ Фото принято!\n\n📝 Введите *название блюда {data['item_number']}*:",
+        f"📝 Введите *название* позиции {data['item_number']}:",
         parse_mode="Markdown"
     )
 
@@ -115,25 +167,42 @@ async def process_menu_photo(message: Message, state: FSMContext):
 async def process_menu_name(message: Message, state: FSMContext):
     await state.update_data(current_name=message.text.strip())
     await state.set_state(AddMenu.waiting_price)
+
+    data = await state.get_data()
+    cat = data.get("category", "main")
+
+    # Подсказка по цене в зависимости от категории
+    hints = {
+        "main":    "стандарт = 35 000 сум",
+        "salad":   "стандарт = 15 000 сум",
+        "dessert": "стандарт = 12 000 сум",
+        "drink":   "стандарт = 8 000 сум",
+    }
+    hint = hints.get(cat, "стандарт = 35 000 сум")
+
     await message.answer(
-        "💰 Введите *цену* (в сумах):\n_(или напишите 'стандарт' для цены 35000 сум)_",
+        f"💰 Введите *цену* (в сумах):\n_({hint} — напишите 'стандарт')_",
         parse_mode="Markdown"
     )
 
 
 @router.message(AddMenu.waiting_price)
 async def process_menu_price(message: Message, state: FSMContext):
-    text = message.text.strip()
-    if text.lower() == "стандарт":
-        price = 35000
+    text = message.text.strip().lower()
+    data = await state.get_data()
+    cat = data.get("category", "main")
+
+    default_prices = {"main": 35000, "salad": 15000, "dessert": 12000, "drink": 8000}
+
+    if text == "стандарт":
+        price = default_prices.get(cat, 35000)
     else:
         try:
             price = int(text.replace(" ", "").replace(",", ""))
-        except:
-            await message.answer("❌ Введите число. Например: 35000")
+        except ValueError:
+            await message.answer("❌ Введите число. Например: 15000")
             return
 
-    data = await state.get_data()
     items = data.get("items", [])
     items.append({
         "item_number": data["item_number"],
@@ -144,16 +213,18 @@ async def process_menu_price(message: Message, state: FSMContext):
     await state.update_data(items=items)
     await state.set_state(AddMenu.waiting_more)
 
-    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    cat_name = CATEGORIES.get(cat, {}).get("ru", cat)
     builder = InlineKeyboardBuilder()
-    builder.button(text="➕ Добавить ещё блюдо", callback_data="menu_add_more")
-    builder.button(text="✅ Сохранить меню", callback_data="menu_save")
+    builder.button(text="➕ Добавить ещё позицию", callback_data="menu_add_more")
+    builder.button(text="✅ Сохранить категорию", callback_data="menu_save")
+    builder.button(text="📂 Добавить другую категорию", callback_data="menu_add_category")
     builder.adjust(1)
 
     await message.answer(
-        f"✅ *Блюдо {data['item_number']} добавлено:*\n"
-        f"🍱 {data['current_name']}\n💰 {price:,} сум\n\n"
-        f"Добавить ещё или сохранить?",
+        f"✅ *Добавлено в {cat_name}:*\n"
+        f"• {data['current_name']} — {price:,} сум\n\n"
+        f"Всего в категории: {len(items)} позиций\n\n"
+        f"Что дальше?",
         parse_mode="Markdown",
         reply_markup=builder.as_markup()
     )
@@ -167,7 +238,7 @@ async def menu_add_more(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AddMenu.waiting_photo)
     await callback.answer()
     await callback.message.answer(
-        f"*Блюдо {next_num}:*\n📸 Отправьте фото блюда:\n_(или напишите 'нет' если фото нет)_",
+        f"*Позиция {next_num}:*\n📸 Отправьте фото или напишите *нет*:",
         parse_mode="Markdown"
     )
 
@@ -177,26 +248,59 @@ async def menu_save(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     menu_date = data["menu_date"]
     items = data["items"]
+    category = data.get("category", "main")
+    cat_name = CATEGORIES.get(category, {}).get("ru", category)
 
-    pool = await get_pool()
-    async with pool.acquire() as db:
-        await db.execute("DELETE FROM menus WHERE menu_date = $1", menu_date)
-        for item in items:
-            await db.execute(
-                """INSERT INTO menus (menu_date, item_number, name, price, photo_id)
-                   VALUES ($1, $2, $3, $4, $5)""",
-                menu_date, item["item_number"], item["name"],
-                item["price"], item.get("photo_id")
-            )
-
+    await set_menu(menu_date, items, category)
     await state.clear()
-    text = f"✅ *Меню на {menu_date} сохранено!*\n\n"
+
+    text = f"✅ *{cat_name} на {menu_date} сохранены!*\n\n"
     for item in items:
-        photo_text = "📸 с фото" if item.get("photo_id") else "без фото"
-        text += f"{item['item_number']}. {item['name']} — {item['price']:,} сум ({photo_text})\n"
+        photo_text = "📸" if item.get("photo_id") else "  "
+        text += f"{photo_text} {item['item_number']}. {item['name']} — {item['price']:,} сум\n"
 
     await callback.answer()
     await callback.message.answer(text, parse_mode="Markdown", reply_markup=admin_keyboard())
+
+
+@router.callback_query(F.data == "menu_add_category")
+async def menu_add_another_category(callback: CallbackQuery, state: FSMContext):
+    """Сохраняем текущую категорию и предлагаем добавить следующую"""
+    data = await state.get_data()
+    menu_date = data["menu_date"]
+    items = data["items"]
+    category = data.get("category", "main")
+
+    # Сохраняем текущую категорию
+    await set_menu(menu_date, items, category)
+
+    # Предлагаем выбрать следующую
+    await state.update_data(items=[], item_number=1)
+    await state.set_state(AddMenu.waiting_category)
+
+    builder = InlineKeyboardBuilder()
+    for key, names in CATEGORIES.items():
+        builder.button(text=names["ru"], callback_data=f"menu_cat_{key}")
+    builder.button(text="✅ Всё готово", callback_data="menu_all_done")
+    builder.adjust(2)
+
+    await callback.answer()
+    await callback.message.answer(
+        f"✅ Сохранено!\n\n📅 *{menu_date}* — выберите следующую категорию:",
+        parse_mode="Markdown",
+        reply_markup=builder.as_markup()
+    )
+
+
+@router.callback_query(F.data == "menu_all_done")
+async def menu_all_done(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.answer()
+    await callback.message.answer(
+        "✅ *Меню полностью сохранено!*",
+        parse_mode="Markdown",
+        reply_markup=admin_keyboard()
+    )
 
 
 @router.callback_query(F.data == "admin_broadcast")
@@ -271,7 +375,6 @@ async def admin_users(callback: CallbackQuery):
     if len(text) > 4000:
         text = text[:4000] + "\n...и другие"
 
-    from aiogram.utils.keyboard import InlineKeyboardBuilder
     builder = InlineKeyboardBuilder()
     builder.button(text="◀️ Назад", callback_data="back_admin")
     await callback.answer()
