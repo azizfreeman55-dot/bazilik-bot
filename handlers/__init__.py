@@ -11,11 +11,11 @@ from .payment import router as payment_router
 
 
 def register_all_handlers(dp: Dispatcher):
+    dp.include_router(admin_router)      # ← первым
     dp.include_router(registration_router)
     dp.include_router(analytics_router)
     dp.include_router(orders_router)
     dp.include_router(profile_router)
-    dp.include_router(admin_router)
     dp.include_router(weekly_router)
     dp.include_router(gifts_router)
     dp.include_router(balance_router)
