@@ -30,110 +30,6 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        """
-handlers/birthday.py — обработчик ввода дня рождения
-
-Добавьте роутер в handlers/__init__.py:
-    from handlers.birthday import router as birthday_router
-    dp.include_router(birthday_router)
-"""
-
-from datetime import datetime
-from aiogram import Router, F
-from aiogram.types import CallbackQuery, Message
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.utils.keyboard import InlineKeyboardBuilder
-
-router = Router()
-
-
-class BirthdayState(StatesGroup):
-    waiting_for_date = State()
-
-
-@router.callback_query(F.data == "set_birthday")
-async def ask_birthday(callback: CallbackQuery, state: FSMContext):
-    lang = await get_user_lang(callback.from_user.id)
-
-    if lang == "uz":
-        text = (
-            "🎂 *Tug'ilgan kuningizni kiriting*\n\n"
-            "Format: `DD.MM.YYYY`\n"
-            "Masalan: `15.03.1990`\n\n"
-            "_Tug'ilgan kuningizda sizga maxsus sovg'a beriladi!_ 🎁"
-        )
-    else:
-        text = (
-            "🎂 *Введите вашу дату рождения*\n\n"
-            "Формат: `ДД.ММ.ГГГГ`\n"
-            "Например: `15.03.1990`\n\n"
-            "_В день рождения вас ждёт особый подарок!_ 🎁"
-        )
-
-    await callback.message.edit_text(text, parse_mode="Markdown")
-    await state.set_state(BirthdayState.waiting_for_date)
-    await callback.answer()
-
-
-@router.message(BirthdayState.waiting_for_date)
-async def save_birthday(message: Message, state: FSMContext):
-    lang = await get_user_lang(message.from_user.id)
-    text = message.text.strip()
-
-    try:
-        birthday = datetime.strptime(text, "%d.%m.%Y").date()
-
-        # Проверяем что дата реалистичная
-        today = datetime.today().date()
-        age = (today - birthday).days // 365
-        if age < 10 or age > 100:
-            raise ValueError("Unrealistic age")
-
-        pool = await get_pool()
-        async with pool.acquire() as db:
-            await db.execute(
-                "UPDATE users SET birthday = $1 WHERE telegram_id = $2",
-                birthday, message.from_user.id
-            )
-
-        await state.clear()
-
-        builder = InlineKeyboardBuilder()
-        builder.button(
-            text="◀️ Назад в профиль" if lang == "ru" else "◀️ Profilga qaytish",
-            callback_data="my_profile"
-        )
-
-        if lang == "uz":
-            await message.answer(
-                f"✅ *Tug'ilgan kun saqlandi!*\n\n"
-                f"📅 {birthday.strftime('%d.%m.%Y')}\n\n"
-                f"Tug'ilgan kuningizda sizga *+50 ball* sovg'a beriladi! 🎁",
-                parse_mode="Markdown",
-                reply_markup=builder.as_markup()
-            )
-        else:
-            await message.answer(
-                f"✅ *День рождения сохранён!*\n\n"
-                f"📅 {birthday.strftime('%d.%m.%Y')}\n\n"
-                f"В день рождения вам будет начислено *+50 баллов*! 🎁",
-                parse_mode="Markdown",
-                reply_markup=builder.as_markup()
-            )
-
-    except ValueError:
-        if lang == "uz":
-            await message.answer(
-                "❌ Noto'g'ri format. Iltimos qayta kiriting:\n`DD.MM.YYYY`\n\nMasalan: `15.03.1990`",
-                parse_mode="Markdown"
-            )
-        else:
-            await message.answer(
-                "❌ Неверный формат. Попробуйте снова:\n`ДД.ММ.ГГГГ`\n\nНапример: `15.03.1990`",
-                parse_mode="Markdown"
-            )
-            
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,
@@ -165,7 +61,8 @@ async def save_birthday(message: Message, state: FSMContext):
                 price INTEGER DEFAULT 35000,
                 photo_id TEXT,
                 is_active INTEGER DEFAULT 1,
-                UNIQUE(menu_date, item_number)
+                category TEXT DEFAULT 'main',
+                UNIQUE(menu_date, item_number, category)
             )
         """)
         await db.execute("""
@@ -208,7 +105,34 @@ async def save_birthday(message: Message, state: FSMContext):
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-    logger.info("✅ Таблицы созданы")
+
+        # Миграции для существующей БД (добавляем поля если их нет)
+        await db.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='users' AND column_name='birthday'
+                ) THEN
+                    ALTER TABLE users ADD COLUMN birthday DATE;
+                END IF;
+            END
+            $$;
+        """)
+        await db.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='menus' AND column_name='category'
+                ) THEN
+                    ALTER TABLE menus ADD COLUMN category TEXT DEFAULT 'main';
+                END IF;
+            END
+            $$;
+        """)
+
+    logger.info("✅ Таблицы созданы / обновлены")
 
 
 async def get_user(telegram_id: int) -> dict | None:
@@ -322,27 +246,47 @@ async def get_company_ranking(city: str = "Ташкент") -> list:
         return [dict(r) for r in rows]
 
 
-async def get_menu(menu_date: str) -> list:
+async def get_menu(menu_date: str, category: str = "main") -> list:
+    """Получить меню по дате и категории"""
     pool = await get_pool()
     async with pool.acquire() as db:
         rows = await db.fetch(
-            "SELECT * FROM menus WHERE menu_date = $1 AND is_active = 1 ORDER BY item_number",
-            menu_date
+            """SELECT * FROM menus
+               WHERE menu_date = $1 AND is_active = 1 AND category = $2
+               ORDER BY item_number""",
+            menu_date, category
         )
         return [dict(r) for r in rows]
 
 
-async def set_menu(menu_date: str, items: list):
+async def get_menu_categories(menu_date: str) -> list:
+    """Получить список категорий у которых есть позиции на эту дату"""
     pool = await get_pool()
     async with pool.acquire() as db:
-        await db.execute("DELETE FROM menus WHERE menu_date = $1", menu_date)
+        rows = await db.fetch(
+            """SELECT DISTINCT category FROM menus
+               WHERE menu_date = $1 AND is_active = 1
+               ORDER BY category""",
+            menu_date
+        )
+        return [row["category"] for row in rows]
+
+
+async def set_menu(menu_date: str, items: list, category: str = "main"):
+    """Сохранить меню для определённой категории (не трогает другие категории)"""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            "DELETE FROM menus WHERE menu_date = $1 AND category = $2",
+            menu_date, category
+        )
         for item in items:
             await db.execute(
-                """INSERT INTO menus (menu_date, item_number, name, description, price, photo_id)
-                   VALUES ($1, $2, $3, $4, $5, $6)""",
+                """INSERT INTO menus (menu_date, item_number, name, description, price, photo_id, category)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7)""",
                 menu_date, item["item_number"], item["name"],
                 item.get("description", ""), item.get("price", 35000),
-                item.get("photo_id")
+                item.get("photo_id"), category
             )
 
 
@@ -350,7 +294,7 @@ async def get_today_order(telegram_id: int, order_date: str) -> dict | None:
     pool = await get_pool()
     async with pool.acquire() as db:
         row = await db.fetchrow(
-            """SELECT o.*, m.name as meal_name, m.item_number
+            """SELECT o.*, m.name as meal_name, m.item_number, m.category
                FROM orders o
                JOIN users u ON o.user_id = u.id
                JOIN menus m ON o.menu_id = m.id
@@ -423,11 +367,11 @@ async def get_daily_summary(order_date: str) -> dict:
     pool = await get_pool()
     async with pool.acquire() as db:
         items = await db.fetch(
-            """SELECT m.name, m.item_number, COUNT(*) as count
+            """SELECT m.name, m.item_number, m.category, COUNT(*) as count
                FROM orders o
                JOIN menus m ON o.menu_id = m.id
                WHERE o.order_date = $1 AND o.status IN ('confirmed', 'pending')
-               GROUP BY m.id, m.name, m.item_number ORDER BY count DESC""",
+               GROUP BY m.id, m.name, m.item_number, m.category ORDER BY m.category, count DESC""",
             order_date
         )
         total = await db.fetchval(
