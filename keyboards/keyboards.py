@@ -5,25 +5,53 @@ from aiogram.types import (
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 
+CATEGORY_NAMES = {
+    "main":    {"ru": "🍱 Основные блюда",  "uz": "🍱 Asosiy taomlar"},
+    "salad":   {"ru": "🥗 Салаты",           "uz": "🥗 Salatlar"},
+    "dessert": {"ru": "🍰 Десерты",          "uz": "🍰 Desertlar"},
+    "drink":   {"ru": "🥤 Напитки",          "uz": "🥤 Ichimliklar"},
+}
+
+
 def main_menu_keyboard(is_admin: bool = False, lang: str = "ru") -> ReplyKeyboardMarkup:
     from langs import t
     buttons = [
         [KeyboardButton(text=t(lang, "btn_order")), KeyboardButton(text=t(lang, "btn_my_order"))],
         [KeyboardButton(text=t(lang, "btn_profile")), KeyboardButton(text=t(lang, "btn_rating"))],
         [KeyboardButton(text=t(lang, "btn_invite")), KeyboardButton(text=t(lang, "btn_settings"))],
-        [KeyboardButton(text="🎁 Подарки" if lang == "ru" else "🎁 Sovg'alar"), KeyboardButton(text="💳 Мой баланс" if lang == "ru" else "💳 Mening hisobim")],
+        [
+            KeyboardButton(text="🎁 Подарки" if lang == "ru" else "🎁 Sovg'alar"),
+            KeyboardButton(text="💳 Мой баланс" if lang == "ru" else "💳 Mening hisobim")
+        ],
     ]
     if is_admin:
         buttons.append([KeyboardButton(text=t(lang, "btn_admin"))])
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
-def menu_keyboard(menu_items: list) -> InlineKeyboardMarkup:
+
+def category_keyboard(available_categories: list, lang: str = "ru") -> InlineKeyboardMarkup:
+    """Кнопки выбора категории меню (показывает только те, у которых есть позиции)"""
+    builder = InlineKeyboardBuilder()
+    for cat in available_categories:
+        name = CATEGORY_NAMES.get(cat, {}).get(lang, cat)
+        builder.button(text=name, callback_data=f"menu_category_{cat}")
+    builder.adjust(2)
+    return builder.as_markup()
+
+
+def menu_keyboard(menu_items: list, category: str = "main", lang: str = "ru") -> InlineKeyboardMarkup:
+    """Кнопки выбора блюда внутри категории"""
     builder = InlineKeyboardBuilder()
     for item in menu_items:
         builder.button(
             text=f"{item['item_number']}. {item['name']} — {item['price']:,} сум",
             callback_data=f"order_{item['id']}"
         )
+    # Кнопка возврата к категориям
+    builder.button(
+        text="◀️ Назад к категориям" if lang == "ru" else "◀️ Kategoriyalarga qaytish",
+        callback_data="back_to_categories"
+    )
     builder.adjust(1)
     return builder.as_markup()
 
