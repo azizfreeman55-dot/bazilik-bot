@@ -30,7 +30,6 @@ def main_menu_keyboard(is_admin: bool = False, lang: str = "ru") -> ReplyKeyboar
 
 
 def category_keyboard(available_categories: list, lang: str = "ru") -> InlineKeyboardMarkup:
-    """Кнопки выбора категории меню (показывает только те, у которых есть позиции)"""
     builder = InlineKeyboardBuilder()
     for cat in available_categories:
         name = CATEGORY_NAMES.get(cat, {}).get(lang, cat)
@@ -40,14 +39,12 @@ def category_keyboard(available_categories: list, lang: str = "ru") -> InlineKey
 
 
 def menu_keyboard(menu_items: list, category: str = "main", lang: str = "ru") -> InlineKeyboardMarkup:
-    """Кнопки выбора блюда внутри категории"""
     builder = InlineKeyboardBuilder()
     for item in menu_items:
         builder.button(
             text=f"{item['item_number']}. {item['name']} — {item['price']:,} сум",
             callback_data=f"order_{item['id']}"
         )
-    # Кнопка возврата к категориям
     builder.button(
         text="◀️ Назад к категориям" if lang == "ru" else "◀️ Kategoriyalarga qaytish",
         callback_data="back_to_categories"
@@ -85,7 +82,8 @@ def settings_keyboard(auto_order: bool) -> InlineKeyboardMarkup:
 def admin_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="📊 Сводка заказов", callback_data="admin_summary")
-    builder.button(text="🍽️ Добавить меню", callback_data="admin_add_menu")
+    builder.button(text="🍽️ Меню на дату", callback_data="admin_add_menu")
+    builder.button(text="📅 Постоянное меню", callback_data="admin_weekly_menu")
     builder.button(text="📨 Рассылка", callback_data="admin_broadcast")
     builder.button(text="👥 Все пользователи", callback_data="admin_users")
     builder.adjust(2)
