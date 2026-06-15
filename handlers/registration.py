@@ -190,18 +190,17 @@ async def process_location(message: Message, state: FSMContext):
             maps_link, company_id
         )
 
-    await save_user_phone(message.from_user.id, data.get("phone", ""))
-
     user = await create_user(
-        telegram_id=message.from_user.id,
-        full_name=data["name"],
-        username=message.from_user.username or "",
-        company_id=company_id,
-        referral_code=referral_code,
-        referred_by_code=data.get("ref_code")
-    )
+    telegram_id=message.from_user.id,
+    full_name=data["name"],
+    username=message.from_user.username or "",
+    company_id=company_id,
+    referral_code=referral_code,
+    referred_by_code=data.get("ref_code")
+)
 
-    await set_user_lang(message.from_user.id, lang)
+await save_user_phone(message.from_user.id, data.get("phone", ""))
+await set_user_lang(message.from_user.id, lang)
 
     bonus_text = ""
     if data.get("ref_code"):
