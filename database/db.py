@@ -66,6 +66,20 @@ async def init_db():
             )
         """)
         await db.execute("""
+            CREATE TABLE IF NOT EXISTS weekly_menu (
+                id SERIAL PRIMARY KEY,
+                day_of_week INTEGER NOT NULL,
+                item_number INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT,
+                price INTEGER DEFAULT 35000,
+                photo_id TEXT,
+                category TEXT DEFAULT 'main',
+                is_active INTEGER DEFAULT 1,
+                UNIQUE(day_of_week, item_number, category)
+            )
+        """)
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS orders (
                 id SERIAL PRIMARY KEY,
                 user_id INTEGER REFERENCES users(id),
@@ -106,7 +120,7 @@ async def init_db():
             )
         """)
 
-        # Миграции для существующей БД (добавляем поля если их нет)
+        # Миграции для существующей БД
         await db.execute("""
             DO $$
             BEGIN
@@ -134,6 +148,8 @@ async def init_db():
 
     logger.info("✅ Таблицы созданы / обновлены")
 
+
+# ─── Пользователи ─────────────────────────────────────────────────────────────
 
 async def get_user(telegram_id: int) -> dict | None:
     pool = await get_pool()
@@ -219,6 +235,17 @@ async def update_user_status(user_id: int, total_orders: int) -> str:
     return status
 
 
+async def save_user_phone(telegram_id: int, phone: str):
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            "UPDATE users SET phone = $1 WHERE telegram_id = $2",
+            phone, telegram_id
+        )
+
+
+# ─── Компании ─────────────────────────────────────────────────────────────────
+
 async def get_or_create_company(name: str) -> int:
     pool = await get_pool()
     async with pool.acquire() as db:
@@ -246,10 +273,44 @@ async def get_company_ranking(city: str = "Ташкент") -> list:
         return [dict(r) for r in rows]
 
 
+# ─── Разовое меню по датам ────────────────────────────────────────────────────
+
 async def get_menu(menu_date: str, category: str = "main") -> list:
-    """Получить меню по дате и категории"""
+    """Получить меню по дате. Если нет — подставляем из weekly_menu по дню недели."""
     pool = await get_pool()
     async with pool.acquire() as db:
+        rows = await db.fetch(
+            """SELECT * FROM menus
+               WHERE menu_date = $1 AND is_active = 1 AND category = $2
+               ORDER BY item_number""",
+            menu_date, category
+        )
+        if rows:
+            return [dict(r) for r in rows]
+
+        # Фолбэк: постоянное меню по дню недели
+        d = date.fromisoformat(menu_date)
+        day_num = d.weekday()  # 0=Пн, 6=Вс
+        weekly_rows = await db.fetch(
+            """SELECT * FROM weekly_menu
+               WHERE day_of_week = $1 AND is_active = 1 AND category = $2
+               ORDER BY item_number""",
+            day_num, category
+        )
+        if not weekly_rows:
+            return []
+
+        # Копируем в menus на эту дату чтобы можно было оформить заказ
+        for item in weekly_rows:
+            await db.execute(
+                """INSERT INTO menus (menu_date, item_number, name, description, price, photo_id, category)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7)
+                   ON CONFLICT (menu_date, item_number, category) DO NOTHING""",
+                menu_date, item["item_number"], item["name"],
+                item["description"] or "", item["price"],
+                item["photo_id"], category
+            )
+
         rows = await db.fetch(
             """SELECT * FROM menus
                WHERE menu_date = $1 AND is_active = 1 AND category = $2
@@ -260,7 +321,7 @@ async def get_menu(menu_date: str, category: str = "main") -> list:
 
 
 async def get_menu_categories(menu_date: str) -> list:
-    """Получить список категорий у которых есть позиции на эту дату"""
+    """Категории на дату. Если нет — берём из weekly_menu по дню недели."""
     pool = await get_pool()
     async with pool.acquire() as db:
         rows = await db.fetch(
@@ -269,11 +330,22 @@ async def get_menu_categories(menu_date: str) -> list:
                ORDER BY category""",
             menu_date
         )
+        if rows:
+            return [row["category"] for row in rows]
+
+        d = date.fromisoformat(menu_date)
+        day_num = d.weekday()
+        rows = await db.fetch(
+            """SELECT DISTINCT category FROM weekly_menu
+               WHERE day_of_week = $1 AND is_active = 1
+               ORDER BY category""",
+            day_num
+        )
         return [row["category"] for row in rows]
 
 
 async def set_menu(menu_date: str, items: list, category: str = "main"):
-    """Сохранить меню для определённой категории (не трогает другие категории)"""
+    """Сохранить разовое меню на конкретную дату"""
     pool = await get_pool()
     async with pool.acquire() as db:
         await db.execute(
@@ -289,6 +361,78 @@ async def set_menu(menu_date: str, items: list, category: str = "main"):
                 item.get("photo_id"), category
             )
 
+
+# ─── Постоянное меню по дням недели ──────────────────────────────────────────
+
+async def set_weekly_menu(day_of_week: int, items: list, category: str = "main"):
+    """Сохранить постоянное меню для дня недели (0=Пн, 6=Вс)"""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            "DELETE FROM weekly_menu WHERE day_of_week = $1 AND category = $2",
+            day_of_week, category
+        )
+        for item in items:
+            await db.execute(
+                """INSERT INTO weekly_menu
+                   (day_of_week, item_number, name, description, price, photo_id, category)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7)""",
+                day_of_week, item["item_number"], item["name"],
+                item.get("description", ""), item.get("price", 35000),
+                item.get("photo_id"), category
+            )
+
+
+async def get_weekly_menu(day_of_week: int, category: str = "main") -> list:
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        rows = await db.fetch(
+            """SELECT * FROM weekly_menu
+               WHERE day_of_week = $1 AND is_active = 1 AND category = $2
+               ORDER BY item_number""",
+            day_of_week, category
+        )
+        return [dict(r) for r in rows]
+
+
+async def get_weekly_menu_categories(day_of_week: int) -> list:
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        rows = await db.fetch(
+            """SELECT DISTINCT category FROM weekly_menu
+               WHERE day_of_week = $1 AND is_active = 1""",
+            day_of_week
+        )
+        return [row["category"] for row in rows]
+
+
+async def get_all_weekly_menu_summary() -> dict:
+    """Сводка постоянного меню по всем дням для админки"""
+    pool = await get_pool()
+    days = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+    result = {}
+    async with pool.acquire() as db:
+        for i, day in enumerate(days):
+            rows = await db.fetch(
+                """SELECT category, COUNT(*) as cnt FROM weekly_menu
+                   WHERE day_of_week = $1 AND is_active = 1
+                   GROUP BY category""",
+                i
+            )
+            result[i] = {"day": day, "categories": {r["category"]: r["cnt"] for r in rows}}
+    return result
+
+
+async def delete_weekly_menu_day(day_of_week: int):
+    """Удалить всё постоянное меню для дня недели"""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            "DELETE FROM weekly_menu WHERE day_of_week = $1", day_of_week
+        )
+
+
+# ─── Заказы ───────────────────────────────────────────────────────────────────
 
 async def get_today_order(telegram_id: int, order_date: str) -> dict | None:
     pool = await get_pool()
@@ -371,7 +515,8 @@ async def get_daily_summary(order_date: str) -> dict:
                FROM orders o
                JOIN menus m ON o.menu_id = m.id
                WHERE o.order_date = $1 AND o.status IN ('confirmed', 'pending')
-               GROUP BY m.id, m.name, m.item_number, m.category ORDER BY m.category, count DESC""",
+               GROUP BY m.id, m.name, m.item_number, m.category
+               ORDER BY m.category, count DESC""",
             order_date
         )
         total = await db.fetchval(
@@ -386,12 +531,3 @@ async def get_all_users_for_notification() -> list:
     async with pool.acquire() as db:
         rows = await db.fetch("SELECT telegram_id FROM users")
         return [row["telegram_id"] for row in rows]
-
-
-async def save_user_phone(telegram_id: int, phone: str):
-    pool = await get_pool()
-    async with pool.acquire() as db:
-        await db.execute(
-            "UPDATE users SET phone = $1 WHERE telegram_id = $2",
-            phone, telegram_id
-        )
