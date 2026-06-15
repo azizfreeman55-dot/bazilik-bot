@@ -199,8 +199,8 @@ async def process_location(message: Message, state: FSMContext):
     referred_by_code=data.get("ref_code")
 )
 
-await save_user_phone(message.from_user.id, data.get("phone", ""))
-await set_user_lang(message.from_user.id, lang)
+    await save_user_phone(message.from_user.id, data.get("phone", ""))
+    await set_user_lang(message.from_user.id, lang)
 
     bonus_text = ""
     if data.get("ref_code"):
