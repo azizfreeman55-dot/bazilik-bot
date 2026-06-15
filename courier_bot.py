@@ -50,6 +50,9 @@ CATEGORY_ICONS = {
     "drink": "🥤",
 }
 
+# Telegram ID которым админ разрешил регистрацию
+_allowed_to_register = set()
+
 router = Router()
 
 
@@ -118,15 +121,15 @@ async def courier_start(message: Message, state: FSMContext):
         return
 
     # Если это admin ID — разрешаем регистрацию
-    if message.from_user.id not in COURIER_ADMIN_IDS:
-        # Проверяем есть ли уже зарегистрированные курьеры
-        couriers = await get_all_couriers()
-        if couriers:
-            await message.answer(
-                "❌ Доступ закрыт.\n\n"
-                "Обратитесь к администратору Bazilik Catering для получения доступа."
-            )
-            return
+
+
+
+
+
+
+
+
+
 
     await state.set_state(CourierReg.waiting_name)
     await message.answer(
@@ -679,3 +682,97 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
+# ─── Добавление курьера (только для админа) ───────────────────────────────────
+
+# Список telegram_id которым разрешена регистрация
+_allowed_to_register = set()
+
+
+@router.message(F.text.startswith("/addcourier"))
+async def admin_add_courier(message: Message):
+    if message.from_user.id not in COURIER_ADMIN_IDS:
+        return
+
+    parts = message.text.strip().split()
+    if len(parts) < 2:
+        await message.answer(
+            "❌ Укажите Telegram ID курьера.\n\n"
+            "Пример: `/addcourier 123456789`\n\n"
+            "Попросите курьера написать боту @userinfobot чтобы узнать свой ID.",
+            parse_mode="Markdown"
+        )
+        return
+
+    try:
+        courier_telegram_id = int(parts[1])
+    except ValueError:
+        await message.answer("❌ Неверный формат ID. Введите числовой Telegram ID.")
+        return
+
+    # Добавляем в список разрешённых
+    _allowed_to_register.add(courier_telegram_id)
+
+    # Отправляем приглашение курьеру
+    try:
+        await message.bot.send_message(
+            courier_telegram_id,
+            "🚚 *Добро пожаловать в Bazilik Courier!*\n\n"
+            "Администратор открыл вам доступ.\n"
+            "Нажмите /start для регистрации.",
+            parse_mode="Markdown"
+        )
+        await message.answer(
+            f"✅ Доступ открыт!\n\n"
+            f"Telegram ID: `{courier_telegram_id}`\n"
+            f"Курьер получил уведомление и может зарегистрироваться.",
+            parse_mode="Markdown"
+        )
+    except Exception:
+        await message.answer(
+            f"✅ Доступ открыт для ID `{courier_telegram_id}`.\n\n"
+            f"⚠️ Не удалось отправить уведомление — курьер должен сам написать боту /start",
+            parse_mode="Markdown"
+        )
+
+
+@router.message(F.text.startswith("/removecourier"))
+async def admin_remove_courier(message: Message):
+    """Деактивировать курьера по telegram_id"""
+    if message.from_user.id not in COURIER_ADMIN_IDS:
+        return
+
+    parts = message.text.strip().split()
+    if len(parts) < 2:
+        await message.answer(
+            "❌ Укажите Telegram ID курьера.\n\n"
+            "Пример: `/removecourier 123456789`",
+            parse_mode="Markdown"
+        )
+        return
+
+    try:
+        courier_telegram_id = int(parts[1])
+    except ValueError:
+        await message.answer("❌ Неверный формат ID.")
+        return
+
+    from database.db import get_pool
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        result = await db.fetchrow(
+            "SELECT full_name FROM couriers WHERE telegram_id = $1", courier_telegram_id
+        )
+        if not result:
+            await message.answer("❌ Курьер с таким ID не найден.")
+            return
+        await db.execute(
+            "UPDATE couriers SET is_active = FALSE WHERE telegram_id = $1",
+            courier_telegram_id
+        )
+
+    await message.answer(
+        f"✅ Курьер *{result['full_name']}* деактивирован.",
+        parse_mode="Markdown"
+    )
