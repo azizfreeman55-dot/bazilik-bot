@@ -120,42 +120,7 @@ async def init_db():
             )
         """)
 
-        # ─── Таблицы для курьерской системы ───────────────────────────────
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS couriers (
-                id SERIAL PRIMARY KEY,
-                telegram_id BIGINT UNIQUE NOT NULL,
-                full_name TEXT NOT NULL,
-                phone TEXT,
-                is_active BOOLEAN DEFAULT TRUE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS delivery_routes (
-                id SERIAL PRIMARY KEY,
-                courier_id INTEGER REFERENCES couriers(id),
-                delivery_date TEXT NOT NULL,
-                status TEXT DEFAULT 'pending',
-                started_at TIMESTAMP,
-                finished_at TIMESTAMP,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(courier_id, delivery_date)
-            )
-        """)
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS delivery_stops (
-                id SERIAL PRIMARY KEY,
-                route_id INTEGER REFERENCES delivery_routes(id),
-                company_id INTEGER REFERENCES companies(id),
-                stop_order INTEGER NOT NULL,
-                status TEXT DEFAULT 'pending',
-                delivered_at TIMESTAMP,
-                note TEXT
-            )
-        """)
-
-        # Миграции
+        # Миграции для существующей БД
         await db.execute("""
             DO $$
             BEGIN
@@ -308,9 +273,10 @@ async def get_company_ranking(city: str = "Ташкент") -> list:
         return [dict(r) for r in rows]
 
 
-# ─── Меню ─────────────────────────────────────────────────────────────────────
+# ─── Разовое меню по датам ────────────────────────────────────────────────────
 
 async def get_menu(menu_date: str, category: str = "main") -> list:
+    """Получить меню по дате. Если нет — подставляем из weekly_menu по дню недели."""
     pool = await get_pool()
     async with pool.acquire() as db:
         rows = await db.fetch(
@@ -322,8 +288,9 @@ async def get_menu(menu_date: str, category: str = "main") -> list:
         if rows:
             return [dict(r) for r in rows]
 
+        # Фолбэк: постоянное меню по дню недели
         d = date.fromisoformat(menu_date)
-        day_num = d.weekday()
+        day_num = d.weekday()  # 0=Пн, 6=Вс
         weekly_rows = await db.fetch(
             """SELECT * FROM weekly_menu
                WHERE day_of_week = $1 AND is_active = 1 AND category = $2
@@ -333,6 +300,7 @@ async def get_menu(menu_date: str, category: str = "main") -> list:
         if not weekly_rows:
             return []
 
+        # Копируем в menus на эту дату чтобы можно было оформить заказ
         for item in weekly_rows:
             await db.execute(
                 """INSERT INTO menus (menu_date, item_number, name, description, price, photo_id, category)
@@ -353,6 +321,7 @@ async def get_menu(menu_date: str, category: str = "main") -> list:
 
 
 async def get_menu_categories(menu_date: str) -> list:
+    """Категории на дату. Если нет — берём из weekly_menu по дню недели."""
     pool = await get_pool()
     async with pool.acquire() as db:
         rows = await db.fetch(
@@ -376,6 +345,7 @@ async def get_menu_categories(menu_date: str) -> list:
 
 
 async def set_menu(menu_date: str, items: list, category: str = "main"):
+    """Сохранить разовое меню на конкретную дату"""
     pool = await get_pool()
     async with pool.acquire() as db:
         await db.execute(
@@ -392,7 +362,10 @@ async def set_menu(menu_date: str, items: list, category: str = "main"):
             )
 
 
+# ─── Постоянное меню по дням недели ──────────────────────────────────────────
+
 async def set_weekly_menu(day_of_week: int, items: list, category: str = "main"):
+    """Сохранить постоянное меню для дня недели (0=Пн, 6=Вс)"""
     pool = await get_pool()
     async with pool.acquire() as db:
         await db.execute(
@@ -434,6 +407,7 @@ async def get_weekly_menu_categories(day_of_week: int) -> list:
 
 
 async def get_all_weekly_menu_summary() -> dict:
+    """Сводка постоянного меню по всем дням для админки"""
     pool = await get_pool()
     days = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
     result = {}
@@ -450,6 +424,7 @@ async def get_all_weekly_menu_summary() -> dict:
 
 
 async def delete_weekly_menu_day(day_of_week: int):
+    """Удалить всё постоянное меню для дня недели"""
     pool = await get_pool()
     async with pool.acquire() as db:
         await db.execute(
@@ -467,8 +442,8 @@ async def get_today_order(telegram_id: int, order_date: str) -> dict | None:
                FROM orders o
                JOIN users u ON o.user_id = u.id
                JOIN menus m ON o.menu_id = m.id
-               WHERE u.telegram_id = $1 AND o.order_date = $2 AND o.status != 'cancelled'""",
-            telegram_id, order_date
+               WHERE u.telegram_id = $1 AND o.order_date = $2::text AND o.status != 'cancelled'""",
+            telegram_id, str(order_date)
         )
         return dict(row) if row else None
 
@@ -482,9 +457,9 @@ async def create_order(telegram_id: int, menu_id: int, order_date: str,
         )
         await db.execute(
             """INSERT INTO orders (user_id, menu_id, order_date, status, is_auto_order)
-               VALUES ($1, $2, $3, 'pending', $4)
+               VALUES ($1, $2, $3::text, 'pending', $4)
                ON CONFLICT DO NOTHING""",
-            user["id"], menu_id, order_date, 1 if is_auto else 0
+            user["id"], menu_id, str(order_date), 1 if is_auto else 0
         )
         today = str(date.today())
         await db.execute(
@@ -513,8 +488,8 @@ async def cancel_order(telegram_id: int, order_date: str) -> bool:
         await db.execute(
             """UPDATE orders SET status = 'cancelled'
                WHERE user_id = (SELECT id FROM users WHERE telegram_id = $1)
-               AND order_date = $2 AND status = 'pending'""",
-            telegram_id, order_date
+               AND order_date = $2::text AND status = 'pending'""",
+            telegram_id, str(order_date)
         )
         await db.execute(
             "UPDATE users SET total_orders = total_orders - 1, points = points - 5 WHERE telegram_id = $1",
@@ -527,8 +502,8 @@ async def close_orders_for_date(order_date: str):
     pool = await get_pool()
     async with pool.acquire() as db:
         await db.execute(
-            "UPDATE orders SET status = 'confirmed' WHERE order_date = $1 AND status = 'pending'",
-            order_date
+            "UPDATE orders SET status = 'confirmed' WHERE order_date = $1::text AND status = 'pending'",
+            str(order_date)
         )
 
 
@@ -556,216 +531,3 @@ async def get_all_users_for_notification() -> list:
     async with pool.acquire() as db:
         rows = await db.fetch("SELECT telegram_id FROM users")
         return [row["telegram_id"] for row in rows]
-
-
-# ─── Курьерская система ───────────────────────────────────────────────────────
-
-async def get_courier(telegram_id: int) -> dict | None:
-    pool = await get_pool()
-    async with pool.acquire() as db:
-        row = await db.fetchrow(
-            "SELECT * FROM couriers WHERE telegram_id = $1 AND is_active = TRUE",
-            telegram_id
-        )
-        return dict(row) if row else None
-
-
-async def create_courier(telegram_id: int, full_name: str, phone: str) -> dict:
-    pool = await get_pool()
-    async with pool.acquire() as db:
-        await db.execute(
-            """INSERT INTO couriers (telegram_id, full_name, phone)
-               VALUES ($1, $2, $3)
-               ON CONFLICT (telegram_id) DO UPDATE SET full_name=$2, phone=$3, is_active=TRUE""",
-            telegram_id, full_name, phone
-        )
-        row = await db.fetchrow(
-            "SELECT * FROM couriers WHERE telegram_id = $1", telegram_id
-        )
-        return dict(row)
-
-
-async def get_all_couriers() -> list:
-    pool = await get_pool()
-    async with pool.acquire() as db:
-        rows = await db.fetch(
-            "SELECT * FROM couriers WHERE is_active = TRUE ORDER BY full_name"
-        )
-        return [dict(r) for r in rows]
-
-
-async def get_orders_by_company(order_date: str) -> list:
-    """Заказы сгруппированные по компаниям для распределения курьерам"""
-    pool = await get_pool()
-    async with pool.acquire() as db:
-        rows = await db.fetch(
-            """SELECT
-                c.id as company_id,
-                c.name as company_name,
-                c.address,
-                c.maps_link,
-                COUNT(o.id) as order_count
-               FROM orders o
-               JOIN users u ON o.user_id = u.id
-               JOIN companies c ON u.company_id = c.id
-               WHERE o.order_date = $1 AND o.status != 'cancelled'
-               GROUP BY c.id, c.name, c.address, c.maps_link
-               ORDER BY order_count DESC""",
-            order_date
-        )
-        return [dict(r) for r in rows]
-
-
-async def get_company_order_details(company_id: int, order_date: str) -> list:
-    """Детальный список заказов по компании — каждый клиент и его блюда"""
-    pool = await get_pool()
-    async with pool.acquire() as db:
-        rows = await db.fetch(
-            """SELECT
-                u.full_name,
-                u.phone,
-                m.name as meal_name,
-                m.category,
-                m.price
-               FROM orders o
-               JOIN users u ON o.user_id = u.id
-               JOIN menus m ON o.menu_id = m.id
-               WHERE u.company_id = $1
-               AND o.order_date = $2
-               AND o.status != 'cancelled'
-               ORDER BY u.full_name, m.category""",
-            company_id, order_date
-        )
-        return [dict(r) for r in rows]
-
-
-async def create_delivery_route(courier_id: int, delivery_date: str,
-                                 company_ids: list) -> int:
-    """Создать маршрут для курьера с список компаний"""
-    pool = await get_pool()
-    async with pool.acquire() as db:
-        # Удаляем старый маршрут если был
-        old = await db.fetchrow(
-            "SELECT id FROM delivery_routes WHERE courier_id=$1 AND delivery_date=$2",
-            courier_id, delivery_date
-        )
-        if old:
-            await db.execute(
-                "DELETE FROM delivery_stops WHERE route_id=$1", old["id"]
-            )
-            await db.execute(
-                "DELETE FROM delivery_routes WHERE id=$1", old["id"]
-            )
-
-        # Создаём новый маршрут
-        route = await db.fetchrow(
-            """INSERT INTO delivery_routes (courier_id, delivery_date, status)
-               VALUES ($1, $2, 'pending') RETURNING id""",
-            courier_id, delivery_date
-        )
-        route_id = route["id"]
-
-        # Добавляем остановки
-        for i, company_id in enumerate(company_ids, 1):
-            await db.execute(
-                """INSERT INTO delivery_stops (route_id, company_id, stop_order, status)
-                   VALUES ($1, $2, $3, 'pending')""",
-                route_id, company_id, i
-            )
-
-    return route_id
-
-
-async def get_courier_route(courier_id: int, delivery_date: str) -> dict | None:
-    """Получить маршрут курьера на дату"""
-    pool = await get_pool()
-    async with pool.acquire() as db:
-        route = await db.fetchrow(
-            """SELECT * FROM delivery_routes
-               WHERE courier_id = $1 AND delivery_date = $2""",
-            courier_id, delivery_date
-        )
-        if not route:
-            return None
-
-        stops = await db.fetch(
-            """SELECT ds.*, c.name as company_name, c.address, c.maps_link,
-               COUNT(o.id) as order_count
-               FROM delivery_stops ds
-               JOIN companies c ON ds.company_id = c.id
-               LEFT JOIN orders o ON o.order_date = $2
-                   AND o.status != 'cancelled'
-                   AND o.user_id IN (
-                       SELECT id FROM users WHERE company_id = c.id
-                   )
-               WHERE ds.route_id = $1
-               GROUP BY ds.id, c.name, c.address, c.maps_link
-               ORDER BY ds.stop_order""",
-            route["id"], delivery_date
-        )
-
-        return {
-            "route": dict(route),
-            "stops": [dict(s) for s in stops]
-        }
-
-
-async def mark_stop_delivered(stop_id: int, note: str = None):
-    """Отметить остановку как доставленную"""
-    pool = await get_pool()
-    async with pool.acquire() as db:
-        await db.execute(
-            """UPDATE delivery_stops
-               SET status = 'delivered', delivered_at = NOW(), note = $2
-               WHERE id = $1""",
-            stop_id, note
-        )
-        # Обновляем статус заказов этой компании
-        stop = await db.fetchrow(
-            "SELECT route_id, company_id FROM delivery_stops WHERE id = $1", stop_id
-        )
-        route = await db.fetchrow(
-            "SELECT delivery_date FROM delivery_routes WHERE id = $1", stop["route_id"]
-        )
-        await db.execute(
-            """UPDATE orders SET status = 'delivered', updated_at = NOW()
-               WHERE order_date = $1
-               AND status = 'confirmed'
-               AND user_id IN (
-                   SELECT id FROM users WHERE company_id = $2
-               )""",
-            route["delivery_date"], stop["company_id"]
-        )
-
-
-async def mark_route_started(route_id: int):
-    pool = await get_pool()
-    async with pool.acquire() as db:
-        await db.execute(
-            "UPDATE delivery_routes SET status='active', started_at=NOW() WHERE id=$1",
-            route_id
-        )
-
-
-async def mark_route_finished(route_id: int):
-    pool = await get_pool()
-    async with pool.acquire() as db:
-        await db.execute(
-            "UPDATE delivery_routes SET status='finished', finished_at=NOW() WHERE id=$1",
-            route_id
-        )
-
-
-async def get_company_clients_telegram_ids(company_id: int, order_date: str) -> list:
-    """Telegram ID клиентов компании у которых есть заказ на эту дату"""
-    pool = await get_pool()
-    async with pool.acquire() as db:
-        rows = await db.fetch(
-            """SELECT u.telegram_id FROM users u
-               JOIN orders o ON o.user_id = u.id
-               WHERE u.company_id = $1
-               AND o.order_date = $2
-               AND o.status != 'cancelled'""",
-            company_id, order_date
-        )
-        return [r["telegram_id"] for r in rows]
