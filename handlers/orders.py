@@ -87,8 +87,8 @@ async def was_balance_deducted_for_order(user_id: int, order_date: str) -> bool:
                WHERE user_id = $1
                AND type = 'debit'
                AND description IN ('Заказ обеда', 'Tushlik buyurtmasi')
-               AND DATE(created_at) = $2::date""",
-            user_id, order_date
+               AND DATE(created_at) = $2::text::date""",
+            user_id, str(order_date)
         )
     return row is not None
 
@@ -122,7 +122,6 @@ async def order_lunch(message: Message):
         )
         return
 
-    # Смотрим какие категории есть на завтра
     categories = await get_menu_categories(tomorrow)
     if not categories:
         await message.answer(t(lang, "no_menu"))
@@ -168,7 +167,6 @@ async def show_category_menu(callback: CallbackQuery):
     for item in menu:
         text += f"{item['item_number']}. {item['name']} — {item['price']:,} сум\n"
 
-    # Показываем фото первого блюда с фото если есть
     first_photo = next((i for i in menu if i.get("photo_id")), None)
     if first_photo:
         try:
@@ -238,7 +236,6 @@ async def process_order_selection(callback: CallbackQuery):
         await callback.answer("❌", show_alert=True)
         return
 
-    # Получаем цену из меню
     pool = await get_pool()
     async with pool.acquire() as db:
         menu_item = await db.fetchrow("SELECT price, category FROM menus WHERE id = $1", menu_id)
@@ -246,7 +243,6 @@ async def process_order_selection(callback: CallbackQuery):
     category = menu_item["category"] if menu_item else "main"
     cat_name = CATEGORY_NAMES.get(category, {}).get(lang, category)
 
-    # Пробуем списать с баланса
     deducted = await deduct_balance(
         user["id"], item_price,
         "Заказ обеда" if lang == "ru" else "Tushlik buyurtmasi"
@@ -363,13 +359,14 @@ async def confirm_cancel_order(callback: CallbackQuery):
     tomorrow = get_tomorrow_date()
     user = await get_user(callback.from_user.id)
 
-    # Получаем цену заказанного блюда
     order = await get_today_order(callback.from_user.id, tomorrow)
-    pool = await get_pool()
     item_price = 35000
     if order:
+        pool = await get_pool()
         async with pool.acquire() as db:
-            menu_item = await db.fetchrow("SELECT price FROM menus WHERE id = $1", order["menu_id"])
+            menu_item = await db.fetchrow(
+                "SELECT price FROM menus WHERE id = $1", order["menu_id"]
+            )
         if menu_item:
             item_price = menu_item["price"]
 
