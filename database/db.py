@@ -378,14 +378,32 @@ async def get_menu_categories(menu_date: str) -> list:
 async def set_menu(menu_date: str, items: list, category: str = "main"):
     pool = await get_pool()
     async with pool.acquire() as db:
-        await db.execute(
-            "DELETE FROM menus WHERE menu_date = $1 AND category = $2",
+        # Сначала пробуем удалить старые позиции этой категории/даты.
+        # Если на какую-то позицию уже есть заказ — её нельзя удалить (FK constraint),
+        # поэтому такие позиции просто деактивируем вместо удаления.
+        old_items = await db.fetch(
+            "SELECT id FROM menus WHERE menu_date = $1 AND category = $2",
             menu_date, category
         )
+        for old in old_items:
+            try:
+                await db.execute("DELETE FROM menus WHERE id = $1", old["id"])
+            except Exception:
+                # Есть заказы на эту позицию — деактивируем, не удаляем
+                await db.execute(
+                    "UPDATE menus SET is_active = 0 WHERE id = $1", old["id"]
+                )
+
         for item in items:
             await db.execute(
                 """INSERT INTO menus (menu_date, item_number, name, description, price, photo_id, category)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7)""",
+                   VALUES ($1, $2, $3, $4, $5, $6, $7)
+                   ON CONFLICT (menu_date, item_number, category)
+                   DO UPDATE SET name = EXCLUDED.name,
+                                 description = EXCLUDED.description,
+                                 price = EXCLUDED.price,
+                                 photo_id = EXCLUDED.photo_id,
+                                 is_active = 1""",
                 menu_date, item["item_number"], item["name"],
                 item.get("description", ""), item.get("price", 35000),
                 item.get("photo_id"), category
