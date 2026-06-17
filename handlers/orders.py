@@ -41,8 +41,10 @@ async def get_user_balance(user_id: int) -> int:
     return row["balance"] if row else 0
 
 
-async def deduct_balance(user_id: int, amount: int, description: str) -> bool:
+async def deduct_balance(user_id: int, amount: int, description: str, order_date: str) -> bool:
+    """Списывает сумму с баланса. description содержит order_date для точного поиска при отмене."""
     pool = await get_pool()
+    full_description = f"{description}|{order_date}"
     async with pool.acquire() as db:
         row = await db.fetchrow(
             "SELECT balance FROM user_balance WHERE user_id = $1", user_id
@@ -57,7 +59,7 @@ async def deduct_balance(user_id: int, amount: int, description: str) -> bool:
         await db.execute(
             """INSERT INTO balance_transactions (user_id, amount, type, description)
                VALUES ($1, $2, 'debit', $3)""",
-            user_id, amount, description
+            user_id, amount, full_description
         )
     return True
 
@@ -79,18 +81,38 @@ async def refund_balance(user_id: int, amount: int, description: str):
         )
 
 
-async def was_balance_deducted_for_order(user_id: int, order_date: str) -> bool:
+async def find_deduction_for_order(user_id: int, order_date: str) -> dict | None:
+    """
+    Ищем запись о списании за заказ на конкретную order_date.
+    Маркер |order_date зашит в description при списании (deduct_balance).
+    Возвращает {"id":..., "amount":...} если списание было И ещё не возвращено.
+    """
     pool = await get_pool()
+    debit_marker = f"|{order_date}"
+    refund_marker = f"REFUND|{order_date}"
     async with pool.acquire() as db:
-        row = await db.fetchrow(
-            """SELECT id FROM balance_transactions
+        debit = await db.fetchrow(
+            """SELECT id, amount FROM balance_transactions
                WHERE user_id = $1
                AND type = 'debit'
-               AND description IN ('Заказ обеда', 'Tushlik buyurtmasi')
-               AND DATE(created_at) = $2::text::date""",
-            user_id, str(order_date)
+               AND description LIKE '%' || $2
+               ORDER BY created_at DESC LIMIT 1""",
+            user_id, debit_marker
         )
-    return row is not None
+        if not debit:
+            return None
+
+        already_refunded = await db.fetchrow(
+            """SELECT id FROM balance_transactions
+               WHERE user_id = $1
+               AND type = 'credit'
+               AND description LIKE '%' || $2 || '%'""",
+            user_id, refund_marker
+        )
+        if already_refunded:
+            return None
+
+        return {"id": debit["id"], "amount": debit["amount"]}
 
 
 # ─── Шаг 1: Показываем категории ──────────────────────────────────────────────
@@ -245,7 +267,8 @@ async def process_order_selection(callback: CallbackQuery):
 
     deducted = await deduct_balance(
         user["id"], item_price,
-        "Заказ обеда" if lang == "ru" else "Tushlik buyurtmasi"
+        "Заказ обеда" if lang == "ru" else "Tushlik buyurtmasi",
+        tomorrow
     )
 
     if deducted:
@@ -359,27 +382,21 @@ async def confirm_cancel_order(callback: CallbackQuery):
     tomorrow = get_tomorrow_date()
     user = await get_user(callback.from_user.id)
 
-    order = await get_today_order(callback.from_user.id, tomorrow)
-    item_price = 35000
-    if order:
-        pool = await get_pool()
-        async with pool.acquire() as db:
-            menu_item = await db.fetchrow(
-                "SELECT price FROM menus WHERE id = $1", order["menu_id"]
-            )
-        if menu_item:
-            item_price = menu_item["price"]
+    # Ищем была ли запись о списании именно за заказ на эту дату
+    deduction = await find_deduction_for_order(user["id"], tomorrow)
 
-    was_deducted = await was_balance_deducted_for_order(user["id"], tomorrow)
     await cancel_order(callback.from_user.id, tomorrow)
 
-    if was_deducted:
+    if deduction:
+        refund_amount = deduction["amount"]
+        # Помечаем явным маркером REFUND чтобы не вернуть дважды
+        refund_marker = f"REFUND|{tomorrow}"
         await refund_balance(
-            user["id"], item_price,
-            "Возврат за отмену заказа" if lang == "ru" else "Buyurtma bekor qilingani uchun qaytarish"
+            user["id"], refund_amount,
+            f"{'Возврат за отмену заказа' if lang == 'ru' else 'Buyurtma bekor qilingani uchun qaytarish'} | {refund_marker}"
         )
         refund_text = (
-            f"\n💳 +{item_price:,} сум "
+            f"\n💳 +{refund_amount:,} сум "
             f"{'возвращено на баланс' if lang == 'ru' else 'hisobga qaytarildi'}"
         )
     else:
