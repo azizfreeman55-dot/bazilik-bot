@@ -1,519 +1,787 @@
-from datetime import date, timedelta
-from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.filters import Filter
-from aiogram.utils.keyboard import InlineKeyboardBuilder
-
-from database.db import (
-    get_daily_summary, get_all_users_for_notification,
-    close_orders_for_date, get_pool, set_menu,
-    set_weekly_menu, get_all_weekly_menu_summary,
-    delete_weekly_menu_day, get_weekly_menu_categories
-)
-from keyboards.keyboards import admin_keyboard
-from config import ADMIN_IDS
-
-router = Router()
-
-CATEGORIES = {
-    "main":    {"ru": "🍱 Основные блюда",  "uz": "🍱 Asosiy taomlar"},
-    "salad":   {"ru": "🥗 Салаты",           "uz": "🥗 Salatlar"},
-    "dessert": {"ru": "🍰 Десерты",          "uz": "🍰 Desertlar"},
-    "drink":   {"ru": "🥤 Напитки",          "uz": "🥤 Ichimliklar"},
-}
-
-DAYS_RU = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
-DAYS_SHORT = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
-
-
-class IsAdmin(Filter):
-    async def __call__(self, message: Message) -> bool:
-        return message.from_user.id in ADMIN_IDS
-
-
-class AddMenu(StatesGroup):
-    # Разовое меню по дате
-    waiting_category = State()
-    waiting_photo = State()
-    waiting_name = State()
-    waiting_price = State()
-    waiting_more = State()
-    # Постоянное меню по дням недели
-    waiting_weekly_day = State()
-    waiting_weekly_category = State()
-    waiting_weekly_photo = State()
-    waiting_weekly_name = State()
-    waiting_weekly_price = State()
-    waiting_weekly_more = State()
-
-
-class Broadcast(StatesGroup):
-    waiting_message = State()
-
-
-# ─── Сводка заказов ───────────────────────────────────────────────────────────
-
-@router.callback_query(F.data == "admin_summary")
-async def admin_summary(callback: CallbackQuery):
-    if callback.from_user.id not in ADMIN_IDS:
-        await callback.answer("❌ Нет доступа", show_alert=True)
-        return
-
-    tomorrow = str(date.today() + timedelta(days=1))
-    summary = await get_daily_summary(tomorrow)
-
-    if not summary["items"]:
-        await callback.answer()
-        await callback.message.edit_text(
-            f"📊 Сводка на {tomorrow}\n\nЗаказов пока нет",
-            reply_markup=admin_keyboard()
-        )
-        return
-
-    text = f"📊 *Сводка заказов на {tomorrow}:*\n\n"
-    by_category = {}
-    for item in summary["items"]:
-        cat = item.get("category", "main")
-        by_category.setdefault(cat, []).append(item)
-
-    for cat, items in by_category.items():
-        cat_name = CATEGORIES.get(cat, {}).get("ru", cat)
-        text += f"*{cat_name}:*\n"
-        for item in items:
-            text += f"  • {item['name']}: *{item['count']} шт.*\n"
-        text += "\n"
-
-    text += f"📦 Всего: *{summary['total']} позиций*"
-
-    await callback.answer()
-    await callback.message.edit_text(
-        text, parse_mode="Markdown", reply_markup=admin_keyboard()
-    )
-
-
-# ─── Разовое меню по дате ─────────────────────────────────────────────────────
-
-@router.callback_query(F.data == "admin_add_menu")
-async def admin_add_menu_start(callback: CallbackQuery, state: FSMContext):
-    if callback.from_user.id not in ADMIN_IDS:
-        await callback.answer("❌ Нет доступа", show_alert=True)
-        return
-
-    builder = InlineKeyboardBuilder()
-    days = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
-    today = date.today()
-    for i in range(7):
-        d = today + timedelta(days=i)
-        label = "Сегодня" if i == 0 else "Завтра" if i == 1 else days[d.weekday()]
-        builder.button(text=f"📅 {label} ({d.strftime('%d.%m')})", callback_data=f"menu_date_{d}")
-    builder.adjust(2)
-    await callback.answer()
-    await callback.message.edit_text(
-        "🍽️ *Добавление меню на конкретную дату*\n\nВыберите день:",
-        parse_mode="Markdown",
-        reply_markup=builder.as_markup()
-    )
-
-
-@router.callback_query(F.data.startswith("menu_date_"))
-async def admin_menu_date_selected(callback: CallbackQuery, state: FSMContext):
-    if callback.from_user.id not in ADMIN_IDS:
-        await callback.answer("❌ Нет доступа", show_alert=True)
-        return
-
-    menu_date = callback.data.replace("menu_date_", "")
-    await state.update_data(menu_date=menu_date, items=[], item_number=1, mode="date")
-    await state.set_state(AddMenu.waiting_category)
-
-    builder = InlineKeyboardBuilder()
-    for key, names in CATEGORIES.items():
-        builder.button(text=names["ru"], callback_data=f"menu_cat_{key}")
-    builder.adjust(2)
-
-    await callback.answer()
-    await callback.message.edit_text(
-        f"📅 *Дата: {menu_date}*\n\nВыберите категорию:",
-        parse_mode="Markdown",
-        reply_markup=builder.as_markup()
-    )
-
-
-@router.callback_query(F.data.startswith("menu_cat_"), AddMenu.waiting_category)
-async def admin_category_selected(callback: CallbackQuery, state: FSMContext):
-    category = callback.data.replace("menu_cat_", "")
-    cat_name = CATEGORIES.get(category, {}).get("ru", category)
-    await state.update_data(category=category, items=[], item_number=1)
-    await state.set_state(AddMenu.waiting_photo)
-    await callback.answer()
-    await callback.message.answer(
-        f"*Категория: {cat_name}*\n\n*Позиция 1:*\n📸 Отправьте фото или напишите *нет*:",
-        parse_mode="Markdown"
-    )
-
-
-@router.message(AddMenu.waiting_photo)
-async def process_menu_photo(message: Message, state: FSMContext):
-    data = await state.get_data()
-    if message.photo:
-        photo_id = message.photo[-1].file_id
-    elif message.text and message.text.lower() in ("нет", "yo'q", "-"):
-        photo_id = None
-    else:
-        await message.answer("📸 Отправьте фото или напишите *нет*", parse_mode="Markdown")
-        return
-
-    await state.update_data(current_photo=photo_id)
-    await state.set_state(AddMenu.waiting_name)
-    await message.answer(
-        f"📝 Введите *название* позиции {data['item_number']}:",
-        parse_mode="Markdown"
-    )
-
-
-@router.message(AddMenu.waiting_name)
-async def process_menu_name(message: Message, state: FSMContext):
-    await state.update_data(current_name=message.text.strip())
-    await state.set_state(AddMenu.waiting_price)
-    data = await state.get_data()
-    cat = data.get("category", "main")
-    hints = {"main": "35 000", "salad": "15 000", "dessert": "12 000", "drink": "8 000"}
-    hint = hints.get(cat, "35 000")
-    await message.answer(
-        f"💰 Введите *цену* (сум):\n_(стандарт = {hint} сум — напишите 'стандарт')_",
-        parse_mode="Markdown"
-    )
-
-
-@router.message(AddMenu.waiting_price)
-async def process_menu_price(message: Message, state: FSMContext):
-    text = message.text.strip().lower()
-    data = await state.get_data()
-    cat = data.get("category", "main")
-    default_prices = {"main": 35000, "salad": 15000, "dessert": 12000, "drink": 8000}
-
-    if text == "стандарт":
-        price = default_prices.get(cat, 35000)
-    else:
-        try:
-            price = int(text.replace(" ", "").replace(",", ""))
-        except ValueError:
-            await message.answer("❌ Введите число. Например: 15000")
-            return
-
-    items = data.get("items", [])
-    items.append({
-        "item_number": data["item_number"],
-        "name": data["current_name"],
-        "price": price,
-        "photo_id": data.get("current_photo")
-    })
-    await state.update_data(items=items)
-    await state.set_state(AddMenu.waiting_more)
-
-    cat_name = CATEGORIES.get(cat, {}).get("ru", cat)
-    builder = InlineKeyboardBuilder()
-    builder.button(text="➕ Добавить ещё позицию", callback_data="menu_add_more")
-    builder.button(text="✅ Сохранить категорию", callback_data="menu_save")
-    builder.button(text="📂 Добавить другую категорию", callback_data="menu_add_category")
-    builder.adjust(1)
-
-    await message.answer(
-        f"✅ *Добавлено в {cat_name}:*\n"
-        f"• {data['current_name']} — {price:,} сум\n\n"
-        f"Всего в категории: {len(items)} позиций\n\nЧто дальше?",
-        parse_mode="Markdown",
-        reply_markup=builder.as_markup()
-    )
-
-
-@router.callback_query(F.data == "menu_add_more")
-async def menu_add_more(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    next_num = data["item_number"] + 1
-    await state.update_data(item_number=next_num)
-    await state.set_state(AddMenu.waiting_photo)
-    await callback.answer()
-    await callback.message.answer(
-        f"*Позиция {next_num}:*\n📸 Отправьте фото или напишите *нет*:",
-        parse_mode="Markdown"
-    )
-
-
-@router.callback_query(F.data == "menu_save")
-async def menu_save(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    items = data["items"]
-    category = data.get("category", "main")
-    cat_name = CATEGORIES.get(category, {}).get("ru", category)
-
-    if data.get("mode") == "weekly":
-        day = data["weekly_day"]
-        await set_weekly_menu(day, items, category)
-        day_name = DAYS_RU[day]
-        header = f"✅ *{cat_name} на {day_name} сохранены как постоянное меню!*\n\n"
-    else:
-        menu_date = data["menu_date"]
-        await set_menu(menu_date, items, category)
-        header = f"✅ *{cat_name} на {menu_date} сохранены!*\n\n"
-
-    await state.clear()
-    text = header
-    for item in items:
-        photo_text = "📸" if item.get("photo_id") else "  "
-        text += f"{photo_text} {item['item_number']}. {item['name']} — {item['price']:,} сум\n"
-
-    await callback.answer()
-    await callback.message.answer(text, parse_mode="Markdown", reply_markup=admin_keyboard())
-
-
-@router.callback_query(F.data == "menu_add_category")
-async def menu_add_another_category(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    items = data["items"]
-    category = data.get("category", "main")
-
-    if data.get("mode") == "weekly":
-        day = data["weekly_day"]
-        await set_weekly_menu(day, items, category)
-    else:
-        menu_date = data["menu_date"]
-        await set_menu(menu_date, items, category)
-
-    await state.update_data(items=[], item_number=1)
-    await state.set_state(AddMenu.waiting_category)
-
-    builder = InlineKeyboardBuilder()
-    for key, names in CATEGORIES.items():
-        builder.button(text=names["ru"], callback_data=f"menu_cat_{key}")
-    builder.button(text="✅ Всё готово", callback_data="menu_all_done")
-    builder.adjust(2)
-
-    await callback.answer()
-    await callback.message.answer(
-        "✅ Сохранено!\n\nВыберите следующую категорию:",
-        parse_mode="Markdown",
-        reply_markup=builder.as_markup()
-    )
-
-
-@router.callback_query(F.data == "menu_all_done")
-async def menu_all_done(callback: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await callback.answer()
-    await callback.message.answer(
-        "✅ *Меню полностью сохранено!*",
-        parse_mode="Markdown",
-        reply_markup=admin_keyboard()
-    )
-
-
-# ─── Постоянное меню по дням недели ──────────────────────────────────────────
-
-@router.callback_query(F.data == "admin_weekly_menu")
-async def admin_weekly_menu(callback: CallbackQuery):
-    if callback.from_user.id not in ADMIN_IDS:
-        await callback.answer("❌ Нет доступа", show_alert=True)
-        return
-
-    summary = await get_all_weekly_menu_summary()
-
-    builder = InlineKeyboardBuilder()
-    for day_num, info in summary.items():
-        cats = info["categories"]
-        if cats:
-            cat_icons = ""
-            if "main" in cats: cat_icons += "🍱"
-            if "salad" in cats: cat_icons += "🥗"
-            if "dessert" in cats: cat_icons += "🍰"
-            if "drink" in cats: cat_icons += "🥤"
-            label = f"✅ {info['day']} {cat_icons}"
-        else:
-            label = f"➕ {info['day']}"
-        builder.button(text=label, callback_data=f"weekly_day_{day_num}")
-    builder.button(text="◀️ Назад", callback_data="back_admin")
-    builder.adjust(2)
-
-    await callback.answer()
-    await callback.message.edit_text(
-        "📅 *Постоянное меню по дням недели*\n\n"
-        "✅ — меню настроено\n"
-        "➕ — нажмите чтобы добавить\n\n"
-        "Это меню автоматически показывается каждую неделю.\n"
-        "Можно перекрыть разовым меню на конкретную дату.",
-        parse_mode="Markdown",
-        reply_markup=builder.as_markup()
-    )
-
-
-@router.callback_query(F.data.startswith("weekly_day_"))
-async def weekly_day_selected(callback: CallbackQuery, state: FSMContext):
-    if callback.from_user.id not in ADMIN_IDS:
-        await callback.answer("❌ Нет доступа", show_alert=True)
-        return
-
-    day_num = int(callback.data.replace("weekly_day_", ""))
-    day_name = DAYS_RU[day_num]
-
-    # Показываем что уже есть + кнопки действий
-    cats = await get_weekly_menu_categories(day_num)
-    cat_text = ""
-    if cats:
-        icons = {"main": "🍱", "salad": "🥗", "dessert": "🍰", "drink": "🥤"}
-        for c in cats:
-            cat_text += f"  {icons.get(c,'')} {CATEGORIES.get(c,{}).get('ru', c)}\n"
-
-    builder = InlineKeyboardBuilder()
-    builder.button(text="➕ Добавить/изменить категорию", callback_data=f"weekly_add_{day_num}")
-    if cats:
-        builder.button(text="🗑 Удалить всё меню этого дня", callback_data=f"weekly_delete_{day_num}")
-    builder.button(text="◀️ Назад", callback_data="admin_weekly_menu")
-    builder.adjust(1)
-
-    status = f"*Настроено:*\n{cat_text}" if cats else "_Меню не добавлено_"
-    await callback.answer()
-    await callback.message.edit_text(
-        f"📅 *{day_name}*\n\n{status}",
-        parse_mode="Markdown",
-        reply_markup=builder.as_markup()
-    )
-
-
-@router.callback_query(F.data.startswith("weekly_add_"))
-async def weekly_add_category(callback: CallbackQuery, state: FSMContext):
-    day_num = int(callback.data.replace("weekly_add_", ""))
-    day_name = DAYS_RU[day_num]
-
-    await state.update_data(
-        weekly_day=day_num, items=[], item_number=1, mode="weekly"
-    )
-    await state.set_state(AddMenu.waiting_category)
-
-    builder = InlineKeyboardBuilder()
-    for key, names in CATEGORIES.items():
-        builder.button(text=names["ru"], callback_data=f"menu_cat_{key}")
-    builder.adjust(2)
-
-    await callback.answer()
-    await callback.message.edit_text(
-        f"📅 *Постоянное меню — {day_name}*\n\nВыберите категорию:",
-        parse_mode="Markdown",
-        reply_markup=builder.as_markup()
-    )
-
-
-@router.callback_query(F.data.startswith("weekly_delete_"))
-async def weekly_delete_confirm(callback: CallbackQuery):
-    day_num = int(callback.data.replace("weekly_delete_", ""))
-    day_name = DAYS_RU[day_num]
-
-    builder = InlineKeyboardBuilder()
-    builder.button(text="✅ Да, удалить", callback_data=f"weekly_delete_confirm_{day_num}")
-    builder.button(text="◀️ Отмена", callback_data=f"weekly_day_{day_num}")
-    builder.adjust(2)
-
-    await callback.answer()
-    await callback.message.edit_text(
-        f"❓ Удалить всё постоянное меню для *{day_name}*?",
-        parse_mode="Markdown",
-        reply_markup=builder.as_markup()
-    )
-
-
-@router.callback_query(F.data.startswith("weekly_delete_confirm_"))
-async def weekly_delete_execute(callback: CallbackQuery):
-    day_num = int(callback.data.replace("weekly_delete_confirm_", ""))
-    day_name = DAYS_RU[day_num]
-    await delete_weekly_menu_day(day_num)
-    await callback.answer()
-    await callback.message.edit_text(
-        f"✅ Постоянное меню для *{day_name}* удалено.",
-        parse_mode="Markdown",
-        reply_markup=admin_keyboard()
-    )
-
-
-# ─── Рассылка ─────────────────────────────────────────────────────────────────
-
-@router.callback_query(F.data == "admin_broadcast")
-async def admin_broadcast_start(callback: CallbackQuery, state: FSMContext):
-    if callback.from_user.id not in ADMIN_IDS:
-        await callback.answer("❌ Нет доступа", show_alert=True)
-        return
-    await state.set_state(Broadcast.waiting_message)
-    await callback.answer()
-    await callback.message.answer("📨 Введите сообщение для рассылки всем пользователям:")
-
-
-@router.message(Broadcast.waiting_message)
-async def process_broadcast(message: Message, state: FSMContext):
-    if message.from_user.id not in ADMIN_IDS:
-        return
-    users = await get_all_users_for_notification()
-    success = 0
-    failed = 0
-    await message.answer(f"📨 Начинаю рассылку для {len(users)} пользователей...")
-    for user_id in users:
-        try:
-            await message.bot.send_message(user_id, message.text)
-            success += 1
-        except Exception:
-            failed += 1
-    await state.clear()
-    await message.answer(
-        f"✅ Рассылка завершена!\n• Успешно: {success}\n• Ошибок: {failed}",
-        reply_markup=admin_keyboard()
-    )
+import logging
+import asyncpg
+from datetime import date
+from config import DATABASE_URL
+
+logger = logging.getLogger(__name__)
+
+_pool = None
+
+
+async def get_pool():
+    global _pool
+    if _pool is None:
+        _pool = await asyncpg.create_pool(DATABASE_URL)
+    return _pool
+
+
+async def init_db():
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS companies (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                total_orders INTEGER DEFAULT 0,
+                city TEXT DEFAULT 'Ташкент',
+                address TEXT,
+                maps_link TEXT,
+                contact TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                telegram_id BIGINT UNIQUE NOT NULL,
+                full_name TEXT,
+                username TEXT,
+                company_id INTEGER REFERENCES companies(id),
+                points INTEGER DEFAULT 0,
+                total_orders INTEGER DEFAULT 0,
+                streak_days INTEGER DEFAULT 0,
+                last_order_date TEXT,
+                referral_code TEXT UNIQUE,
+                referred_by INTEGER REFERENCES users(id),
+                auto_order INTEGER DEFAULT 0,
+                auto_order_item INTEGER DEFAULT 1,
+                status TEXT DEFAULT 'Новый',
+                lang TEXT DEFAULT 'ru',
+                phone TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS menus (
+                id SERIAL PRIMARY KEY,
+                menu_date TEXT NOT NULL,
+                item_number INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT,
+                price INTEGER DEFAULT 35000,
+                photo_id TEXT,
+                is_active INTEGER DEFAULT 1,
+                category TEXT DEFAULT 'main',
+                UNIQUE(menu_date, item_number, category)
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS weekly_menu (
+                id SERIAL PRIMARY KEY,
+                day_of_week INTEGER NOT NULL,
+                item_number INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT,
+                price INTEGER DEFAULT 35000,
+                photo_id TEXT,
+                category TEXT DEFAULT 'main',
+                is_active INTEGER DEFAULT 1,
+                UNIQUE(day_of_week, item_number, category)
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS orders (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id),
+                menu_id INTEGER REFERENCES menus(id),
+                order_date TEXT NOT NULL,
+                status TEXT DEFAULT 'pending',
+                is_auto_order INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS weekly_orders (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id),
+                day_of_week INTEGER NOT NULL,
+                menu_item INTEGER NOT NULL,
+                is_active INTEGER DEFAULT 1,
+                UNIQUE(user_id, day_of_week)
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS balance_transactions (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id),
+                amount INTEGER NOT NULL,
+                type TEXT NOT NULL,
+                description TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS user_balance (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id) UNIQUE,
+                balance INTEGER DEFAULT 0,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # ─── Таблицы для курьерской системы ───────────────────────────────
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS couriers (
+                id SERIAL PRIMARY KEY,
+                telegram_id BIGINT UNIQUE NOT NULL,
+                full_name TEXT NOT NULL,
+                phone TEXT,
+                is_active BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS delivery_routes (
+                id SERIAL PRIMARY KEY,
+                courier_id INTEGER REFERENCES couriers(id),
+                delivery_date TEXT NOT NULL,
+                status TEXT DEFAULT 'pending',
+                started_at TIMESTAMP,
+                finished_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(courier_id, delivery_date)
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS delivery_stops (
+                id SERIAL PRIMARY KEY,
+                route_id INTEGER REFERENCES delivery_routes(id),
+                company_id INTEGER REFERENCES companies(id),
+                stop_order INTEGER NOT NULL,
+                status TEXT DEFAULT 'pending',
+                delivered_at TIMESTAMP,
+                note TEXT
+            )
+        """)
+
+        # Миграции для существующей БД
+        await db.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='users' AND column_name='birthday'
+                ) THEN
+                    ALTER TABLE users ADD COLUMN birthday DATE;
+                END IF;
+            END
+            $$;
+        """)
+        await db.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='menus' AND column_name='category'
+                ) THEN
+                    ALTER TABLE menus ADD COLUMN category TEXT DEFAULT 'main';
+                END IF;
+            END
+            $$;
+        """)
+
+    logger.info("✅ Таблицы созданы / обновлены")
 
 
 # ─── Пользователи ─────────────────────────────────────────────────────────────
 
-@router.callback_query(F.data == "admin_users")
-async def admin_users(callback: CallbackQuery):
-    if callback.from_user.id not in ADMIN_IDS:
-        await callback.answer("❌ Нет доступа", show_alert=True)
-        return
+async def get_user(telegram_id: int) -> dict | None:
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        row = await db.fetchrow(
+            """SELECT u.*, c.name as company_name, c.total_orders as company_orders
+               FROM users u
+               LEFT JOIN companies c ON u.company_id = c.id
+               WHERE u.telegram_id = $1""",
+            telegram_id
+        )
+        return dict(row) if row else None
+
+
+async def get_user_lang(telegram_id: int) -> str:
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        row = await db.fetchrow(
+            "SELECT lang FROM users WHERE telegram_id = $1", telegram_id
+        )
+        return row["lang"] if row else "ru"
+
+
+async def set_user_lang(telegram_id: int, lang: str):
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            "UPDATE users SET lang = $1 WHERE telegram_id = $2",
+            lang, telegram_id
+        )
+
+
+async def create_user(telegram_id: int, full_name: str, username: str,
+                      company_id: int, referral_code: str, referred_by_code: str = None) -> dict:
+    referred_by_id = None
+    bonus_points = 0
+
+    if referred_by_code:
+        pool = await get_pool()
+        async with pool.acquire() as db:
+            ref_row = await db.fetchrow(
+                "SELECT id FROM users WHERE referral_code = $1", referred_by_code
+            )
+            if ref_row:
+                referred_by_id = ref_row["id"]
+                bonus_points = 10
 
     pool = await get_pool()
     async with pool.acquire() as db:
-        users = await db.fetch("""
-            SELECT u.full_name, u.phone, u.total_orders, u.points,
-            u.status, u.created_at, c.name as company_name
-            FROM users u
-            LEFT JOIN companies c ON u.company_id = c.id
-            ORDER BY u.total_orders DESC
-        """)
-
-    if not users:
-        await callback.answer()
-        await callback.message.edit_text("👥 Пользователей пока нет", reply_markup=admin_keyboard())
-        return
-
-    text = f"👥 *Все пользователи ({len(users)} чел.)*\n\n"
-    for i, u in enumerate(users, 1):
-        phone = f"+{u['phone']}" if u.get('phone') else "—"
-        text += (
-            f"{i}. *{u['full_name']}*\n"
-            f"   📱 {phone}\n"
-            f"   🏢 {u.get('company_name') or '—'}\n"
-            f"   📦 {u['total_orders']} заказов | 💰 {u['points']} баллов\n"
-            f"   🏅 {u['status']}\n\n"
+        await db.execute(
+            """INSERT INTO users (telegram_id, full_name, username, company_id,
+               referral_code, referred_by, points)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)
+               ON CONFLICT (telegram_id) DO NOTHING""",
+            telegram_id, full_name, username, company_id,
+            referral_code, referred_by_id, bonus_points
         )
-    if len(text) > 4000:
-        text = text[:4000] + "\n...и другие"
+        if referred_by_id:
+            await db.execute(
+                "UPDATE users SET points = points + 5 WHERE id = $1", referred_by_id
+            )
 
-    builder = InlineKeyboardBuilder()
-    builder.button(text="◀️ Назад", callback_data="back_admin")
-    await callback.answer()
-    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=builder.as_markup())
+    return await get_user(telegram_id)
 
 
-@router.callback_query(F.data == "back_admin")
-async def back_admin(callback: CallbackQuery):
-    await callback.message.edit_text(
-        "🔧 *Панель администратора*",
-        parse_mode="Markdown",
-        reply_markup=admin_keyboard()
-    )
-    await callback.answer()
+async def update_user_status(user_id: int, total_orders: int) -> str:
+    if total_orders >= 30:
+        status = "VIP 👑"
+    elif total_orders >= 20:
+        status = "Золотой 🥇"
+    elif total_orders >= 10:
+        status = "Серебряный 🥈"
+    elif total_orders >= 5:
+        status = "Бронзовый 🥉"
+    else:
+        status = "Новый 🆕"
+
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            "UPDATE users SET status = $1 WHERE id = $2", status, user_id
+        )
+    return status
+
+
+async def save_user_phone(telegram_id: int, phone: str):
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            "UPDATE users SET phone = $1 WHERE telegram_id = $2",
+            phone, telegram_id
+        )
+
+
+# ─── Компании ─────────────────────────────────────────────────────────────────
+
+async def get_or_create_company(name: str) -> int:
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        row = await db.fetchrow("SELECT id FROM companies WHERE name = $1", name)
+        if row:
+            return row["id"]
+        row = await db.fetchrow(
+            "INSERT INTO companies (name) VALUES ($1) RETURNING id", name
+        )
+        return row["id"]
+
+
+async def get_company_ranking(city: str = "Ташкент") -> list:
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        rows = await db.fetch(
+            """SELECT c.name, c.total_orders,
+               (SELECT COUNT(*) FROM orders o
+                JOIN users u ON o.user_id = u.id
+                WHERE u.company_id = c.id
+                AND to_char(o.created_at, 'YYYY-MM') = to_char(NOW(), 'YYYY-MM')) as month_orders
+               FROM companies c
+               ORDER BY month_orders DESC LIMIT 10"""
+        )
+        return [dict(r) for r in rows]
+
+
+# ─── Меню ─────────────────────────────────────────────────────────────────────
+
+async def get_menu(menu_date: str, category: str = "main") -> list:
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        rows = await db.fetch(
+            """SELECT * FROM menus
+               WHERE menu_date = $1 AND is_active = 1 AND category = $2
+               ORDER BY item_number""",
+            menu_date, category
+        )
+        if rows:
+            return [dict(r) for r in rows]
+
+        d = date.fromisoformat(menu_date)
+        day_num = d.weekday()
+        weekly_rows = await db.fetch(
+            """SELECT * FROM weekly_menu
+               WHERE day_of_week = $1 AND is_active = 1 AND category = $2
+               ORDER BY item_number""",
+            day_num, category
+        )
+        if not weekly_rows:
+            return []
+
+        for item in weekly_rows:
+            await db.execute(
+                """INSERT INTO menus (menu_date, item_number, name, description, price, photo_id, category)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7)
+                   ON CONFLICT (menu_date, item_number, category) DO NOTHING""",
+                menu_date, item["item_number"], item["name"],
+                item["description"] or "", item["price"],
+                item["photo_id"], category
+            )
+
+        rows = await db.fetch(
+            """SELECT * FROM menus
+               WHERE menu_date = $1 AND is_active = 1 AND category = $2
+               ORDER BY item_number""",
+            menu_date, category
+        )
+        return [dict(r) for r in rows]
+
+
+async def get_menu_categories(menu_date: str) -> list:
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        rows = await db.fetch(
+            """SELECT DISTINCT category FROM menus
+               WHERE menu_date = $1 AND is_active = 1
+               ORDER BY category""",
+            menu_date
+        )
+        if rows:
+            return [row["category"] for row in rows]
+
+        d = date.fromisoformat(menu_date)
+        day_num = d.weekday()
+        rows = await db.fetch(
+            """SELECT DISTINCT category FROM weekly_menu
+               WHERE day_of_week = $1 AND is_active = 1
+               ORDER BY category""",
+            day_num
+        )
+        return [row["category"] for row in rows]
+
+
+async def set_menu(menu_date: str, items: list, category: str = "main"):
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        # Сначала пробуем удалить старые позиции этой категории/даты.
+        # Если на какую-то позицию уже есть заказ — её нельзя удалить (FK constraint),
+        # поэтому такие позиции просто деактивируем вместо удаления.
+        old_items = await db.fetch(
+            "SELECT id FROM menus WHERE menu_date = $1 AND category = $2",
+            menu_date, category
+        )
+        for old in old_items:
+            try:
+                await db.execute("DELETE FROM menus WHERE id = $1", old["id"])
+            except Exception:
+                # Есть заказы на эту позицию — деактивируем, не удаляем
+                await db.execute(
+                    "UPDATE menus SET is_active = 0 WHERE id = $1", old["id"]
+                )
+
+        for item in items:
+            await db.execute(
+                """INSERT INTO menus (menu_date, item_number, name, description, price, photo_id, category)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7)
+                   ON CONFLICT (menu_date, item_number, category)
+                   DO UPDATE SET name = EXCLUDED.name,
+                                 description = EXCLUDED.description,
+                                 price = EXCLUDED.price,
+                                 photo_id = EXCLUDED.photo_id,
+                                 is_active = 1""",
+                menu_date, item["item_number"], item["name"],
+                item.get("description", ""), item.get("price", 35000),
+                item.get("photo_id"), category
+            )
+
+
+async def set_weekly_menu(day_of_week: int, items: list, category: str = "main"):
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            "DELETE FROM weekly_menu WHERE day_of_week = $1 AND category = $2",
+            day_of_week, category
+        )
+        for item in items:
+            await db.execute(
+                """INSERT INTO weekly_menu
+                   (day_of_week, item_number, name, description, price, photo_id, category)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7)""",
+                day_of_week, item["item_number"], item["name"],
+                item.get("description", ""), item.get("price", 35000),
+                item.get("photo_id"), category
+            )
+
+
+async def get_weekly_menu(day_of_week: int, category: str = "main") -> list:
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        rows = await db.fetch(
+            """SELECT * FROM weekly_menu
+               WHERE day_of_week = $1 AND is_active = 1 AND category = $2
+               ORDER BY item_number""",
+            day_of_week, category
+        )
+        return [dict(r) for r in rows]
+
+
+async def get_weekly_menu_categories(day_of_week: int) -> list:
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        rows = await db.fetch(
+            """SELECT DISTINCT category FROM weekly_menu
+               WHERE day_of_week = $1 AND is_active = 1""",
+            day_of_week
+        )
+        return [row["category"] for row in rows]
+
+
+async def get_all_weekly_menu_summary() -> dict:
+    pool = await get_pool()
+    days = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+    result = {}
+    async with pool.acquire() as db:
+        for i, day in enumerate(days):
+            rows = await db.fetch(
+                """SELECT category, COUNT(*) as cnt FROM weekly_menu
+                   WHERE day_of_week = $1 AND is_active = 1
+                   GROUP BY category""",
+                i
+            )
+            result[i] = {"day": day, "categories": {r["category"]: r["cnt"] for r in rows}}
+    return result
+
+
+async def delete_weekly_menu_day(day_of_week: int):
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            "DELETE FROM weekly_menu WHERE day_of_week = $1", day_of_week
+        )
+
+
+# ─── Заказы ───────────────────────────────────────────────────────────────────
+
+async def get_today_order(telegram_id: int, order_date: str) -> dict | None:
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        row = await db.fetchrow(
+            """SELECT o.*, m.name as meal_name, m.item_number, m.category
+               FROM orders o
+               JOIN users u ON o.user_id = u.id
+               JOIN menus m ON o.menu_id = m.id
+               WHERE u.telegram_id = $1 AND o.order_date = $2::text AND o.status != 'cancelled'""",
+            telegram_id, str(order_date)
+        )
+        return dict(row) if row else None
+
+
+async def create_order(telegram_id: int, menu_id: int, order_date: str,
+                       is_auto: bool = False) -> dict:
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        user = await db.fetchrow(
+            "SELECT id, company_id FROM users WHERE telegram_id = $1", telegram_id
+        )
+        await db.execute(
+            """INSERT INTO orders (user_id, menu_id, order_date, status, is_auto_order)
+               VALUES ($1, $2, $3::text, 'pending', $4)
+               ON CONFLICT DO NOTHING""",
+            user["id"], menu_id, str(order_date), 1 if is_auto else 0
+        )
+        today = str(date.today())
+        await db.execute(
+            """UPDATE users SET
+               total_orders = total_orders + 1,
+               points = points + 5,
+               last_order_date = $1,
+               streak_days = 0
+               WHERE telegram_id = $2""",
+            today, telegram_id
+        )
+        if user["company_id"]:
+            await db.execute(
+                "UPDATE companies SET total_orders = total_orders + 1 WHERE id = $1",
+                user["company_id"]
+            )
+
+    user_data = await get_user(telegram_id)
+    await update_user_status(user_data["id"], user_data["total_orders"])
+    return await get_today_order(telegram_id, order_date)
+
+
+async def cancel_order(telegram_id: int, order_date: str) -> bool:
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            """UPDATE orders SET status = 'cancelled'
+               WHERE user_id = (SELECT id FROM users WHERE telegram_id = $1)
+               AND order_date = $2::text AND status = 'pending'""",
+            telegram_id, str(order_date)
+        )
+        await db.execute(
+            "UPDATE users SET total_orders = total_orders - 1, points = points - 5 WHERE telegram_id = $1",
+            telegram_id
+        )
+    return True
+
+
+async def close_orders_for_date(order_date: str):
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            "UPDATE orders SET status = 'confirmed' WHERE order_date = $1::text AND status = 'pending'",
+            str(order_date)
+        )
+
+
+async def get_daily_summary(order_date: str) -> dict:
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        items = await db.fetch(
+            """SELECT m.name, m.item_number, m.category, COUNT(*) as count
+               FROM orders o
+               JOIN menus m ON o.menu_id = m.id
+               WHERE o.order_date = $1::text AND o.status IN ('confirmed', 'pending')
+               GROUP BY m.id, m.name, m.item_number, m.category
+               ORDER BY m.category, count DESC""",
+            str(order_date)
+        )
+        total = await db.fetchval(
+            "SELECT COUNT(*) FROM orders WHERE order_date = $1::text AND status != 'cancelled'",
+            str(order_date)
+        )
+    return {"items": [dict(r) for r in items], "total": total, "date": order_date}
+
+
+async def get_all_users_for_notification() -> list:
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        rows = await db.fetch("SELECT telegram_id FROM users")
+        return [row["telegram_id"] for row in rows]
+
+
+# ─── Курьерская система ───────────────────────────────────────────────────────
+
+async def get_courier(telegram_id: int) -> dict | None:
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        row = await db.fetchrow(
+            "SELECT * FROM couriers WHERE telegram_id = $1 AND is_active = TRUE",
+            telegram_id
+        )
+        return dict(row) if row else None
+
+
+async def create_courier(telegram_id: int, full_name: str, phone: str) -> dict:
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            """INSERT INTO couriers (telegram_id, full_name, phone)
+               VALUES ($1, $2, $3)
+               ON CONFLICT (telegram_id) DO UPDATE SET full_name=$2, phone=$3, is_active=TRUE""",
+            telegram_id, full_name, phone
+        )
+        row = await db.fetchrow(
+            "SELECT * FROM couriers WHERE telegram_id = $1", telegram_id
+        )
+        return dict(row)
+
+
+async def get_all_couriers() -> list:
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        rows = await db.fetch(
+            "SELECT * FROM couriers WHERE is_active = TRUE ORDER BY full_name"
+        )
+        return [dict(r) for r in rows]
+
+
+async def get_orders_by_company(order_date: str) -> list:
+    """Заказы сгруппированные по компаниям для распределения курьерам"""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        rows = await db.fetch(
+            """SELECT
+                c.id as company_id,
+                c.name as company_name,
+                c.address,
+                c.maps_link,
+                COUNT(o.id) as order_count
+               FROM orders o
+               JOIN users u ON o.user_id = u.id
+               JOIN companies c ON u.company_id = c.id
+               WHERE o.order_date = $1::text AND o.status != 'cancelled'
+               GROUP BY c.id, c.name, c.address, c.maps_link
+               ORDER BY order_count DESC""",
+            str(order_date)
+        )
+        return [dict(r) for r in rows]
+
+
+async def get_company_order_details(company_id: int, order_date: str) -> list:
+    """Детальный список заказов по компании — каждый клиент и его блюда"""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        rows = await db.fetch(
+            """SELECT
+                u.full_name,
+                u.phone,
+                m.name as meal_name,
+                m.category,
+                m.price
+               FROM orders o
+               JOIN users u ON o.user_id = u.id
+               JOIN menus m ON o.menu_id = m.id
+               WHERE u.company_id = $1
+               AND o.order_date = $2::text
+               AND o.status != 'cancelled'
+               ORDER BY u.full_name, m.category""",
+            company_id, str(order_date)
+        )
+        return [dict(r) for r in rows]
+
+
+async def create_delivery_route(courier_id: int, delivery_date: str,
+                                 company_ids: list) -> int:
+    """Создать маршрут для курьера с список компаний"""
+    pool = await get_pool()
+    delivery_date = str(delivery_date)
+    async with pool.acquire() as db:
+        old = await db.fetchrow(
+            "SELECT id FROM delivery_routes WHERE courier_id=$1 AND delivery_date=$2::text",
+            courier_id, delivery_date
+        )
+        if old:
+            await db.execute(
+                "DELETE FROM delivery_stops WHERE route_id=$1", old["id"]
+            )
+            await db.execute(
+                "DELETE FROM delivery_routes WHERE id=$1", old["id"]
+            )
+
+        route = await db.fetchrow(
+            """INSERT INTO delivery_routes (courier_id, delivery_date, status)
+               VALUES ($1, $2::text, 'pending') RETURNING id""",
+            courier_id, delivery_date
+        )
+        route_id = route["id"]
+
+        for i, company_id in enumerate(company_ids, 1):
+            await db.execute(
+                """INSERT INTO delivery_stops (route_id, company_id, stop_order, status)
+                   VALUES ($1, $2, $3, 'pending')""",
+                route_id, company_id, i
+            )
+
+    return route_id
+
+
+async def get_courier_route(courier_id: int, delivery_date: str) -> dict | None:
+    """Получить маршрут курьера на дату"""
+    pool = await get_pool()
+    delivery_date = str(delivery_date)
+    async with pool.acquire() as db:
+        route = await db.fetchrow(
+            """SELECT * FROM delivery_routes
+               WHERE courier_id = $1 AND delivery_date = $2::text""",
+            courier_id, delivery_date
+        )
+        if not route:
+            return None
+
+        stops = await db.fetch(
+            """SELECT ds.*, c.name as company_name, c.address, c.maps_link,
+               COUNT(o.id) as order_count
+               FROM delivery_stops ds
+               JOIN companies c ON ds.company_id = c.id
+               LEFT JOIN orders o ON o.order_date = $2::text
+                   AND o.status != 'cancelled'
+                   AND o.user_id IN (
+                       SELECT id FROM users WHERE company_id = c.id
+                   )
+               WHERE ds.route_id = $1
+               GROUP BY ds.id, c.name, c.address, c.maps_link
+               ORDER BY ds.stop_order""",
+            route["id"], delivery_date
+        )
+
+        return {
+            "route": dict(route),
+            "stops": [dict(s) for s in stops]
+        }
+
+
+async def mark_stop_delivered(stop_id: int, note: str = None):
+    """Отметить остановку как доставленную"""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            """UPDATE delivery_stops
+               SET status = 'delivered', delivered_at = NOW(), note = $2
+               WHERE id = $1""",
+            stop_id, note
+        )
+        stop = await db.fetchrow(
+            "SELECT route_id, company_id FROM delivery_stops WHERE id = $1", stop_id
+        )
+        route = await db.fetchrow(
+            "SELECT delivery_date FROM delivery_routes WHERE id = $1", stop["route_id"]
+        )
+        await db.execute(
+            """UPDATE orders SET status = 'delivered', updated_at = NOW()
+               WHERE order_date = $1::text
+               AND status = 'confirmed'
+               AND user_id IN (
+                   SELECT id FROM users WHERE company_id = $2
+               )""",
+            route["delivery_date"], stop["company_id"]
+        )
+
+
+async def mark_route_started(route_id: int):
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            "UPDATE delivery_routes SET status='active', started_at=NOW() WHERE id=$1",
+            route_id
+        )
+
+
+async def mark_route_finished(route_id: int):
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            "UPDATE delivery_routes SET status='finished', finished_at=NOW() WHERE id=$1",
+            route_id
+        )
+
+
+async def get_company_clients_telegram_ids(company_id: int, order_date: str) -> list:
+    """Telegram ID клиентов компании у которых есть заказ на эту дату"""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        rows = await db.fetch(
+            """SELECT u.telegram_id FROM users u
+               JOIN orders o ON o.user_id = u.id
+               WHERE u.company_id = $1
+               AND o.order_date = $2::text
+               AND o.status != 'cancelled'""",
+            company_id, str(order_date)
+        )
+        return [r["telegram_id"] for r in rows]
