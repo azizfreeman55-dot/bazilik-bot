@@ -53,11 +53,12 @@ def weekly_menu_keyboard(weekly: dict, lang: str = "ru") -> object:
     for day_num, day_name in days.items():
         item = weekly.get(day_num)
         text = f"✅ {day_name} — {'блюдо' if lang == 'ru' else 'taom'} {item}" if item else f"➕ {day_name}"
-        builder.button(text=text, callback_data=f"weekly_day_{day_num}")
+        # ВАЖНО: callback_data "myweekly_day_X" — чтобы не конфликтовать с admin.py (weekly_day_X)
+        builder.button(text=text, callback_data=f"myweekly_day_{day_num}")
     clear = "❌ Очистить всё" if lang == "ru" else "❌ Hammasini tozalash"
     back = "◀️ Назад" if lang == "ru" else "◀️ Orqaga"
-    builder.button(text=clear, callback_data="weekly_clear_all")
-    builder.button(text=back, callback_data="weekly_back")
+    builder.button(text=clear, callback_data="myweekly_clear_all")
+    builder.button(text=back, callback_data="myweekly_back")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -68,13 +69,13 @@ def day_items_keyboard(day: int, menu_items: list, current_item: int = None) -> 
         check = "✅ " if current_item == item["item_number"] else ""
         builder.button(
             text=f"{check}{item['item_number']}. {item['name']}",
-            callback_data=f"weekly_set_{day}_{item['item_number']}"
+            callback_data=f"myweekly_set_{day}_{item['item_number']}"
         )
     if not menu_items:
-        builder.button(text="❌ Меню не добавлено", callback_data="weekly_no_menu")
+        builder.button(text="❌ Меню не добавлено", callback_data="myweekly_no_menu")
     if current_item:
-        builder.button(text="🗑 Убрать этот день", callback_data=f"weekly_del_{day}")
-    builder.button(text="◀️ Назад", callback_data="weekly_back_list")
+        builder.button(text="🗑 Убрать этот день", callback_data=f"myweekly_del_{day}")
+    builder.button(text="◀️ Назад", callback_data="myweekly_back_list")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -95,7 +96,7 @@ async def weekly_menu(callback: CallbackQuery):
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("weekly_day_"))
+@router.callback_query(F.data.startswith("myweekly_day_"))
 async def weekly_day_select(callback: CallbackQuery):
     day = int(callback.data.split("_")[2])
     day_name = DAYS_RU[day]
@@ -118,7 +119,7 @@ async def weekly_day_select(callback: CallbackQuery):
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("weekly_set_"))
+@router.callback_query(F.data.startswith("myweekly_set_"))
 async def weekly_set_item(callback: CallbackQuery):
     parts = callback.data.split("_")
     day = int(parts[2])
@@ -135,7 +136,7 @@ async def weekly_set_item(callback: CallbackQuery):
     )
 
 
-@router.callback_query(F.data.startswith("weekly_del_"))
+@router.callback_query(F.data.startswith("myweekly_del_"))
 async def weekly_del_item(callback: CallbackQuery):
     day = int(callback.data.split("_")[2])
     day_name = DAYS_RU[day]
@@ -150,7 +151,7 @@ async def weekly_del_item(callback: CallbackQuery):
     )
 
 
-@router.callback_query(F.data == "weekly_clear_all")
+@router.callback_query(F.data == "myweekly_clear_all")
 async def weekly_clear_all(callback: CallbackQuery):
     user = await get_user(callback.from_user.id)
     pool = await get_pool()
@@ -166,7 +167,7 @@ async def weekly_clear_all(callback: CallbackQuery):
     )
 
 
-@router.callback_query(F.data == "weekly_back")
+@router.callback_query(F.data == "myweekly_back")
 async def weekly_back(callback: CallbackQuery):
     from keyboards.keyboards import settings_keyboard
     user = await get_user(callback.from_user.id)
@@ -184,7 +185,7 @@ async def weekly_back(callback: CallbackQuery):
     await callback.answer()
 
 
-@router.callback_query(F.data == "weekly_back_list")
+@router.callback_query(F.data == "myweekly_back_list")
 async def weekly_back_list(callback: CallbackQuery):
     user = await get_user(callback.from_user.id)
     weekly = await get_weekly_orders(user["id"])
@@ -196,6 +197,6 @@ async def weekly_back_list(callback: CallbackQuery):
     await callback.answer()
 
 
-@router.callback_query(F.data == "weekly_no_menu")
+@router.callback_query(F.data == "myweekly_no_menu")
 async def weekly_no_menu(callback: CallbackQuery):
     await callback.answer("❌ Меню на этот день ещё не добавлено!", show_alert=True)
