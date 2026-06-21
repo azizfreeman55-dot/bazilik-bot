@@ -1,1 +1,597 @@
-webapp/index.html
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Bazilik Catering</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --green-50: #EAF3DE;
+    --green-100: #C0DD97;
+    --green-600: #2D5F3E;
+    --green-700: #234A31;
+    --green-800: #1A3824;
+    --cream: #FAF7F0;
+    --cream-dark: #F0EBE0;
+    --coral: #D4724A;
+    --coral-dark: #A8552F;
+    --ink: #2B2620;
+    --ink-soft: #6B6356;
+    --line: rgba(43,38,32,0.1);
+    --white: #FFFFFF;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--cream);
+    color: var(--ink);
+    padding-bottom: 90px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .header {
+    background: var(--green-600);
+    color: var(--cream);
+    padding: 20px 18px 24px;
+    border-radius: 0 0 20px 20px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .header::after {
+    content: "";
+    position: absolute;
+    right: -30px;
+    top: -30px;
+    width: 140px;
+    height: 140px;
+    background: var(--green-700);
+    border-radius: 50%;
+    opacity: 0.5;
+  }
+
+  .header-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: relative;
+    z-index: 1;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .brand-mark {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    background: var(--green-100);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+  }
+
+  .brand-name {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+  }
+
+  .brand-sub {
+    font-size: 11px;
+    opacity: 0.75;
+    margin-top: 1px;
+  }
+
+  .balance-pill {
+    background: rgba(255,255,255,0.12);
+    border-radius: 999px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .header-date {
+    margin-top: 18px;
+    position: relative;
+    z-index: 1;
+  }
+
+  .header-date-label {
+    font-size: 11px;
+    opacity: 0.7;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+  }
+
+  .header-date-value {
+    font-size: 22px;
+    font-weight: 700;
+    margin-top: 2px;
+  }
+
+  .tabs {
+    display: flex;
+    gap: 6px;
+    padding: 16px 18px 4px;
+    overflow-x: auto;
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .tabs::-webkit-scrollbar { display: none; }
+
+  .tab {
+    flex-shrink: 0;
+    padding: 9px 16px;
+    border-radius: 999px;
+    background: var(--white);
+    border: 1px solid var(--line);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink-soft);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.15s ease;
+  }
+
+  .tab.active {
+    background: var(--green-600);
+    color: var(--cream);
+    border-color: var(--green-600);
+  }
+
+  .tab-count {
+    background: rgba(0,0,0,0.08);
+    border-radius: 999px;
+    font-size: 10px;
+    padding: 1px 6px;
+    font-weight: 700;
+  }
+
+  .tab.active .tab-count {
+    background: rgba(255,255,255,0.22);
+  }
+
+  .list {
+    padding: 12px 18px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .item-card {
+    background: var(--white);
+    border-radius: 16px;
+    border: 1px solid var(--line);
+    padding: 12px;
+    display: flex;
+    gap: 12px;
+    align-items: center;
+  }
+
+  .item-thumb {
+    width: 56px;
+    height: 56px;
+    border-radius: 12px;
+    background: var(--cream-dark);
+    flex-shrink: 0;
+    object-fit: cover;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+  }
+
+  .item-info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .item-name {
+    font-size: 14.5px;
+    font-weight: 600;
+    line-height: 1.3;
+  }
+
+  .item-price {
+    font-size: 13px;
+    color: var(--ink-soft);
+    margin-top: 2px;
+    font-weight: 500;
+  }
+
+  .stepper {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+
+  .step-btn {
+    width: 30px;
+    height: 30px;
+    border-radius: 10px;
+    border: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 17px;
+    font-weight: 600;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .step-minus {
+    background: var(--cream-dark);
+    color: var(--ink);
+  }
+
+  .step-plus {
+    background: var(--green-600);
+    color: var(--cream);
+  }
+
+  .step-plus.add {
+    width: auto;
+    padding: 0 14px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .step-qty {
+    font-size: 15px;
+    font-weight: 700;
+    min-width: 18px;
+    text-align: center;
+  }
+
+  .empty-state {
+    text-align: center;
+    padding: 50px 20px;
+    color: var(--ink-soft);
+  }
+
+  .empty-state-icon {
+    font-size: 36px;
+    margin-bottom: 8px;
+  }
+
+  .empty-state-text {
+    font-size: 14px;
+  }
+
+  .cart-bar {
+    position: fixed;
+    left: 14px;
+    right: 14px;
+    bottom: 14px;
+    background: var(--green-700);
+    border-radius: 18px;
+    padding: 14px 18px;
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    box-shadow: 0 8px 24px rgba(35,74,49,0.35);
+    z-index: 100;
+  }
+
+  .cart-bar.visible {
+    display: flex;
+  }
+
+  .cart-info {
+    color: var(--cream);
+  }
+
+  .cart-count {
+    font-size: 11px;
+    opacity: 0.75;
+  }
+
+  .cart-total {
+    font-size: 17px;
+    font-weight: 700;
+    margin-top: 1px;
+  }
+
+  .cart-action {
+    background: var(--coral);
+    color: var(--white);
+    border: none;
+    border-radius: 12px;
+    padding: 11px 18px;
+    font-size: 14px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+  }
+
+  .toast {
+    position: fixed;
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%) translateY(-20px);
+    background: var(--ink);
+    color: var(--cream);
+    padding: 10px 18px;
+    border-radius: 12px;
+    font-size: 13px;
+    font-weight: 600;
+    opacity: 0;
+    transition: all 0.25s ease;
+    z-index: 200;
+    white-space: nowrap;
+  }
+
+  .toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  .loading {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--ink-soft);
+    font-size: 14px;
+  }
+</style>
+</head>
+<body>
+
+  <div class="header">
+    <div class="header-top">
+      <div class="brand">
+        <div class="brand-mark">🌿</div>
+        <div>
+          <div class="brand-name">Bazilik Catering</div>
+          <div class="brand-sub">Обеды для офиса</div>
+        </div>
+      </div>
+      <div class="balance-pill" id="balance-pill">— сум</div>
+    </div>
+    <div class="header-date">
+      <div class="header-date-label">Меню на</div>
+      <div class="header-date-value" id="menu-date">завтра</div>
+    </div>
+  </div>
+
+  <div id="tabs" class="tabs"></div>
+  <div id="list" class="list">
+    <div class="loading">Загружаем меню…</div>
+  </div>
+
+  <div class="cart-bar" id="cart-bar">
+    <div class="cart-info">
+      <div class="cart-count" id="cart-count">0 позиций</div>
+      <div class="cart-total" id="cart-total">0 сум</div>
+    </div>
+    <button class="cart-action" id="cart-action">
+      Оформить заказ
+      <span>→</span>
+    </button>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+  const tg = window.Telegram?.WebApp;
+  if (tg) {
+    tg.ready();
+    tg.expand();
+  }
+
+  const CATEGORY_META = {
+    main:    { label: "Основные",  icon: "🍱" },
+    salad:   { label: "Салаты",    icon: "🥗" },
+    dessert: { label: "Десерты",   icon: "🍰" },
+    drink:   { label: "Напитки",   icon: "🥤" },
+  };
+
+  const API_BASE = "https://bazilik-webhook.onrender.com";
+
+  let MENU = {};
+  let currentCat = "main";
+  let cart = {};
+  let userBalance = 0;
+
+  function fmt(n) {
+    return Math.round(n).toLocaleString("ru-RU") + " сум";
+  }
+
+  function showToast(text) {
+    const toast = document.getElementById("toast");
+    toast.textContent = text;
+    toast.classList.add("show");
+    setTimeout(() => toast.classList.remove("show"), 1800);
+  }
+
+  async function loadMenu() {
+    try {
+      const initData = tg?.initData || "";
+      const res = await fetch(`${API_BASE}/api/menu?init_data=${encodeURIComponent(initData)}`);
+      const data = await res.json();
+
+      MENU = data.categories || {};
+      userBalance = data.balance || 0;
+      document.getElementById("balance-pill").textContent = fmt(userBalance);
+
+      const dateLabel = data.date_label || "завтра";
+      document.getElementById("menu-date").textContent = dateLabel;
+
+      const availableCats = Object.keys(MENU).filter(c => MENU[c].length > 0);
+      if (availableCats.length === 0) {
+        document.getElementById("list").innerHTML =
+          '<div class="empty-state"><div class="empty-state-icon">🍽️</div><div class="empty-state-text">Меню на эту дату ещё не добавлено</div></div>';
+        return;
+      }
+
+      currentCat = availableCats.includes("main") ? "main" : availableCats[0];
+      renderTabs(availableCats);
+      renderList();
+    } catch (e) {
+      document.getElementById("list").innerHTML =
+        '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Не удалось загрузить меню.<br>Попробуйте позже.</div></div>';
+    }
+  }
+
+  function renderTabs(cats) {
+    const tabsEl = document.getElementById("tabs");
+    tabsEl.innerHTML = "";
+    cats.forEach(cat => {
+      const meta = CATEGORY_META[cat] || { label: cat, icon: "🍽" };
+      const btn = document.createElement("button");
+      btn.className = "tab" + (cat === currentCat ? " active" : "");
+      btn.innerHTML = `${meta.icon} ${meta.label} <span class="tab-count">${MENU[cat].length}</span>`;
+      btn.onclick = () => {
+        currentCat = cat;
+        renderTabs(cats);
+        renderList();
+      };
+      tabsEl.appendChild(btn);
+    });
+  }
+
+  function renderList() {
+    const listEl = document.getElementById("list");
+    const items = MENU[currentCat] || [];
+    listEl.innerHTML = "";
+
+    if (items.length === 0) {
+      listEl.innerHTML = '<div class="empty-state"><div class="empty-state-icon">🍽️</div><div class="empty-state-text">В этой категории пока пусто</div></div>';
+      return;
+    }
+
+    items.forEach(item => {
+      const qty = cart[item.id]?.qty || 0;
+      const card = document.createElement("div");
+      card.className = "item-card";
+
+      const thumbContent = item.photo_url
+        ? `<img class="item-thumb" src="${item.photo_url}" alt="">`
+        : `<div class="item-thumb">${CATEGORY_META[currentCat]?.icon || "🍽"}</div>`;
+
+      card.innerHTML = `
+        ${thumbContent}
+        <div class="item-info">
+          <div class="item-name">${item.name}</div>
+          <div class="item-price">${fmt(item.price)}</div>
+        </div>
+        <div class="stepper" id="stepper-${item.id}"></div>
+      `;
+      listEl.appendChild(card);
+      renderStepper(item, qty);
+    });
+  }
+
+  function renderStepper(item, qty) {
+    const el = document.getElementById(`stepper-${item.id}`);
+    if (qty === 0) {
+      el.innerHTML = `<button class="step-plus add" data-id="${item.id}">+ Добавить</button>`;
+    } else {
+      el.innerHTML = `
+        <button class="step-btn step-minus" data-id="${item.id}" data-action="dec">−</button>
+        <span class="step-qty">${qty}</span>
+        <button class="step-btn step-plus" data-id="${item.id}" data-action="inc">+</button>
+      `;
+    }
+    el.querySelectorAll("button").forEach(btn => {
+      btn.onclick = () => handleStep(item, btn.dataset.action || "inc");
+    });
+  }
+
+  function handleStep(item, action) {
+    if (!cart[item.id]) {
+      cart[item.id] = { item, qty: 0, category: currentCat };
+    }
+    if (action === "inc") {
+      cart[item.id].qty += 1;
+      if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred("light");
+    } else {
+      cart[item.id].qty -= 1;
+      if (cart[item.id].qty <= 0) delete cart[item.id];
+    }
+    renderList();
+    renderCart();
+  }
+
+  function renderCart() {
+    let count = 0;
+    let total = 0;
+    Object.values(cart).forEach(c => {
+      count += c.qty;
+      total += c.qty * c.item.price;
+    });
+
+    const bar = document.getElementById("cart-bar");
+    if (count === 0) {
+      bar.classList.remove("visible");
+      return;
+    }
+    bar.classList.add("visible");
+    document.getElementById("cart-count").textContent =
+      count === 1 ? "1 позиция" : `${count} позиций`;
+    document.getElementById("cart-total").textContent = fmt(total);
+  }
+
+  async function submitOrder() {
+    const items = Object.values(cart).map(c => ({
+      menu_id: c.item.id,
+      qty: c.qty,
+      category: c.category
+    }));
+
+    if (items.length === 0) return;
+
+    const total = Object.values(cart).reduce((s, c) => s + c.qty * c.item.price, 0);
+
+    if (total > userBalance) {
+      showToast("Недостаточно баланса — оплата при получении");
+    }
+
+    document.getElementById("cart-action").textContent = "Отправляем…";
+
+    try {
+      const initData = tg?.initData || "";
+      const res = await fetch(`${API_BASE}/api/order`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ init_data: initData, items })
+      });
+      const result = await res.json();
+
+      if (result.success) {
+        if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred("success");
+        if (tg) {
+          tg.showAlert("Заказ оформлен! Подробности — в чате с ботом.", () => tg.close());
+        } else {
+          showToast("Заказ оформлен!");
+        }
+      } else {
+        showToast(result.error || "Ошибка оформления заказа");
+        document.getElementById("cart-action").innerHTML = "Оформить заказ <span>→</span>";
+      }
+    } catch (e) {
+      showToast("Ошибка соединения");
+      document.getElementById("cart-action").innerHTML = "Оформить заказ <span>→</span>";
+    }
+  }
+
+  document.getElementById("cart-action").addEventListener("click", submitOrder);
+
+  loadMenu();
+</script>
+
+</body>
+</html>
