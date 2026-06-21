@@ -119,8 +119,6 @@ async def init_db():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-
-        # ─── Таблицы для курьерской системы ───────────────────────────────
         await db.execute("""
             CREATE TABLE IF NOT EXISTS couriers (
                 id SERIAL PRIMARY KEY,
@@ -155,7 +153,6 @@ async def init_db():
             )
         """)
 
-        # Миграции для существующей БД
         await db.execute("""
             DO $$
             BEGIN
@@ -378,9 +375,6 @@ async def get_menu_categories(menu_date: str) -> list:
 async def set_menu(menu_date: str, items: list, category: str = "main"):
     pool = await get_pool()
     async with pool.acquire() as db:
-        # Сначала пробуем удалить старые позиции этой категории/даты.
-        # Если на какую-то позицию уже есть заказ — её нельзя удалить (FK constraint),
-        # поэтому такие позиции просто деактивируем вместо удаления.
         old_items = await db.fetch(
             "SELECT id FROM menus WHERE menu_date = $1 AND category = $2",
             menu_date, category
@@ -389,7 +383,6 @@ async def set_menu(menu_date: str, items: list, category: str = "main"):
             try:
                 await db.execute("DELETE FROM menus WHERE id = $1", old["id"])
             except Exception:
-                # Есть заказы на эту позицию — деактивируем, не удаляем
                 await db.execute(
                     "UPDATE menus SET is_active = 0 WHERE id = $1", old["id"]
                 )
@@ -478,6 +471,7 @@ async def delete_weekly_menu_day(day_of_week: int):
 # ─── Заказы ───────────────────────────────────────────────────────────────────
 
 async def get_today_order(telegram_id: int, order_date: str) -> dict | None:
+    """Возвращает ПЕРВУЮ позицию заказа (для обратной совместимости со старым кодом)"""
     pool = await get_pool()
     async with pool.acquire() as db:
         row = await db.fetchrow(
@@ -485,10 +479,29 @@ async def get_today_order(telegram_id: int, order_date: str) -> dict | None:
                FROM orders o
                JOIN users u ON o.user_id = u.id
                JOIN menus m ON o.menu_id = m.id
-               WHERE u.telegram_id = $1 AND o.order_date = $2::text AND o.status != 'cancelled'""",
+               WHERE u.telegram_id = $1 AND o.order_date = $2::text AND o.status != 'cancelled'
+               ORDER BY o.id LIMIT 1""",
             telegram_id, str(order_date)
         )
         return dict(row) if row else None
+
+
+async def get_today_orders_list(telegram_id: int, order_date: str) -> list:
+    """Возвращает ВСЕ позиции заказа пользователя на дату"""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        rows = await db.fetch(
+            """SELECT o.id, o.status, m.name as meal_name, m.item_number,
+               m.category, m.price
+               FROM orders o
+               JOIN users u ON o.user_id = u.id
+               JOIN menus m ON o.menu_id = m.id
+               WHERE u.telegram_id = $1 AND o.order_date = $2::text
+               AND o.status != 'cancelled'
+               ORDER BY m.category, m.item_number""",
+            telegram_id, str(order_date)
+        )
+        return [dict(r) for r in rows]
 
 
 async def create_order(telegram_id: int, menu_id: int, order_date: str,
@@ -526,12 +539,18 @@ async def create_order(telegram_id: int, menu_id: int, order_date: str,
 
 
 async def cancel_order(telegram_id: int, order_date: str) -> bool:
+    """Отменяет ОДНУ (первую найденную pending) позицию — для обратной совместимости"""
     pool = await get_pool()
     async with pool.acquire() as db:
         await db.execute(
             """UPDATE orders SET status = 'cancelled'
-               WHERE user_id = (SELECT id FROM users WHERE telegram_id = $1)
-               AND order_date = $2::text AND status = 'pending'""",
+               WHERE id = (
+                   SELECT o.id FROM orders o
+                   JOIN users u ON o.user_id = u.id
+                   WHERE u.telegram_id = $1
+                   AND o.order_date = $2::text AND o.status = 'pending'
+                   LIMIT 1
+               )""",
             telegram_id, str(order_date)
         )
         await db.execute(
@@ -539,6 +558,27 @@ async def cancel_order(telegram_id: int, order_date: str) -> bool:
             telegram_id
         )
     return True
+
+
+async def cancel_all_orders_for_date(telegram_id: int, order_date: str) -> int:
+    """Отменяет ВСЕ заказы пользователя на дату. Возвращает количество отменённых позиций."""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        result = await db.fetch(
+            """UPDATE orders SET status = 'cancelled'
+               WHERE user_id = (SELECT id FROM users WHERE telegram_id = $1)
+               AND order_date = $2::text AND status = 'pending'
+               RETURNING id""",
+            telegram_id, str(order_date)
+        )
+        cancelled_count = len(result)
+        if cancelled_count > 0:
+            await db.execute(
+                """UPDATE users SET total_orders = total_orders - 1, points = points - 5
+                   WHERE telegram_id = $1""",
+                telegram_id
+            )
+    return cancelled_count
 
 
 async def close_orders_for_date(order_date: str):
@@ -613,7 +653,6 @@ async def get_all_couriers() -> list:
 
 
 async def get_orders_by_company(order_date: str) -> list:
-    """Заказы сгруппированные по компаниям для распределения курьерам"""
     pool = await get_pool()
     async with pool.acquire() as db:
         rows = await db.fetch(
@@ -635,7 +674,6 @@ async def get_orders_by_company(order_date: str) -> list:
 
 
 async def get_company_order_details(company_id: int, order_date: str) -> list:
-    """Детальный список заказов по компании — каждый клиент и его блюда"""
     pool = await get_pool()
     async with pool.acquire() as db:
         rows = await db.fetch(
@@ -659,7 +697,6 @@ async def get_company_order_details(company_id: int, order_date: str) -> list:
 
 async def create_delivery_route(courier_id: int, delivery_date: str,
                                  company_ids: list) -> int:
-    """Создать маршрут для курьера с список компаний"""
     pool = await get_pool()
     delivery_date = str(delivery_date)
     async with pool.acquire() as db:
@@ -693,7 +730,6 @@ async def create_delivery_route(courier_id: int, delivery_date: str,
 
 
 async def get_courier_route(courier_id: int, delivery_date: str) -> dict | None:
-    """Получить маршрут курьера на дату"""
     pool = await get_pool()
     delivery_date = str(delivery_date)
     async with pool.acquire() as db:
@@ -728,7 +764,6 @@ async def get_courier_route(courier_id: int, delivery_date: str) -> dict | None:
 
 
 async def mark_stop_delivered(stop_id: int, note: str = None):
-    """Отметить остановку как доставленную"""
     pool = await get_pool()
     async with pool.acquire() as db:
         await db.execute(
@@ -773,7 +808,6 @@ async def mark_route_finished(route_id: int):
 
 
 async def get_company_clients_telegram_ids(company_id: int, order_date: str) -> list:
-    """Telegram ID клиентов компании у которых есть заказ на эту дату"""
     pool = await get_pool()
     async with pool.acquire() as db:
         rows = await db.fetch(
