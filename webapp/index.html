@@ -391,7 +391,26 @@
 
 <script>
   const tg = window.Telegram?.WebApp;
-  if (tg) { tg.ready(); tg.expand(); }
+  if (tg) {
+    tg.ready();
+    tg.expand();
+  }
+
+  // Защита от race condition на Android: иногда tg.initData ещё не успевает
+  // проинициализироваться к моменту первого вызова. Короткая пауза устраняет это.
+  function waitForInitData(maxWaitMs = 1000) {
+    return new Promise(resolve => {
+      const start = Date.now();
+      function check() {
+        if (tg?.initData || Date.now() - start > maxWaitMs) {
+          resolve(tg?.initData || "");
+        } else {
+          setTimeout(check, 50);
+        }
+      }
+      check();
+    });
+  }
 
   const CATEGORY_META = {
     main:    { label: "Основные",  icon: "🍱" },
@@ -418,7 +437,7 @@
   }
 
   async function apiCall(endpoint, body) {
-    const initData = tg?.initData || "";
+    const initData = await waitForInitData();
     const res = await fetch(`${API_BASE}${endpoint}`, {
       method: "POST",
       headers: {
