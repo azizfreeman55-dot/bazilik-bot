@@ -218,6 +218,71 @@
   .rating-rank.top1 { background: var(--green-100); color: var(--green-800); }
   .rating-name { flex: 1; font-size: 14px; font-weight: 600; }
   .rating-count { font-size: 13px; color: var(--ink-soft); font-weight: 600; }
+
+  .more-link {
+    width: 100%; display: flex; align-items: center; gap: 10px;
+    padding: 14px 8px; background: none; border: none; border-bottom: 1px solid var(--line);
+    font-size: 14.5px; font-weight: 600; color: var(--ink); text-align: left; cursor: pointer;
+  }
+  .more-link:last-child { border-bottom: none; }
+
+  .back-link {
+    background: none; border: none; color: var(--green-700); font-size: 13px;
+    font-weight: 600; padding: 4px 0 12px; cursor: pointer;
+  }
+
+  .gift-card {
+    background: var(--white); border-radius: 16px; border: 1px solid var(--line);
+    padding: 14px; margin-bottom: 10px; display: flex; gap: 12px; align-items: center;
+  }
+  .gift-card.locked { opacity: 0.55; }
+  .gift-emoji { font-size: 28px; flex-shrink: 0; }
+  .gift-info { flex: 1; }
+  .gift-name { font-size: 14px; font-weight: 700; }
+  .gift-desc { font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
+  .gift-points { font-size: 12px; font-weight: 700; color: var(--green-700); margin-top: 4px; }
+  .gift-badge {
+    font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: 999px; flex-shrink: 0;
+  }
+  .gift-badge.unlocked { background: var(--green-100); color: var(--green-800); }
+  .gift-badge.locked { background: var(--cream-dark); color: var(--ink-soft); }
+
+  .referral-code-box {
+    background: var(--green-600); color: var(--cream); border-radius: 16px;
+    padding: 20px; text-align: center; margin-bottom: 12px;
+  }
+  .referral-code-value { font-size: 24px; font-weight: 700; letter-spacing: 2px; margin-top: 6px; }
+  .share-btn {
+    width: 100%; background: var(--coral); color: var(--white); border: none;
+    border-radius: 12px; padding: 13px; font-size: 14px; font-weight: 700; cursor: pointer; margin-top: 10px;
+  }
+
+  .setting-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 14px 0; border-bottom: 1px solid var(--line);
+  }
+  .setting-row:last-child { border-bottom: none; }
+  .setting-label { font-size: 14px; font-weight: 600; }
+  .toggle-switch {
+    width: 46px; height: 26px; border-radius: 999px; border: none; position: relative;
+    cursor: pointer; transition: background 0.2s;
+  }
+  .toggle-switch.on { background: var(--green-600); }
+  .toggle-switch.off { background: var(--cream-dark); }
+  .toggle-knob {
+    position: absolute; top: 3px; width: 20px; height: 20px; border-radius: 50%;
+    background: var(--white); transition: left 0.2s;
+  }
+  .toggle-switch.on .toggle-knob { left: 23px; }
+  .toggle-switch.off .toggle-knob { left: 3px; }
+
+  .weekly-day-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 0; border-bottom: 1px solid var(--line); cursor: pointer;
+  }
+  .weekly-day-row:last-child { border-bottom: none; }
+  .weekly-day-name { font-size: 14px; font-weight: 600; }
+  .weekly-day-status { font-size: 12px; color: var(--ink-soft); }
 </style>
 </head>
 <body>
@@ -266,6 +331,34 @@
     <div id="rating-content"><div class="loading">Загружаем рейтинг…</div></div>
   </div>
 
+  <!-- MORE MENU PAGE -->
+  <div class="page" id="page-more">
+    <div class="profile-card" style="padding: 8px;">
+      <button class="more-link" data-page="rating">🏆 Рейтинг компаний</button>
+      <button class="more-link" data-page="gifts">🎁 Подарки и награды</button>
+      <button class="more-link" data-page="referral">👥 Пригласить коллегу</button>
+      <button class="more-link" data-page="settings">⚙️ Настройки</button>
+    </div>
+  </div>
+
+  <!-- GIFTS PAGE -->
+  <div class="page" id="page-gifts">
+    <button class="back-link" onclick="switchPage('more')">← Назад</button>
+    <div id="gifts-content"><div class="loading">Загружаем подарки…</div></div>
+  </div>
+
+  <!-- REFERRAL PAGE -->
+  <div class="page" id="page-referral">
+    <button class="back-link" onclick="switchPage('more')">← Назад</button>
+    <div id="referral-content"><div class="loading">Загружаем…</div></div>
+  </div>
+
+  <!-- SETTINGS PAGE -->
+  <div class="page" id="page-settings">
+    <button class="back-link" onclick="switchPage('more')">← Назад</button>
+    <div id="settings-content"><div class="loading">Загружаем настройки…</div></div>
+  </div>
+
   <div class="cart-bar" id="cart-bar">
     <div class="cart-info">
       <div class="cart-count" id="cart-count">0 позиций</div>
@@ -291,8 +384,8 @@
     <button class="nav-btn" data-page="balance">
       <span class="nav-icon">💳</span>Баланс
     </button>
-    <button class="nav-btn" data-page="rating">
-      <span class="nav-icon">🏆</span>Рейтинг
+    <button class="nav-btn" data-page="more">
+      <span class="nav-icon">⋯</span>Ещё
     </button>
   </div>
 
@@ -344,7 +437,9 @@
     document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
     document.getElementById(`page-${page}`).classList.add("active");
     document.querySelectorAll(".nav-btn").forEach(b => {
-      b.classList.toggle("active", b.dataset.page === page);
+      const navPage = b.dataset.page;
+      const isMoreGroup = ["more", "rating", "gifts", "referral", "settings"].includes(page);
+      b.classList.toggle("active", navPage === page || (navPage === "more" && isMoreGroup));
     });
 
     const cartBar = document.getElementById("cart-bar");
@@ -359,9 +454,16 @@
     if (page === "profile") loadProfile();
     if (page === "balance") loadBalance();
     if (page === "rating") loadRating();
+    if (page === "gifts") loadGifts();
+    if (page === "referral") loadReferral();
+    if (page === "settings") loadSettings();
   }
 
   document.querySelectorAll(".nav-btn").forEach(btn => {
+    btn.addEventListener("click", () => switchPage(btn.dataset.page));
+  });
+
+  document.querySelectorAll(".more-link").forEach(btn => {
     btn.addEventListener("click", () => switchPage(btn.dataset.page));
   });
 
@@ -737,6 +839,166 @@
       el.innerHTML = html;
     } catch (e) {
       el.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Не удалось загрузить рейтинг</div></div>';
+    }
+  }
+
+  // ─── GIFTS PAGE ─────────────────────────────────────────────────────────────
+
+  async function loadGifts() {
+    const el = document.getElementById("gifts-content");
+    el.innerHTML = '<div class="loading">Загружаем подарки…</div>';
+    try {
+      const data = await apiCall("/api/gifts");
+      if (data.error) {
+        el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">${data.error}</div></div>`;
+        return;
+      }
+
+      let html = `<div style="font-size: 13px; color: var(--ink-soft); margin-bottom: 12px;">Ваши баллы: <b style="color: var(--ink);">${data.points}</b></div>`;
+      data.gifts.forEach(g => {
+        html += `
+          <div class="gift-card ${g.unlocked ? "" : "locked"}">
+            <div class="gift-emoji">${g.emoji}</div>
+            <div class="gift-info">
+              <div class="gift-name">${g.name}</div>
+              <div class="gift-desc">${g.desc}</div>
+              <div class="gift-points">${g.points} баллов</div>
+            </div>
+            <div class="gift-badge ${g.unlocked ? "unlocked" : "locked"}">${g.unlocked ? "✓ Получено" : "Закрыто"}</div>
+          </div>
+        `;
+      });
+      el.innerHTML = html;
+    } catch (e) {
+      el.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Не удалось загрузить подарки</div></div>';
+    }
+  }
+
+  // ─── REFERRAL PAGE ──────────────────────────────────────────────────────────
+
+  async function loadReferral() {
+    const el = document.getElementById("referral-content");
+    el.innerHTML = '<div class="loading">Загружаем…</div>';
+    try {
+      const data = await apiCall("/api/referral");
+      if (data.error) {
+        el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">${data.error}</div></div>`;
+        return;
+      }
+
+      const shareLink = `https://t.me/${data.bot_username}?start=${data.referral_code}`;
+
+      el.innerHTML = `
+        <div class="referral-code-box">
+          <div style="font-size: 12px; opacity: 0.8;">Ваш код приглашения</div>
+          <div class="referral-code-value">${data.referral_code}</div>
+        </div>
+        <div class="profile-card">
+          <div style="font-size: 13px; color: var(--ink-soft);">Приглашено друзей</div>
+          <div style="font-size: 22px; font-weight: 700; margin-top: 2px;">${data.invited_count}</div>
+          <div style="font-size: 12px; color: var(--ink-soft); margin-top: 8px;">За каждого друга вы получаете +5 баллов, друг получает +10 баллов при регистрации</div>
+        </div>
+        <button class="share-btn" id="share-referral-btn">Поделиться с другом</button>
+      `;
+
+      document.getElementById("share-referral-btn").onclick = () => {
+        if (tg?.openTelegramLink) {
+          tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(shareLink)}&text=${encodeURIComponent("Присоединяйся к Bazilik Catering!")}`);
+        } else {
+          navigator.clipboard?.writeText(shareLink);
+          showToast("Ссылка скопирована!");
+        }
+      };
+    } catch (e) {
+      el.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Не удалось загрузить данные</div></div>';
+    }
+  }
+
+  // ─── SETTINGS PAGE ──────────────────────────────────────────────────────────
+
+  const DAYS_RU = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"];
+
+  async function loadSettings() {
+    const el = document.getElementById("settings-content");
+    el.innerHTML = '<div class="loading">Загружаем настройки…</div>';
+    try {
+      const data = await apiCall("/api/settings");
+      if (data.error) {
+        el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">${data.error}</div></div>`;
+        return;
+      }
+
+      let html = `
+        <div class="profile-card">
+          <div class="setting-row">
+            <div class="setting-label">Автозаказ по расписанию</div>
+            <button class="toggle-switch ${data.auto_order ? "on" : "off"}" id="auto-order-toggle">
+              <div class="toggle-knob"></div>
+            </button>
+          </div>
+        </div>
+        <div class="profile-card">
+          <div style="font-size: 13px; font-weight: 600; margin-bottom: 6px;">Меню на неделю</div>
+          <div style="font-size: 12px; color: var(--ink-soft); margin-bottom: 8px;">Выберите блюдо на каждый день — оно будет заказываться автоматически при включённом автозаказе</div>
+      `;
+      DAYS_RU.forEach((dayName, i) => {
+        const item = data.weekly[i];
+        html += `
+          <div class="weekly-day-row" data-day="${i}">
+            <div class="weekly-day-name">${dayName}</div>
+            <div class="weekly-day-status">${item ? `✅ Блюдо ${item}` : "➕ Выбрать"}</div>
+          </div>
+        `;
+      });
+      html += `</div>`;
+      el.innerHTML = html;
+
+      document.getElementById("auto-order-toggle").onclick = async () => {
+        const result = await apiCall("/api/settings/toggle-auto");
+        if (result.success) {
+          showToast(result.auto_order ? "✅ Автозаказ включён" : "Автозаказ выключен");
+          loadSettings();
+        }
+      };
+
+      document.querySelectorAll(".weekly-day-row").forEach(row => {
+        row.onclick = () => showWeeklyDayPicker(parseInt(row.dataset.day));
+      });
+    } catch (e) {
+      el.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Не удалось загрузить настройки</div></div>';
+    }
+  }
+
+  async function showWeeklyDayPicker(dayOfWeek) {
+    const el = document.getElementById("settings-content");
+    el.innerHTML = '<div class="loading">Загружаем меню…</div>';
+    try {
+      const data = await apiCall("/api/settings/weekly-menu", { day_of_week: dayOfWeek });
+      const items = data.items || [];
+
+      let html = `<div class="profile-card"><div style="font-size: 14px; font-weight: 700; margin-bottom: 10px;">${DAYS_RU[dayOfWeek]}</div>`;
+      if (items.length === 0) {
+        html += `<div style="font-size: 13px; color: var(--ink-soft);">Меню на этот день не добавлено</div>`;
+      } else {
+        items.forEach(item => {
+          html += `<button class="more-link weekly-pick-btn" data-item="${item.item_number}">${item.item_number}. ${item.name} — ${fmt(item.price)}</button>`;
+        });
+        html += `<button class="more-link weekly-pick-btn" data-item="" style="color: var(--red);">🗑 Убрать этот день</button>`;
+      }
+      html += `<button class="btn-danger" id="weekly-back-btn" style="margin-top: 10px;">Назад к настройкам</button></div>`;
+      el.innerHTML = html;
+
+      document.querySelectorAll(".weekly-pick-btn").forEach(btn => {
+        btn.onclick = async () => {
+          const itemNumber = btn.dataset.item ? parseInt(btn.dataset.item) : null;
+          await apiCall("/api/settings/set-weekly", { day_of_week: dayOfWeek, item_number: itemNumber });
+          showToast("✅ Сохранено");
+          loadSettings();
+        };
+      });
+      document.getElementById("weekly-back-btn").onclick = loadSettings;
+    } catch (e) {
+      el.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Ошибка загрузки</div></div>';
     }
   }
 
