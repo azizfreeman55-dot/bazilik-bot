@@ -195,44 +195,35 @@ async def handle_click_complete(request):
 
 # ─── Mini App API ───────────────────────────────────────────────────────────
 
+from init_data_py import InitData
+
+
 async def verify_telegram_init_data(init_data: str, bot_token: str) -> dict | None:
     """
-    Проверяет подпись initData от Telegram WebApp (классический HMAC метод).
-    ВАЖНО: из data_check_string исключаются оба поля — 'hash' и 'signature'
-    (signature — это Ed25519 подпись для нового метода верификации,
-    она не участвует в HMAC-проверке и должна быть удалена перед проверкой).
+    Проверяет подпись initData от Telegram WebApp используя проверенную
+    библиотеку init-data-py (вместо самописного HMAC, который содержал
+    скрытую ошибку и не проходил валидацию реальных данных от Telegram).
     """
     try:
         if not init_data:
             return None
 
-        parsed = dict(parse_qsl(init_data))
-        received_hash = parsed.pop("hash", None)
-        parsed.pop("signature", None)  # не участвует в HMAC data_check_string
+        parsed_init_data = InitData.parse(init_data)
+        is_valid = parsed_init_data.validate(bot_token, lifetime=0)
 
-        if not received_hash:
+        if not is_valid:
+            logger.warning(f"initData validation failed (library check)")
             return None
 
-        data_check_string = "\n".join(
-            f"{k}={v}" for k, v in sorted(parsed.items())
-        )
-
-        secret_key = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
-        computed_hash = hmac.new(
-            secret_key, data_check_string.encode(), hashlib.sha256
-        ).hexdigest()
-
-        if computed_hash != received_hash:
-            logger.warning(
-                f"initData hash mismatch.\n"
-                f"  data_check_string={data_check_string!r}\n"
-                f"  computed={computed_hash}\n"
-                f"  received={received_hash}"
-            )
+        if not parsed_init_data.user:
             return None
 
-        user_data = json.loads(parsed.get("user", "{}"))
-        return user_data
+        return {
+            "id": parsed_init_data.user.id,
+            "first_name": parsed_init_data.user.first_name,
+            "last_name": parsed_init_data.user.last_name or "",
+            "username": getattr(parsed_init_data.user, "username", None),
+        }
     except Exception as e:
         logger.error(f"initData verification error: {e}")
         return None
