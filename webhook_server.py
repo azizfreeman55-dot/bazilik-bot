@@ -5,11 +5,11 @@ import json
 import logging
 import os
 from datetime import date, timedelta
-from urllib.parse import parse_qsl
 
 from aiohttp import web
 from aiogram import Bot
 from dotenv import load_dotenv
+from init_data_py import InitData
 
 load_dotenv()
 
@@ -86,11 +86,9 @@ async def handle_health(request):
 async def handle_click_prepare(request):
     if request.method == "GET":
         return web.Response(text="Click Prepare endpoint OK")
-
     try:
         data = await request.json()
         logger.info(f"[PREPARE] Received: {data}")
-
         click_trans_id = data.get("click_trans_id")
         service_id = data.get("service_id")
         merchant_trans_id = data.get("merchant_trans_id")
@@ -103,7 +101,6 @@ async def handle_click_prepare(request):
         ).hexdigest()
 
         if my_sign != sign_string:
-            logger.error(f"[PREPARE] Sign mismatch!")
             return web.json_response({"error": -1, "error_note": "SIGN CHECK FAILED!"})
 
         parts = str(merchant_trans_id).split("_")
@@ -117,7 +114,6 @@ async def handle_click_prepare(request):
             "error": 0,
             "error_note": "Success"
         })
-
     except Exception as e:
         logger.error(f"[PREPARE] Exception: {e}")
         return web.json_response({"error": -9, "error_note": str(e)})
@@ -126,11 +122,9 @@ async def handle_click_prepare(request):
 async def handle_click_complete(request):
     if request.method == "GET":
         return web.Response(text="Click Complete endpoint OK")
-
     try:
         data = await request.json()
         logger.info(f"[COMPLETE] Received: {data}")
-
         click_trans_id = str(data.get("click_trans_id"))
         service_id = data.get("service_id")
         merchant_trans_id = data.get("merchant_trans_id")
@@ -145,7 +139,6 @@ async def handle_click_complete(request):
         ).hexdigest()
 
         if my_sign != sign_string:
-            logger.error(f"[COMPLETE] Sign mismatch!")
             return web.json_response({"error": -1, "error_note": "SIGN CHECK FAILED!"})
 
         if error < 0:
@@ -161,11 +154,8 @@ async def handle_click_complete(request):
         if len(parts) >= 3 and parts[0] == "balance":
             user_db_id = int(parts[1])
             amount_sum = int(float(amount))
-
             added = await add_balance(user_db_id, amount_sum, "Пополнение через Click", click_trans_id)
-
             if added:
-                logger.info(f"[COMPLETE] Balance +{amount_sum} added to user_db_id={user_db_id}")
                 try:
                     pool = await get_pool()
                     async with pool.acquire() as db:
@@ -177,7 +167,6 @@ async def handle_click_complete(request):
                 except Exception as e:
                     logger.error(f"[COMPLETE] Notify error: {e}")
         else:
-            logger.error(f"[COMPLETE] Invalid merchant_trans_id format: {merchant_trans_id}")
             return web.json_response({"error": -5, "error_note": "User does not exist"})
 
         return web.json_response({
@@ -187,42 +176,29 @@ async def handle_click_complete(request):
             "error": 0,
             "error_note": "Success"
         })
-
     except Exception as e:
         logger.error(f"[COMPLETE] Exception: {e}")
         return web.json_response({"error": -9, "error_note": str(e)})
 
 
-# ─── Mini App API ───────────────────────────────────────────────────────────
-
-from init_data_py import InitData
-
+# ─── Mini App: авторизация ─────────────────────────────────────────────────────
 
 async def verify_telegram_init_data(init_data: str, bot_token: str) -> dict | None:
-    """
-    Проверяет подпись initData от Telegram WebApp используя проверенную
-    библиотеку init-data-py (вместо самописного HMAC, который содержал
-    скрытую ошибку и не проходил валидацию реальных данных от Telegram).
-    """
+    """Проверяет подпись initData используя проверенную библиотеку init-data-py."""
     try:
         if not init_data:
             return None
-
         parsed_init_data = InitData.parse(init_data)
         is_valid = parsed_init_data.validate(bot_token, lifetime=86400)
-
         if not is_valid:
-            logger.warning(f"initData validation failed (library check)")
+            logger.warning("initData validation failed")
             return None
-
         if not parsed_init_data.user:
             return None
-
         return {
             "id": parsed_init_data.user.id,
             "first_name": parsed_init_data.user.first_name,
             "last_name": parsed_init_data.user.last_name or "",
-            "username": getattr(parsed_init_data.user, "username", None),
         }
     except Exception as e:
         logger.error(f"initData verification error: {e}")
@@ -237,37 +213,33 @@ def cors_headers():
     }
 
 
+async def get_init_data_from_request(request) -> str:
+    """Достаёт init_data либо из заголовка X-Init-Data, либо из тела (text/plain)"""
+    header_val = request.headers.get("X-Init-Data", "")
+    if header_val:
+        return header_val
+    raw = await request.read()
+    return raw.decode("utf-8")
+
+
+# ─── Mini App: меню ─────────────────────────────────────────────────────────────
+
 async def handle_webapp_menu(request):
-    """POST /api/menu — отдаёт меню на завтра + баланс пользователя.
-    init_data передаётся как RAW текст в теле запроса (Content-Type: text/plain),
-    без JSON-обёртки — чтобы избежать изменения экранирования спецсимволов
-    (JSON.stringify в браузере может убрать обратные слеши внутри user=,
-    что ломает HMAC-подпись при проверке на сервере)."""
     try:
-        if request.method == "GET":
-            init_data = request.query.get("init_data", "")
-        else:
-            raw_body = await request.read()
-            init_data = raw_body.decode("utf-8")
-
+        init_data = await get_init_data_from_request(request)
         user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
-
         if not user_data:
             return web.json_response({"error": "Invalid auth"}, status=401, headers=cors_headers())
 
         telegram_id = user_data.get("id")
-
         pool = await get_pool()
         async with pool.acquire() as db:
-            user = await db.fetchrow(
-                "SELECT id FROM users WHERE telegram_id = $1", telegram_id
-            )
+            user = await db.fetchrow("SELECT id FROM users WHERE telegram_id = $1", telegram_id)
             if not user:
                 return web.json_response(
                     {"error": "User not registered. Напишите /start боту."},
                     status=404, headers=cors_headers()
                 )
-
             user_db_id = user["id"]
 
             balance_row = await db.fetchrow(
@@ -276,7 +248,6 @@ async def handle_webapp_menu(request):
             balance = balance_row["balance"] if balance_row else 0
 
             tomorrow = str(date.today() + timedelta(days=1))
-
             menu_rows = await db.fetch(
                 """SELECT id, item_number, name, price, photo_id, category
                    FROM menus WHERE menu_date = $1::text AND is_active = 1
@@ -285,8 +256,7 @@ async def handle_webapp_menu(request):
             )
 
             if not menu_rows:
-                from datetime import date as date_cls
-                day_num = date_cls.fromisoformat(tomorrow).weekday()
+                day_num = date.fromisoformat(tomorrow).weekday()
                 weekly_rows = await db.fetch(
                     """SELECT item_number, name, price, photo_id, category
                        FROM weekly_menu WHERE day_of_week = $1 AND is_active = 1
@@ -294,7 +264,7 @@ async def handle_webapp_menu(request):
                     day_num
                 )
                 categories = {"main": [], "salad": [], "dessert": [], "drink": []}
-                for i, row in enumerate(weekly_rows):
+                for row in weekly_rows:
                     cat = row["category"] or "main"
                     categories.setdefault(cat, []).append({
                         "id": f"weekly_{day_num}_{row['item_number']}_{cat}",
@@ -320,33 +290,26 @@ async def handle_webapp_menu(request):
             "balance": balance,
             "date_label": tomorrow
         }, headers=cors_headers())
-
     except Exception as e:
         logger.error(f"webapp_menu error: {e}")
         return web.json_response({"error": str(e)}, status=500, headers=cors_headers())
 
 
 async def handle_webapp_order(request):
-    """POST /api/order — принимает заказ из Mini App.
-    init_data передаётся в заголовке X-Init-Data (raw, без модификации),
-    items — в JSON теле запроса."""
     try:
-        init_data = request.headers.get("X-Init-Data", "")
-        data = await request.json()
-        items = data.get("items", [])
+        init_data = await get_init_data_from_request(request) if request.headers.get("X-Init-Data") else ""
+        if not init_data:
+            init_data = request.headers.get("X-Init-Data", "")
+        body = await request.json()
+        items = body.get("items", [])
 
         user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
         if not user_data:
-            return web.json_response(
-                {"success": False, "error": "Invalid auth"}, status=401, headers=cors_headers()
-            )
+            return web.json_response({"success": False, "error": "Invalid auth"}, status=401, headers=cors_headers())
 
         telegram_id = user_data.get("id")
-
         if not items:
-            return web.json_response(
-                {"success": False, "error": "Корзина пуста"}, headers=cors_headers()
-            )
+            return web.json_response({"success": False, "error": "Корзина пуста"}, headers=cors_headers())
 
         pool = await get_pool()
         tomorrow = str(date.today() + timedelta(days=1))
@@ -414,8 +377,7 @@ async def handle_webapp_order(request):
 
             if orders_created > 0:
                 await db.execute(
-                    """UPDATE users SET total_orders = total_orders + 1, points = points + 5
-                       WHERE id = $1""",
+                    "UPDATE users SET total_orders = total_orders + 1, points = points + 5 WHERE id = $1",
                     user_db_id
                 )
                 if user["company_id"]:
@@ -460,12 +422,225 @@ async def handle_webapp_order(request):
             logger.error(f"Order notify error: {e}")
 
         return web.json_response({"success": True}, headers=cors_headers())
-
     except Exception as e:
         logger.error(f"webapp_order error: {e}")
-        return web.json_response(
-            {"success": False, "error": str(e)}, status=500, headers=cors_headers()
-        )
+        return web.json_response({"success": False, "error": str(e)}, status=500, headers=cors_headers())
+
+
+async def handle_webapp_my_order(request):
+    """POST /api/my-order — список позиций текущего заказа на завтра"""
+    try:
+        init_data = await get_init_data_from_request(request)
+        user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
+        if not user_data:
+            return web.json_response({"error": "Invalid auth"}, status=401, headers=cors_headers())
+
+        telegram_id = user_data.get("id")
+        tomorrow = str(date.today() + timedelta(days=1))
+
+        pool = await get_pool()
+        async with pool.acquire() as db:
+            rows = await db.fetch(
+                """SELECT o.id, o.status, m.name as meal_name, m.category, m.price
+                   FROM orders o
+                   JOIN users u ON o.user_id = u.id
+                   JOIN menus m ON o.menu_id = m.id
+                   WHERE u.telegram_id = $1 AND o.order_date = $2::text
+                   AND o.status != 'cancelled'
+                   ORDER BY m.category, m.item_number""",
+                telegram_id, tomorrow
+            )
+
+        items = [dict(r) for r in rows]
+        total = sum(i["price"] for i in items)
+
+        return web.json_response({
+            "items": items,
+            "total": total,
+            "date_label": tomorrow
+        }, headers=cors_headers())
+    except Exception as e:
+        logger.error(f"webapp_my_order error: {e}")
+        return web.json_response({"error": str(e)}, status=500, headers=cors_headers())
+
+
+async def handle_webapp_cancel_order(request):
+    """POST /api/cancel-order — отменить весь заказ на завтра"""
+    try:
+        init_data = await get_init_data_from_request(request)
+        user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
+        if not user_data:
+            return web.json_response({"success": False, "error": "Invalid auth"}, status=401, headers=cors_headers())
+
+        telegram_id = user_data.get("id")
+        tomorrow = str(date.today() + timedelta(days=1))
+
+        pool = await get_pool()
+        async with pool.acquire() as db:
+            user = await db.fetchrow("SELECT id FROM users WHERE telegram_id = $1", telegram_id)
+            if not user:
+                return web.json_response({"success": False, "error": "User not found"}, status=404, headers=cors_headers())
+
+            debit_marker = f"|{tomorrow}"
+            refund_marker = f"REFUND|{tomorrow}"
+
+            already_refunded = await db.fetchrow(
+                """SELECT id FROM balance_transactions
+                   WHERE user_id = $1 AND type = 'credit'
+                   AND description LIKE '%' || $2 || '%'""",
+                user["id"], refund_marker
+            )
+            refund_amount = 0
+            if not already_refunded:
+                refund_amount = await db.fetchval(
+                    """SELECT COALESCE(SUM(amount), 0) FROM balance_transactions
+                       WHERE user_id = $1 AND type = 'debit'
+                       AND description LIKE '%' || $2""",
+                    user["id"], debit_marker
+                ) or 0
+
+            cancelled = await db.fetch(
+                """UPDATE orders SET status = 'cancelled'
+                   WHERE user_id = $1 AND order_date = $2::text AND status = 'pending'
+                   RETURNING id""",
+                user["id"], tomorrow
+            )
+            cancelled_count = len(cancelled)
+
+            if cancelled_count > 0:
+                await db.execute(
+                    "UPDATE users SET total_orders = total_orders - 1, points = points - 5 WHERE id = $1",
+                    user["id"]
+                )
+
+            if refund_amount > 0:
+                await db.execute(
+                    """INSERT INTO user_balance (user_id, balance) VALUES ($1, $2)
+                       ON CONFLICT (user_id) DO UPDATE SET balance = user_balance.balance + $2""",
+                    user["id"], refund_amount
+                )
+                await db.execute(
+                    """INSERT INTO balance_transactions (user_id, amount, type, description)
+                       VALUES ($1, $2, 'credit', $3)""",
+                    user["id"], refund_amount, f"Возврат за отмену заказа | {refund_marker}"
+                )
+
+        return web.json_response({
+            "success": True,
+            "cancelled_count": cancelled_count,
+            "refund_amount": refund_amount
+        }, headers=cors_headers())
+    except Exception as e:
+        logger.error(f"webapp_cancel_order error: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500, headers=cors_headers())
+
+
+async def handle_webapp_profile(request):
+    """POST /api/profile — профиль пользователя"""
+    try:
+        init_data = await get_init_data_from_request(request)
+        user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
+        if not user_data:
+            return web.json_response({"error": "Invalid auth"}, status=401, headers=cors_headers())
+
+        telegram_id = user_data.get("id")
+        pool = await get_pool()
+        async with pool.acquire() as db:
+            user = await db.fetchrow(
+                """SELECT u.*, c.name as company_name FROM users u
+                   LEFT JOIN companies c ON u.company_id = c.id
+                   WHERE u.telegram_id = $1""",
+                telegram_id
+            )
+            if not user:
+                return web.json_response({"error": "User not registered"}, status=404, headers=cors_headers())
+
+            balance_row = await db.fetchrow(
+                "SELECT balance FROM user_balance WHERE user_id = $1", user["id"]
+            )
+            balance = balance_row["balance"] if balance_row else 0
+
+        return web.json_response({
+            "full_name": user["full_name"],
+            "phone": user["phone"],
+            "company_name": user["company_name"],
+            "points": user["points"],
+            "total_orders": user["total_orders"],
+            "status": user["status"],
+            "balance": balance,
+            "referral_code": user["referral_code"],
+        }, headers=cors_headers())
+    except Exception as e:
+        logger.error(f"webapp_profile error: {e}")
+        return web.json_response({"error": str(e)}, status=500, headers=cors_headers())
+
+
+async def handle_webapp_rating(request):
+    """POST /api/rating — топ компаний за месяц"""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as db:
+            rows = await db.fetch(
+                """SELECT c.name, c.total_orders,
+                   (SELECT COUNT(*) FROM orders o
+                    JOIN users u ON o.user_id = u.id
+                    WHERE u.company_id = c.id
+                    AND to_char(o.created_at, 'YYYY-MM') = to_char(NOW(), 'YYYY-MM')) as month_orders
+                   FROM companies c
+                   ORDER BY month_orders DESC LIMIT 10"""
+            )
+        return web.json_response({
+            "companies": [dict(r) for r in rows]
+        }, headers=cors_headers())
+    except Exception as e:
+        logger.error(f"webapp_rating error: {e}")
+        return web.json_response({"error": str(e)}, status=500, headers=cors_headers())
+
+
+async def handle_webapp_balance_history(request):
+    """POST /api/balance-history — баланс + история транзакций"""
+    try:
+        init_data = await get_init_data_from_request(request)
+        user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
+        if not user_data:
+            return web.json_response({"error": "Invalid auth"}, status=401, headers=cors_headers())
+
+        telegram_id = user_data.get("id")
+        pool = await get_pool()
+        async with pool.acquire() as db:
+            user = await db.fetchrow("SELECT id FROM users WHERE telegram_id = $1", telegram_id)
+            if not user:
+                return web.json_response({"error": "User not registered"}, status=404, headers=cors_headers())
+
+            balance_row = await db.fetchrow(
+                "SELECT balance FROM user_balance WHERE user_id = $1", user["id"]
+            )
+            balance = balance_row["balance"] if balance_row else 0
+
+            history = await db.fetch(
+                """SELECT amount, type, description, created_at FROM balance_transactions
+                   WHERE user_id = $1 ORDER BY created_at DESC LIMIT 20""",
+                user["id"]
+            )
+
+        history_list = []
+        for h in history:
+            desc = h["description"] or ""
+            clean_desc = desc.split("|")[0].strip()
+            history_list.append({
+                "amount": h["amount"],
+                "type": h["type"],
+                "description": clean_desc,
+                "date": h["created_at"].strftime("%d.%m")
+            })
+
+        return web.json_response({
+            "balance": balance,
+            "history": history_list
+        }, headers=cors_headers())
+    except Exception as e:
+        logger.error(f"webapp_balance_history error: {e}")
+        return web.json_response({"error": str(e)}, status=500, headers=cors_headers())
 
 
 async def handle_options(request):
@@ -502,15 +677,6 @@ async def handle_webapp_static(request):
     )
 
 
-async def handle_debug(request):
-    """Временный debug endpoint — логирует raw initData байт-в-байт"""
-    raw_body = await request.read()
-    logger.info(f"[DEBUG] Raw bytes length: {len(raw_body)}")
-    logger.info(f"[DEBUG] Raw bytes hex (first 100): {raw_body[:100].hex()}")
-    logger.info(f"[DEBUG] Decoded: {raw_body.decode('utf-8')}")
-    return web.json_response({"ok": True}, headers=cors_headers())
-
-
 async def create_app():
     app = web.Application()
 
@@ -522,15 +688,18 @@ async def create_app():
     app.router.add_get("/click/complete", handle_click_complete)
     app.router.add_post("/click/complete", handle_click_complete)
 
-    app.router.add_get("/api/menu", handle_webapp_menu)
     app.router.add_post("/api/menu", handle_webapp_menu)
     app.router.add_post("/api/order", handle_webapp_order)
-    app.router.add_post("/api/debug", handle_debug)
-    app.router.add_route("OPTIONS", "/api/menu", handle_options)
-    app.router.add_route("OPTIONS", "/api/order", handle_options)
-    app.router.add_route("OPTIONS", "/api/debug", handle_options)
+    app.router.add_post("/api/my-order", handle_webapp_my_order)
+    app.router.add_post("/api/cancel-order", handle_webapp_cancel_order)
+    app.router.add_post("/api/profile", handle_webapp_profile)
+    app.router.add_post("/api/rating", handle_webapp_rating)
+    app.router.add_post("/api/balance-history", handle_webapp_balance_history)
 
-    # Mini App страница — отдаём вручную с no-cache заголовками
+    for path in ["/api/menu", "/api/order", "/api/my-order", "/api/cancel-order",
+                 "/api/profile", "/api/rating", "/api/balance-history"]:
+        app.router.add_route("OPTIONS", path, handle_options)
+
     app.router.add_get("/webapp/{filename}", handle_webapp_static)
     app.router.add_get("/webapp/", handle_webapp_static)
 
