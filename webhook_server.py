@@ -15,6 +15,8 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CLICK_SECRET_KEY = os.getenv("CLICK_SECRET_KEY")
+CLICK_SERVICE_ID = os.getenv("CLICK_SERVICE_ID")
+CLICK_MERCHANT_ID = os.getenv("CLICK_MERCHANT_ID")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 logging.basicConfig(level=logging.INFO)
@@ -643,6 +645,43 @@ async def handle_webapp_balance_history(request):
         return web.json_response({"error": str(e)}, status=500, headers=cors_headers())
 
 
+async def handle_webapp_topup(request):
+    """POST /api/topup — генерирует ссылку Click для пополнения баланса"""
+    try:
+        init_data = await get_init_data_from_request(request)
+        body = await request.json() if request.has_body else {}
+        amount = body.get("amount", 0)
+
+        user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
+        if not user_data:
+            return web.json_response({"error": "Invalid auth"}, status=401, headers=cors_headers())
+
+        if not amount or amount < 1000:
+            return web.json_response({"error": "Минимальная сумма — 1000 сум"}, headers=cors_headers())
+
+        telegram_id = user_data.get("id")
+        pool = await get_pool()
+        async with pool.acquire() as db:
+            user = await db.fetchrow("SELECT id FROM users WHERE telegram_id = $1", telegram_id)
+            if not user:
+                return web.json_response({"error": "User not registered"}, status=404, headers=cors_headers())
+
+        order_id = f"balance_{user['id']}_{amount}"
+        click_link = (
+            f"https://my.click.uz/services/pay?"
+            f"service_id={CLICK_SERVICE_ID}"
+            f"&merchant_id={CLICK_MERCHANT_ID}"
+            f"&amount={amount}"
+            f"&transaction_param={order_id}"
+            f"&return_url=https://t.me/BazilikCateringBot"
+        )
+
+        return web.json_response({"click_link": click_link}, headers=cors_headers())
+    except Exception as e:
+        logger.error(f"webapp_topup error: {e}")
+        return web.json_response({"error": str(e)}, status=500, headers=cors_headers())
+
+
 async def handle_options(request):
     return web.Response(headers=cors_headers())
 
@@ -695,9 +734,10 @@ async def create_app():
     app.router.add_post("/api/profile", handle_webapp_profile)
     app.router.add_post("/api/rating", handle_webapp_rating)
     app.router.add_post("/api/balance-history", handle_webapp_balance_history)
+    app.router.add_post("/api/topup", handle_webapp_topup)
 
     for path in ["/api/menu", "/api/order", "/api/my-order", "/api/cancel-order",
-                 "/api/profile", "/api/rating", "/api/balance-history"]:
+                 "/api/profile", "/api/rating", "/api/balance-history", "/api/topup"]:
         app.router.add_route("OPTIONS", path, handle_options)
 
     app.router.add_get("/webapp/{filename}", handle_webapp_static)
