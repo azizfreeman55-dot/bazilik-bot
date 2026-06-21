@@ -196,13 +196,20 @@ async def handle_click_complete(request):
 # ─── Mini App API ───────────────────────────────────────────────────────────
 
 async def verify_telegram_init_data(init_data: str, bot_token: str) -> dict | None:
-    """Проверяет подпись initData от Telegram WebApp."""
+    """
+    Проверяет подпись initData от Telegram WebApp (классический HMAC метод).
+    ВАЖНО: из data_check_string исключаются оба поля — 'hash' и 'signature'
+    (signature — это Ed25519 подпись для нового метода верификации,
+    она не участвует в HMAC-проверке и должна быть удалена перед проверкой).
+    """
     try:
         if not init_data:
             return None
 
         parsed = dict(parse_qsl(init_data))
         received_hash = parsed.pop("hash", None)
+        parsed.pop("signature", None)  # не участвует в HMAC data_check_string
+
         if not received_hash:
             return None
 
@@ -216,7 +223,7 @@ async def verify_telegram_init_data(init_data: str, bot_token: str) -> dict | No
         ).hexdigest()
 
         if computed_hash != received_hash:
-            logger.warning("initData hash mismatch")
+            logger.warning(f"initData hash mismatch. computed={computed_hash} received={received_hash}")
             return None
 
         user_data = json.loads(parsed.get("user", "{}"))
@@ -357,7 +364,6 @@ async def handle_webapp_order(request):
                 menu_id = entry.get("menu_id")
                 qty = entry.get("qty", 1)
 
-                # menu_id может быть строкой вида "weekly_0_1_main" если это фолбэк
                 if isinstance(menu_id, str) and menu_id.startswith("weekly_"):
                     _, day_num, item_number, cat = menu_id.split("_")
                     menu_item = await db.fetchrow(
@@ -368,7 +374,6 @@ async def handle_webapp_order(request):
                     )
                     if not menu_item:
                         continue
-                    # Копируем в menus чтобы получить настоящий id
                     real_row = await db.fetchrow(
                         """INSERT INTO menus (menu_date, item_number, name, description, price, photo_id, category)
                            VALUES ($1, $2, $3, '', $4, $5, $6)
@@ -472,13 +477,11 @@ async def create_app():
     app.router.add_get("/click/complete", handle_click_complete)
     app.router.add_post("/click/complete", handle_click_complete)
 
-    # Mini App API
     app.router.add_get("/api/menu", handle_webapp_menu)
     app.router.add_post("/api/order", handle_webapp_order)
     app.router.add_route("OPTIONS", "/api/menu", handle_options)
     app.router.add_route("OPTIONS", "/api/order", handle_options)
 
-    # Mini App статика (HTML/CSS/JS страница)
     webapp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webapp")
     if os.path.isdir(webapp_dir):
         app.router.add_static("/webapp/", webapp_dir, show_index=False)
