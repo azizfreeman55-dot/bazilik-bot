@@ -242,20 +242,22 @@ def cors_headers():
     return {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type",
+        "Access-Control-Allow-Headers": "Content-Type, X-Init-Data",
     }
 
 
 async def handle_webapp_menu(request):
     """POST /api/menu — отдаёт меню на завтра + баланс пользователя.
-    init_data передаётся в теле POST-запроса (JSON), а не в query string,
-    чтобы избежать проблем с многоуровневым URL-кодированием."""
+    init_data передаётся как RAW текст в теле запроса (Content-Type: text/plain),
+    без JSON-обёртки — чтобы избежать изменения экранирования спецсимволов
+    (JSON.stringify в браузере может убрать обратные слеши внутри user=,
+    что ломает HMAC-подпись при проверке на сервере)."""
     try:
         if request.method == "GET":
             init_data = request.query.get("init_data", "")
         else:
-            body = await request.json()
-            init_data = body.get("init_data", "")
+            raw_body = await request.read()
+            init_data = raw_body.decode("utf-8")
 
         user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
 
@@ -334,10 +336,12 @@ async def handle_webapp_menu(request):
 
 
 async def handle_webapp_order(request):
-    """POST /api/order — принимает заказ из Mini App"""
+    """POST /api/order — принимает заказ из Mini App.
+    init_data передаётся в заголовке X-Init-Data (raw, без модификации),
+    items — в JSON теле запроса."""
     try:
+        init_data = request.headers.get("X-Init-Data", "")
         data = await request.json()
-        init_data = data.get("init_data", "")
         items = data.get("items", [])
 
         user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
