@@ -16,28 +16,27 @@ CATEGORY_NAMES = {
 WEBAPP_URL = "https://bazilik-webhook.onrender.com/webapp/index.html"
 
 
-def main_menu_keyboard(is_admin: bool = False, lang: str = "ru") -> ReplyKeyboardMarkup:
+def main_menu_keyboard(is_admin: bool = False, lang: str = "ru"):
     """
-    Минимальное главное меню — почти всё теперь внутри Mini App.
-    Клиенту остаётся только одна кнопка открытия приложения.
-    Админу дополнительно показывается кнопка админ-панели (она остаётся
-    в виде обычного диалога в чате, так как использует FSM-сценарии,
-    которые плохо переносятся в веб-интерфейс).
+    Главное меню клиента. Mini App теперь открывается через Menu Button
+    (кнопка рядом с полем ввода, настроена в BotFather через /setmenubutton) —
+    это надёжнее, чем KeyboardButton с web_app, у которой initData
+    иногда приходит пустой на некоторых клиентах.
+
+    Для обычного клиента reply-клавиатура не нужна вообще — возвращаем None,
+    aiogram в этом случае просто не показывает клавиатуру под полем ввода.
+    Админу всё ещё показываем кнопку открытия админ-панели.
     """
     from langs import t
-    buttons = [
-        [KeyboardButton(text="🌿 Открыть Bazilik" if lang == "ru" else "🌿 Bazilik'ni ochish",
-                         web_app=WebAppInfo(url=WEBAPP_URL))],
-    ]
-    if is_admin:
-        buttons.append([KeyboardButton(text=t(lang, "btn_admin"))])
+    if not is_admin:
+        return None
+
+    buttons = [[KeyboardButton(text=t(lang, "btn_admin"))]]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 
 def category_keyboard(available_categories: list, lang: str = "ru") -> InlineKeyboardMarkup:
-    """Оставлено для обратной совместимости — больше не используется
-    в основном потоке (заказ теперь полностью через Mini App),
-    но handlers/orders.py может на неё ссылаться в старых местах."""
+    """Оставлено для обратной совместимости — не используется в основном потоке."""
     builder = InlineKeyboardBuilder()
     builder.button(
         text="✨ Открыть каталог" if lang == "ru" else "✨ Katalogni ochish",
