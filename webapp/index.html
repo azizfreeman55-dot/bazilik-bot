@@ -104,6 +104,10 @@
     width: 56px; height: 56px; border-radius: 12px; background: var(--cream-dark);
     flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 24px;
   }
+  .item-thumb-img {
+    width: 56px; height: 56px; border-radius: 12px; background: var(--cream-dark);
+    flex-shrink: 0; object-fit: cover;
+  }
   .item-info { flex: 1; min-width: 0; }
   .item-name { font-size: 14.5px; font-weight: 600; line-height: 1.3; }
   .item-price { font-size: 13px; color: var(--ink-soft); margin-top: 2px; font-weight: 500; }
@@ -549,8 +553,13 @@
       const qty = cart[item.id]?.qty || 0;
       const card = document.createElement("div");
       card.className = "item-card";
+
+      const thumbHtml = item.photo_url
+        ? `<img class="item-thumb-img" src="${item.photo_url}" alt="${item.name}" loading="lazy">`
+        : `<div class="item-thumb">${CATEGORY_META[currentCat]?.icon || "🍽"}</div>`;
+
       card.innerHTML = `
-        <div class="item-thumb">${CATEGORY_META[currentCat]?.icon || "🍽"}</div>
+        ${thumbHtml}
         <div class="item-info">
           <div class="item-name">${item.name}</div>
           <div class="item-price">${fmt(item.price)}</div>
