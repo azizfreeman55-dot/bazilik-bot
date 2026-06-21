@@ -17,15 +17,17 @@ WEBAPP_URL = "https://bazilik-webhook.onrender.com/webapp/index.html"
 
 
 def main_menu_keyboard(is_admin: bool = False, lang: str = "ru") -> ReplyKeyboardMarkup:
+    """
+    Минимальное главное меню — почти всё теперь внутри Mini App.
+    Клиенту остаётся только одна кнопка открытия приложения.
+    Админу дополнительно показывается кнопка админ-панели (она остаётся
+    в виде обычного диалога в чате, так как использует FSM-сценарии,
+    которые плохо переносятся в веб-интерфейс).
+    """
     from langs import t
     buttons = [
-        [KeyboardButton(text=t(lang, "btn_order")), KeyboardButton(text=t(lang, "btn_my_order"))],
-        [KeyboardButton(text=t(lang, "btn_profile")), KeyboardButton(text=t(lang, "btn_rating"))],
-        [KeyboardButton(text=t(lang, "btn_invite")), KeyboardButton(text=t(lang, "btn_settings"))],
-        [
-            KeyboardButton(text="🎁 Подарки" if lang == "ru" else "🎁 Sovg'alar"),
-            KeyboardButton(text="💳 Мой баланс" if lang == "ru" else "💳 Mening hisobim")
-        ],
+        [KeyboardButton(text="🌿 Открыть Bazilik" if lang == "ru" else "🌿 Bazilik'ni ochish",
+                         web_app=WebAppInfo(url=WEBAPP_URL))],
     ]
     if is_admin:
         buttons.append([KeyboardButton(text=t(lang, "btn_admin"))])
@@ -33,19 +35,17 @@ def main_menu_keyboard(is_admin: bool = False, lang: str = "ru") -> ReplyKeyboar
 
 
 def category_keyboard(available_categories: list, lang: str = "ru") -> InlineKeyboardMarkup:
-    """Кнопки категорий + кнопка открытия Mini App сверху"""
+    """Оставлено для обратной совместимости — больше не используется
+    в основном потоке (заказ теперь полностью через Mini App),
+    но handlers/orders.py может на неё ссылаться в старых местах."""
     builder = InlineKeyboardBuilder()
-
-    # Кнопка Mini App — новый способ заказа
     builder.button(
         text="✨ Открыть каталог" if lang == "ru" else "✨ Katalogni ochish",
         web_app=WebAppInfo(url=WEBAPP_URL)
     )
-
     for cat in available_categories:
         name = CATEGORY_NAMES.get(cat, {}).get(lang, cat)
         builder.button(text=name, callback_data=f"menu_category_{cat}")
-
     builder.adjust(1, 2)
     return builder.as_markup()
 
