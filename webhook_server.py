@@ -188,7 +188,8 @@ async def handle_click_complete(request):
 async def verify_telegram_init_data(init_data: str, bot_token: str) -> dict | None:
     """Проверяет подпись initData используя проверенную библиотеку init-data-py."""
     try:
-        if not init_data:
+        if not init_data or not init_data.strip():
+            logger.warning("initData is empty")
             return None
         parsed_init_data = InitData.parse(init_data)
         is_valid = parsed_init_data.validate(bot_token, lifetime=86400)
@@ -203,7 +204,7 @@ async def verify_telegram_init_data(init_data: str, bot_token: str) -> dict | No
             "last_name": parsed_init_data.user.last_name or "",
         }
     except Exception as e:
-        logger.error(f"initData verification error: {e}")
+        logger.error(f"initData verification error: {e} | init_data preview: {init_data[:80]!r}")
         return None
 
 
