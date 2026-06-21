@@ -1,6 +1,7 @@
 from aiogram.types import (
     ReplyKeyboardMarkup, KeyboardButton,
-    InlineKeyboardMarkup, InlineKeyboardButton
+    InlineKeyboardMarkup, InlineKeyboardButton,
+    WebAppInfo
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -11,6 +12,8 @@ CATEGORY_NAMES = {
     "dessert": {"ru": "🍰 Десерты",          "uz": "🍰 Desertlar"},
     "drink":   {"ru": "🥤 Напитки",          "uz": "🥤 Ichimliklar"},
 }
+
+WEBAPP_URL = "https://bazilik-webhook.onrender.com/webapp/index.html"
 
 
 def main_menu_keyboard(is_admin: bool = False, lang: str = "ru") -> ReplyKeyboardMarkup:
@@ -30,11 +33,20 @@ def main_menu_keyboard(is_admin: bool = False, lang: str = "ru") -> ReplyKeyboar
 
 
 def category_keyboard(available_categories: list, lang: str = "ru") -> InlineKeyboardMarkup:
+    """Кнопки категорий + кнопка открытия Mini App сверху"""
     builder = InlineKeyboardBuilder()
+
+    # Кнопка Mini App — новый способ заказа
+    builder.button(
+        text="✨ Открыть каталог" if lang == "ru" else "✨ Katalogni ochish",
+        web_app=WebAppInfo(url=WEBAPP_URL)
+    )
+
     for cat in available_categories:
         name = CATEGORY_NAMES.get(cat, {}).get(lang, cat)
         builder.button(text=name, callback_data=f"menu_category_{cat}")
-    builder.adjust(2)
+
+    builder.adjust(1, 2)
     return builder.as_markup()
 
 
