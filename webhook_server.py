@@ -481,6 +481,26 @@ async def handle_options(request):
     return web.Response(headers=cors_headers())
 
 
+async def handle_webapp_static(request):
+    """Отдаёт index.html с заголовками no-cache, чтобы Telegram WebView
+    не использовал устаревшую закэшированную версию JS-кода."""
+    webapp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webapp")
+    file_path = os.path.join(webapp_dir, "index.html")
+    if not os.path.isfile(file_path):
+        return web.Response(text="Not found", status=404)
+    with open(file_path, "r", encoding="utf-8") as f:
+        content = f.read()
+    return web.Response(
+        text=content,
+        content_type="text/html",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        }
+    )
+
+
 async def create_app():
     app = web.Application()
 
@@ -498,12 +518,9 @@ async def create_app():
     app.router.add_route("OPTIONS", "/api/menu", handle_options)
     app.router.add_route("OPTIONS", "/api/order", handle_options)
 
-    webapp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webapp")
-    if os.path.isdir(webapp_dir):
-        app.router.add_static("/webapp/", webapp_dir, show_index=False)
-        logger.info(f"✅ Статика Mini App раздаётся из {webapp_dir}")
-    else:
-        logger.warning(f"⚠️ Папка webapp не найдена: {webapp_dir}")
+    # Mini App страница — отдаём вручную с no-cache заголовками
+    app.router.add_get("/webapp/index.html", handle_webapp_static)
+    app.router.add_get("/webapp/", handle_webapp_static)
 
     return app
 
