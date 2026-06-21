@@ -209,7 +209,7 @@ async def verify_telegram_init_data(init_data: str, bot_token: str) -> dict | No
             return None
 
         parsed_init_data = InitData.parse(init_data)
-        is_valid = parsed_init_data.validate(bot_token, lifetime=0)
+        is_valid = parsed_init_data.validate(bot_token, lifetime=86400)
 
         if not is_valid:
             logger.warning(f"initData validation failed (library check)")
