@@ -223,7 +223,12 @@ async def verify_telegram_init_data(init_data: str, bot_token: str) -> dict | No
         ).hexdigest()
 
         if computed_hash != received_hash:
-            logger.warning(f"initData hash mismatch. computed={computed_hash} received={received_hash}")
+            logger.warning(
+                f"initData hash mismatch.\n"
+                f"  data_check_string={data_check_string!r}\n"
+                f"  computed={computed_hash}\n"
+                f"  received={received_hash}"
+            )
             return None
 
         user_data = json.loads(parsed.get("user", "{}"))
@@ -242,9 +247,16 @@ def cors_headers():
 
 
 async def handle_webapp_menu(request):
-    """GET /api/menu?init_data=... — отдаёт меню на завтра + баланс пользователя"""
+    """POST /api/menu — отдаёт меню на завтра + баланс пользователя.
+    init_data передаётся в теле POST-запроса (JSON), а не в query string,
+    чтобы избежать проблем с многоуровневым URL-кодированием."""
     try:
-        init_data = request.query.get("init_data", "")
+        if request.method == "GET":
+            init_data = request.query.get("init_data", "")
+        else:
+            body = await request.json()
+            init_data = body.get("init_data", "")
+
         user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
 
         if not user_data:
@@ -279,7 +291,6 @@ async def handle_webapp_menu(request):
                 tomorrow
             )
 
-            # Фолбэк на постоянное меню если на дату ничего нет
             if not menu_rows:
                 from datetime import date as date_cls
                 day_num = date_cls.fromisoformat(tomorrow).weekday()
@@ -478,6 +489,7 @@ async def create_app():
     app.router.add_post("/click/complete", handle_click_complete)
 
     app.router.add_get("/api/menu", handle_webapp_menu)
+    app.router.add_post("/api/menu", handle_webapp_menu)
     app.router.add_post("/api/order", handle_webapp_order)
     app.router.add_route("OPTIONS", "/api/menu", handle_options)
     app.router.add_route("OPTIONS", "/api/order", handle_options)
