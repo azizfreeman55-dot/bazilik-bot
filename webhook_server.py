@@ -955,7 +955,9 @@ async def handle_options(request):
 
 
 async def handle_webapp_static(request):
-    """Отдаёт любой файл из папки webapp/ с заголовками no-cache."""
+    """Отдаёт любой файл из папки webapp/ с заголовками no-cache.
+    Текстовые файлы (html/js/css) читаются как текст с no-cache,
+    изображения — как бинарные данные с кэшированием (они не меняются часто)."""
     webapp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webapp")
     filename = request.match_info.get("filename", "index.html")
     if not filename:
@@ -964,6 +966,22 @@ async def handle_webapp_static(request):
 
     if not os.path.isfile(file_path):
         return web.Response(text="Not found", status=404)
+
+    image_types = {
+        ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".png": "image/png", ".gif": "image/gif",
+        ".svg": "image/svg+xml", ".webp": "image/webp",
+    }
+    ext = os.path.splitext(filename)[1].lower()
+
+    if ext in image_types:
+        with open(file_path, "rb") as f:
+            data = f.read()
+        return web.Response(
+            body=data,
+            content_type=image_types[ext],
+            headers={"Cache-Control": "public, max-age=86400"}
+        )
 
     content_type = "text/html"
     if filename.endswith(".js"):
