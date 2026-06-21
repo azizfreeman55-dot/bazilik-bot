@@ -64,7 +64,9 @@
     width: 36px; height: 36px; border-radius: 10px;
     background: var(--green-100); display: flex;
     align-items: center; justify-content: center; font-size: 18px;
+    overflow: hidden;
   }
+  .brand-logo { width: 100%; height: 100%; object-fit: cover; }
   .brand-name { font-size: 15px; font-weight: 600; }
   .brand-sub { font-size: 11px; opacity: 0.75; margin-top: 1px; }
   .balance-pill {
@@ -294,7 +296,7 @@
   <div class="header">
     <div class="header-top">
       <div class="brand">
-        <div class="brand-mark">🌿</div>
+        <div class="brand-mark"><img src="logo.jpg" alt="Bazilik" class="brand-logo"></div>
         <div>
           <div class="brand-name">Bazilik Catering</div>
           <div class="brand-sub" id="header-sub-text">Обеды для офиса</div>
