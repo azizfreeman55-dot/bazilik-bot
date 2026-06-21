@@ -81,6 +81,16 @@ async def notify_user(telegram_id: int, amount: int, lang: str = "ru"):
         logger.error(f"Notify error for telegram_id={telegram_id}: {e}")
 
 
+WEBHOOK_BASE_URL = "https://bazilik-webhook.onrender.com"
+
+
+def build_photo_url(photo_id: str | None) -> str | None:
+    """Строит URL для proxy-эндпоинта /api/photo/{photo_id}, если photo_id есть."""
+    if not photo_id:
+        return None
+    return f"{WEBHOOK_BASE_URL}/api/photo/{photo_id}"
+
+
 async def handle_health(request):
     return web.Response(text="OK")
 
@@ -274,7 +284,7 @@ async def handle_webapp_menu(request):
                         "item_number": row["item_number"],
                         "name": row["name"],
                         "price": row["price"],
-                        "photo_url": None
+                        "photo_url": build_photo_url(row["photo_id"])
                     })
             else:
                 categories = {"main": [], "salad": [], "dessert": [], "drink": []}
@@ -285,7 +295,7 @@ async def handle_webapp_menu(request):
                         "item_number": row["item_number"],
                         "name": row["name"],
                         "price": row["price"],
-                        "photo_url": None
+                        "photo_url": build_photo_url(row["photo_id"])
                     })
 
         return web.json_response({
@@ -913,6 +923,33 @@ async def handle_webapp_settings_set_weekly(request):
         return web.json_response({"success": False, "error": str(e)}, status=500, headers=cors_headers())
 
 
+async def handle_photo_proxy(request):
+    """
+    GET /api/photo/{photo_id} — проксирует фото блюда из Telegram.
+    Telegram file_id нельзя использовать как прямую ссылку в браузере,
+    поэтому сервер сам скачивает файл через Bot API и отдаёт его байты.
+    """
+    photo_id = request.match_info.get("photo_id")
+    if not photo_id:
+        return web.Response(status=404)
+
+    try:
+        bot = Bot(token=BOT_TOKEN)
+        file = await bot.get_file(photo_id)
+        file_bytes_io = await bot.download_file(file.file_path)
+        file_bytes = file_bytes_io.read()
+        await bot.session.close()
+
+        return web.Response(
+            body=file_bytes,
+            content_type="image/jpeg",
+            headers={"Cache-Control": "public, max-age=86400"}
+        )
+    except Exception as e:
+        logger.error(f"photo_proxy error for {photo_id}: {e}")
+        return web.Response(status=404)
+
+
 async def handle_options(request):
     return web.Response(headers=cors_headers())
 
@@ -978,6 +1015,8 @@ async def create_app():
                  "/api/gifts", "/api/referral", "/api/settings",
                  "/api/settings/toggle-auto", "/api/settings/weekly-menu", "/api/settings/set-weekly"]:
         app.router.add_route("OPTIONS", path, handle_options)
+
+    app.router.add_get("/api/photo/{photo_id}", handle_photo_proxy)
 
     app.router.add_get("/webapp/{filename}", handle_webapp_static)
     app.router.add_get("/webapp/", handle_webapp_static)
