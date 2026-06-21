@@ -682,6 +682,223 @@ async def handle_webapp_topup(request):
         return web.json_response({"error": str(e)}, status=500, headers=cors_headers())
 
 
+async def handle_webapp_gifts(request):
+    """POST /api/gifts — список подарков с прогрессом по баллам"""
+    try:
+        init_data = await get_init_data_from_request(request)
+        user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
+        if not user_data:
+            return web.json_response({"error": "Invalid auth"}, status=401, headers=cors_headers())
+
+        telegram_id = user_data.get("id")
+        pool = await get_pool()
+        async with pool.acquire() as db:
+            user = await db.fetchrow("SELECT points FROM users WHERE telegram_id = $1", telegram_id)
+            if not user:
+                return web.json_response({"error": "User not registered"}, status=404, headers=cors_headers())
+
+        points = user["points"]
+        gifts = [
+            {"id": "drink", "points": 50, "emoji": "🥤", "name": "Напиток",
+             "desc": "Освежающий напиток на выбор к вашему обеду!"},
+            {"id": "dessert", "points": 100, "emoji": "🍰", "name": "Десерт",
+             "desc": "Вкусный десерт — сладкое завершение обеда!"},
+            {"id": "lunch", "points": 200, "emoji": "🍱", "name": "Бесплатный обед",
+             "desc": "Полноценный обед абсолютно бесплатно!"},
+            {"id": "vip", "points": 500, "emoji": "👑", "name": "Статус VIP",
+             "desc": "Особый статус с приоритетной доставкой и эксклюзивными бонусами!"},
+        ]
+        for g in gifts:
+            g["unlocked"] = points >= g["points"]
+
+        return web.json_response({
+            "points": points,
+            "gifts": gifts
+        }, headers=cors_headers())
+    except Exception as e:
+        logger.error(f"webapp_gifts error: {e}")
+        return web.json_response({"error": str(e)}, status=500, headers=cors_headers())
+
+
+async def handle_webapp_referral(request):
+    """POST /api/referral — реферальный код + статистика приглашённых"""
+    try:
+        init_data = await get_init_data_from_request(request)
+        user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
+        if not user_data:
+            return web.json_response({"error": "Invalid auth"}, status=401, headers=cors_headers())
+
+        telegram_id = user_data.get("id")
+        pool = await get_pool()
+        async with pool.acquire() as db:
+            user = await db.fetchrow(
+                "SELECT id, referral_code FROM users WHERE telegram_id = $1", telegram_id
+            )
+            if not user:
+                return web.json_response({"error": "User not registered"}, status=404, headers=cors_headers())
+
+            invited_count = await db.fetchval(
+                "SELECT COUNT(*) FROM users WHERE referred_by = $1", user["id"]
+            )
+
+        return web.json_response({
+            "referral_code": user["referral_code"],
+            "invited_count": invited_count or 0,
+            "bot_username": "BazilikCateringBot"
+        }, headers=cors_headers())
+    except Exception as e:
+        logger.error(f"webapp_referral error: {e}")
+        return web.json_response({"error": str(e)}, status=500, headers=cors_headers())
+
+
+async def handle_webapp_settings_get(request):
+    """POST /api/settings — текущие настройки автозаказа и меню на неделю"""
+    try:
+        init_data = await get_init_data_from_request(request)
+        user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
+        if not user_data:
+            return web.json_response({"error": "Invalid auth"}, status=401, headers=cors_headers())
+
+        telegram_id = user_data.get("id")
+        pool = await get_pool()
+        async with pool.acquire() as db:
+            user = await db.fetchrow(
+                "SELECT id, auto_order, lang FROM users WHERE telegram_id = $1", telegram_id
+            )
+            if not user:
+                return web.json_response({"error": "User not registered"}, status=404, headers=cors_headers())
+
+            weekly_rows = await db.fetch(
+                """SELECT day_of_week, menu_item FROM weekly_orders
+                   WHERE user_id = $1 AND is_active = 1""",
+                user["id"]
+            )
+            weekly = {r["day_of_week"]: r["menu_item"] for r in weekly_rows}
+
+        return web.json_response({
+            "auto_order": bool(user["auto_order"]),
+            "lang": user["lang"],
+            "weekly": weekly
+        }, headers=cors_headers())
+    except Exception as e:
+        logger.error(f"webapp_settings_get error: {e}")
+        return web.json_response({"error": str(e)}, status=500, headers=cors_headers())
+
+
+async def handle_webapp_settings_toggle_auto(request):
+    """POST /api/settings/toggle-auto — переключить автозаказ"""
+    try:
+        init_data = await get_init_data_from_request(request)
+        user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
+        if not user_data:
+            return web.json_response({"success": False, "error": "Invalid auth"}, status=401, headers=cors_headers())
+
+        telegram_id = user_data.get("id")
+        pool = await get_pool()
+        async with pool.acquire() as db:
+            user = await db.fetchrow(
+                "SELECT auto_order FROM users WHERE telegram_id = $1", telegram_id
+            )
+            if not user:
+                return web.json_response({"success": False, "error": "User not found"}, status=404, headers=cors_headers())
+
+            new_value = 0 if user["auto_order"] else 1
+            await db.execute(
+                "UPDATE users SET auto_order = $1 WHERE telegram_id = $2",
+                new_value, telegram_id
+            )
+
+        return web.json_response({"success": True, "auto_order": bool(new_value)}, headers=cors_headers())
+    except Exception as e:
+        logger.error(f"webapp_settings_toggle_auto error: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500, headers=cors_headers())
+
+
+async def handle_webapp_weekly_menu_for_day(request):
+    """POST /api/settings/weekly-menu — меню на конкретный день недели (для выбора блюда)"""
+    try:
+        init_data = await get_init_data_from_request(request)
+        user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
+        if not user_data:
+            return web.json_response({"error": "Invalid auth"}, status=401, headers=cors_headers())
+
+        body = await request.json()
+        day_of_week = body.get("day_of_week")
+        if day_of_week is None:
+            return web.json_response({"error": "day_of_week required"}, headers=cors_headers())
+
+        from datetime import date as date_cls, timedelta as td_cls
+        today = date_cls.today()
+        days_ahead = (day_of_week - today.weekday()) % 7
+        if days_ahead == 0:
+            days_ahead = 7
+        target_date = str(today + td_cls(days=days_ahead))
+
+        pool = await get_pool()
+        async with pool.acquire() as db:
+            rows = await db.fetch(
+                """SELECT id, item_number, name, price, category FROM menus
+                   WHERE menu_date = $1::text AND is_active = 1
+                   ORDER BY category, item_number""",
+                target_date
+            )
+            if not rows:
+                day_num = date_cls.fromisoformat(target_date).weekday()
+                rows = await db.fetch(
+                    """SELECT item_number, name, price, category FROM weekly_menu
+                       WHERE day_of_week = $1 AND is_active = 1
+                       ORDER BY category, item_number""",
+                    day_num
+                )
+
+        items = [dict(r) for r in rows]
+        return web.json_response({
+            "items": items,
+            "target_date": target_date
+        }, headers=cors_headers())
+    except Exception as e:
+        logger.error(f"webapp_weekly_menu_for_day error: {e}")
+        return web.json_response({"error": str(e)}, status=500, headers=cors_headers())
+
+
+async def handle_webapp_settings_set_weekly(request):
+    """POST /api/settings/set-weekly — сохранить выбор блюда на день недели"""
+    try:
+        init_data = await get_init_data_from_request(request)
+        user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
+        if not user_data:
+            return web.json_response({"success": False, "error": "Invalid auth"}, status=401, headers=cors_headers())
+
+        telegram_id = user_data.get("id")
+        body = await request.json()
+        day_of_week = body.get("day_of_week")
+        item_number = body.get("item_number")
+
+        pool = await get_pool()
+        async with pool.acquire() as db:
+            user = await db.fetchrow("SELECT id FROM users WHERE telegram_id = $1", telegram_id)
+            if not user:
+                return web.json_response({"success": False, "error": "User not found"}, status=404, headers=cors_headers())
+
+            if item_number is None:
+                await db.execute(
+                    "UPDATE weekly_orders SET is_active = 0 WHERE user_id = $1 AND day_of_week = $2",
+                    user["id"], day_of_week
+                )
+            else:
+                await db.execute(
+                    """INSERT INTO weekly_orders (user_id, day_of_week, menu_item, is_active)
+                       VALUES ($1, $2, $3, 1)
+                       ON CONFLICT (user_id, day_of_week) DO UPDATE SET menu_item = $3, is_active = 1""",
+                    user["id"], day_of_week, item_number
+                )
+
+        return web.json_response({"success": True}, headers=cors_headers())
+    except Exception as e:
+        logger.error(f"webapp_settings_set_weekly error: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500, headers=cors_headers())
+
+
 async def handle_options(request):
     return web.Response(headers=cors_headers())
 
@@ -735,9 +952,17 @@ async def create_app():
     app.router.add_post("/api/rating", handle_webapp_rating)
     app.router.add_post("/api/balance-history", handle_webapp_balance_history)
     app.router.add_post("/api/topup", handle_webapp_topup)
+    app.router.add_post("/api/gifts", handle_webapp_gifts)
+    app.router.add_post("/api/referral", handle_webapp_referral)
+    app.router.add_post("/api/settings", handle_webapp_settings_get)
+    app.router.add_post("/api/settings/toggle-auto", handle_webapp_settings_toggle_auto)
+    app.router.add_post("/api/settings/weekly-menu", handle_webapp_weekly_menu_for_day)
+    app.router.add_post("/api/settings/set-weekly", handle_webapp_settings_set_weekly)
 
     for path in ["/api/menu", "/api/order", "/api/my-order", "/api/cancel-order",
-                 "/api/profile", "/api/rating", "/api/balance-history", "/api/topup"]:
+                 "/api/profile", "/api/rating", "/api/balance-history", "/api/topup",
+                 "/api/gifts", "/api/referral", "/api/settings",
+                 "/api/settings/toggle-auto", "/api/settings/weekly-menu", "/api/settings/set-weekly"]:
         app.router.add_route("OPTIONS", path, handle_options)
 
     app.router.add_get("/webapp/{filename}", handle_webapp_static)
