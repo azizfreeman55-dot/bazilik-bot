@@ -420,10 +420,14 @@
   async function loadMenu() {
     try {
       const initData = tg?.initData || "";
+      // Отправляем initData как чистую строку (text/plain), НЕ через JSON.stringify,
+      // чтобы избежать изменения экранирования слешей внутри user= (JSON.stringify
+      // может убрать обратные слеши \/ -> / при повторной сериализации, что
+      // ломает HMAC-проверку на сервере).
       const res = await fetch(`${API_BASE}/api/menu`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ init_data: initData })
+        headers: { "Content-Type": "text/plain" },
+        body: initData
       });
       const data = await res.json();
 
@@ -570,8 +574,11 @@
       const initData = tg?.initData || "";
       const res = await fetch(`${API_BASE}/api/order`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ init_data: initData, items })
+        headers: {
+          "Content-Type": "application/json",
+          "X-Init-Data": initData
+        },
+        body: JSON.stringify({ items })
       });
       const result = await res.json();
 
