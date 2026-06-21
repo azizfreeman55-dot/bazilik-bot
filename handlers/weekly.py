@@ -1,7 +1,7 @@
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from database.db import get_user, get_menu, get_pool
+from database.db import get_user, get_menu, get_menu_categories, get_pool
 from datetime import date, timedelta
 
 router = Router()
@@ -14,6 +14,13 @@ DAYS_RU = {
 DAYS_UZ = {
     0: "Dushanba", 1: "Seshanba", 2: "Chorshanba",
     3: "Payshanba", 4: "Juma", 5: "Shanba", 6: "Yakshanba"
+}
+
+CATEGORY_ICONS = {
+    "main": "🍱",
+    "salad": "🥗",
+    "dessert": "🍰",
+    "drink": "🥤",
 }
 
 
@@ -47,13 +54,27 @@ async def delete_weekly_order(user_id: int, day: int):
         )
 
 
+async def get_all_categories_menu(target_date: str) -> list:
+    """
+    Получить ВСЕ позиции меню на дату, из ВСЕХ категорий
+    (main, salad, dessert, drink), а не только main.
+    """
+    categories = await get_menu_categories(target_date)
+    all_items = []
+    for cat in categories:
+        items = await get_menu(target_date, cat)
+        for item in items:
+            item["category"] = cat
+        all_items.extend(items)
+    return all_items
+
+
 def weekly_menu_keyboard(weekly: dict, lang: str = "ru") -> object:
     builder = InlineKeyboardBuilder()
     days = DAYS_RU if lang == "ru" else DAYS_UZ
     for day_num, day_name in days.items():
         item = weekly.get(day_num)
         text = f"✅ {day_name} — {'блюдо' if lang == 'ru' else 'taom'} {item}" if item else f"➕ {day_name}"
-        # ВАЖНО: callback_data "myweekly_day_X" — чтобы не конфликтовать с admin.py (weekly_day_X)
         builder.button(text=text, callback_data=f"myweekly_day_{day_num}")
     clear = "❌ Очистить всё" if lang == "ru" else "❌ Hammasini tozalash"
     back = "◀️ Назад" if lang == "ru" else "◀️ Orqaga"
@@ -67,8 +88,9 @@ def day_items_keyboard(day: int, menu_items: list, current_item: int = None) -> 
     builder = InlineKeyboardBuilder()
     for item in menu_items:
         check = "✅ " if current_item == item["item_number"] else ""
+        icon = CATEGORY_ICONS.get(item.get("category", "main"), "🍽")
         builder.button(
-            text=f"{check}{item['item_number']}. {item['name']}",
+            text=f"{check}{icon} {item['item_number']}. {item['name']}",
             callback_data=f"myweekly_set_{day}_{item['item_number']}"
         )
     if not menu_items:
@@ -109,7 +131,9 @@ async def weekly_day_select(callback: CallbackQuery):
     if days_ahead == 0:
         days_ahead = 7
     target_date = str(today + timedelta(days=days_ahead))
-    menu_items = await get_menu(target_date)
+
+    # Берём позиции из ВСЕХ категорий, не только main
+    menu_items = await get_all_categories_menu(target_date)
 
     await callback.message.edit_text(
         f"📅 *{day_name}* ({target_date})\n\nВыберите блюдо:",
