@@ -635,7 +635,8 @@
           <div class="balance-hero-label">Ваш баланс</div>
           <div class="balance-hero-value">${fmt(data.balance)}</div>
         </div>
-        <div class="profile-card">
+        <button class="btn-primary" id="topup-btn">+ Пополнить баланс</button>
+        <div class="profile-card" style="margin-top: 12px;">
           <div style="font-size: 13px; font-weight: 600; margin-bottom: 8px;">История операций</div>
       `;
 
@@ -657,8 +658,54 @@
       }
       html += `</div>`;
       el.innerHTML = html;
+
+      const topupBtn = document.getElementById("topup-btn");
+      if (topupBtn) topupBtn.onclick = showTopupOptions;
     } catch (e) {
       el.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Не удалось загрузить баланс</div></div>';
+    }
+  }
+
+  function showTopupOptions() {
+    const el = document.getElementById("balance-content");
+    const amounts = [10000, 20000, 50000, 100000, 200000, 500000];
+
+    let html = `
+      <div class="profile-card">
+        <div style="font-size: 15px; font-weight: 700; margin-bottom: 12px;">Выберите сумму</div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+    `;
+    amounts.forEach(a => {
+      html += `<button class="amount-btn" data-amount="${a}" style="padding: 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--cream-dark); font-size: 14px; font-weight: 700; cursor: pointer;">${fmt(a)}</button>`;
+    });
+    html += `
+        </div>
+        <button class="btn-danger" id="topup-back-btn" style="margin-top: 12px; color: var(--ink-soft); border-color: var(--line);">Назад</button>
+      </div>
+    `;
+    el.innerHTML = html;
+
+    document.querySelectorAll(".amount-btn").forEach(btn => {
+      btn.onclick = () => requestTopupLink(parseInt(btn.dataset.amount));
+    });
+    document.getElementById("topup-back-btn").onclick = loadBalance;
+  }
+
+  async function requestTopupLink(amount) {
+    try {
+      const result = await apiCall("/api/topup", { amount });
+      if (result.click_link) {
+        if (tg?.openLink) {
+          tg.openLink(result.click_link);
+        } else {
+          window.open(result.click_link, "_blank");
+        }
+        showToast("Открываем Click для оплаты…");
+      } else {
+        showToast(result.error || "Не удалось создать ссылку на оплату");
+      }
+    } catch (e) {
+      showToast("Ошибка соединения");
     }
   }
 
