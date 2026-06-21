@@ -501,6 +501,15 @@ async def handle_webapp_static(request):
     )
 
 
+async def handle_debug(request):
+    """Временный debug endpoint — логирует raw initData байт-в-байт"""
+    raw_body = await request.read()
+    logger.info(f"[DEBUG] Raw bytes length: {len(raw_body)}")
+    logger.info(f"[DEBUG] Raw bytes hex (first 100): {raw_body[:100].hex()}")
+    logger.info(f"[DEBUG] Decoded: {raw_body.decode('utf-8')}")
+    return web.json_response({"ok": True}, headers=cors_headers())
+
+
 async def create_app():
     app = web.Application()
 
@@ -515,8 +524,10 @@ async def create_app():
     app.router.add_get("/api/menu", handle_webapp_menu)
     app.router.add_post("/api/menu", handle_webapp_menu)
     app.router.add_post("/api/order", handle_webapp_order)
+    app.router.add_post("/api/debug", handle_debug)
     app.router.add_route("OPTIONS", "/api/menu", handle_options)
     app.router.add_route("OPTIONS", "/api/order", handle_options)
+    app.router.add_route("OPTIONS", "/api/debug", handle_options)
 
     # Mini App страница — отдаём вручную с no-cache заголовками
     app.router.add_get("/webapp/index.html", handle_webapp_static)
