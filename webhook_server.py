@@ -526,6 +526,21 @@ async def handle_webapp_cancel_order(request):
                     user["id"], refund_amount, f"Возврат за отмену заказа | {refund_marker}"
                 )
 
+        if cancelled_count > 0:
+            try:
+                bot = Bot(token=BOT_TOKEN)
+                refund_text = (
+                    f"\n💳 +{refund_amount:,} сум возвращено на баланс" if refund_amount > 0 else ""
+                )
+                await bot.send_message(
+                    telegram_id,
+                    f"❌ *Заказ на {tomorrow} отменён через Mini App*{refund_text}",
+                    parse_mode="Markdown"
+                )
+                await bot.session.close()
+            except Exception as e:
+                logger.error(f"Cancel notify error: {e}")
+
         return web.json_response({
             "success": True,
             "cancelled_count": cancelled_count,
