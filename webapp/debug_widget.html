@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Debug initData</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body style="font-family: monospace; padding: 20px; word-break: break-all;">
+<h3>Debug initData</h3>
+<div id="output">Loading...</div>
+<script>
+const tg = window.Telegram?.WebApp;
+if (tg) {
+  tg.ready();
+  tg.expand();
+}
+
+const initData = tg?.initData || "NO_INIT_DATA";
+const initDataUnsafe = tg?.initDataUnsafe || {};
+
+document.getElementById("output").innerHTML = `
+  <p><b>Raw initData (tg.initData):</b></p>
+  <p style="background:#eee;padding:8px;">${initData}</p>
+  <p><b>Length:</b> ${initData.length}</p>
+  <p><b>initDataUnsafe:</b></p>
+  <pre style="background:#eee;padding:8px;">${JSON.stringify(initDataUnsafe, null, 2)}</pre>
+  <p><b>Platform:</b> ${tg?.platform}</p>
+  <p><b>Version:</b> ${tg?.version}</p>
+`;
+
+// Отправляем это на сервер для логирования
+fetch("https://bazilik-webhook.onrender.com/api/debug", {
+  method: "POST",
+  headers: {"Content-Type": "text/plain"},
+  body: initData
+}).catch(e => console.error(e));
+</script>
+</body>
+</html>
