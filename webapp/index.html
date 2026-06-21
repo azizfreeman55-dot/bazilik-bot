@@ -420,7 +420,11 @@
   async function loadMenu() {
     try {
       const initData = tg?.initData || "";
-      const res = await fetch(`${API_BASE}/api/menu?init_data=${encodeURIComponent(initData)}`);
+      const res = await fetch(`${API_BASE}/api/menu`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ init_data: initData })
+      });
       const data = await res.json();
 
       MENU = data.categories || {};
