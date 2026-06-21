@@ -217,12 +217,12 @@ def cors_headers():
 
 
 async def get_init_data_from_request(request) -> str:
-    """Достаёт init_data либо из заголовка X-Init-Data, либо из тела (text/plain)"""
-    header_val = request.headers.get("X-Init-Data", "")
-    if header_val:
-        return header_val
-    raw = await request.read()
-    return raw.decode("utf-8")
+    """
+    Достаёт init_data из заголовка X-Init-Data.
+    Используется всеми /api/* эндпоинтами Mini App — фронтенд всегда
+    кладёт initData именно в этот заголовок (см. apiCall() в index.html).
+    """
+    return request.headers.get("X-Init-Data", "")
 
 
 # ─── Mini App: меню ─────────────────────────────────────────────────────────────
@@ -300,9 +300,7 @@ async def handle_webapp_menu(request):
 
 async def handle_webapp_order(request):
     try:
-        init_data = await get_init_data_from_request(request) if request.headers.get("X-Init-Data") else ""
-        if not init_data:
-            init_data = request.headers.get("X-Init-Data", "")
+        init_data = await get_init_data_from_request(request)
         body = await request.json()
         items = body.get("items", [])
 
