@@ -198,6 +198,7 @@ async def auto_assign_couriers(bot: Bot, delivery_date: str):
         await create_delivery_route(courier["id"], delivery_date, company_ids)
 
         total_orders = sum(c["order_count"] for c in assigned_companies)
+        total_clients = sum(c.get("client_count", c["order_count"]) for c in assigned_companies)
 
         # Уведомляем курьера через КУРЬЕРСКИЙ бот (другой токен)
         if courier_bot_token:
@@ -206,10 +207,11 @@ async def auto_assign_couriers(bot: Bot, delivery_date: str):
                 text = (
                     f"🚚 *Автоматически назначен маршрут на {delivery_date}!*\n\n"
                     f"📦 Компаний: {len(assigned_companies)}\n"
-                    f"👥 Заказов: {total_orders}\n\n"
+                    f"👥 Клиентов: {total_clients} | Позиций: {total_orders}\n\n"
                 )
                 for i, c in enumerate(assigned_companies, 1):
-                    text += f"{i}. {c['company_name']} — {c['order_count']} зак.\n"
+                    client_count = c.get("client_count", c["order_count"])
+                    text += f"{i}. {c['company_name']} — {client_count} кл., {c['order_count']} поз.\n"
                     if c.get("address"):
                         text += f"   📍 {c['address']}\n"
                 text += "\nОткройте '🗺 Мой маршрут' для начала работы."
