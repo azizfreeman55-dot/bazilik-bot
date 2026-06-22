@@ -293,6 +293,13 @@
   .weekly-day-row:last-child { border-bottom: none; }
   .weekly-day-name { font-size: 14px; font-weight: 600; }
   .weekly-day-status { font-size: 12px; color: var(--ink-soft); }
+
+  .amount-btn {
+    padding: 14px; border-radius: 12px; border: 1px solid var(--line);
+    background: var(--cream-dark); color: var(--ink);
+    font-size: 14px; font-weight: 700; cursor: pointer;
+  }
+  .amount-btn:active { background: var(--green-600); color: var(--on-accent); }
 </style>
 </head>
 <body>
@@ -812,11 +819,20 @@
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
     `;
     amounts.forEach(a => {
-      html += `<button class="amount-btn" data-amount="${a}" style="padding: 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--cream-dark); font-size: 14px; font-weight: 700; cursor: pointer;">${fmt(a)}</button>`;
+      html += `<button class="amount-btn" data-amount="${a}">${fmt(a)}</button>`;
     });
     html += `
         </div>
-        <button class="btn-danger" id="topup-back-btn" style="margin-top: 12px; color: var(--ink-soft); border-color: var(--line);">Назад</button>
+
+        <div style="margin-top: 16px; font-size: 13px; font-weight: 600; color: var(--ink-soft);">Или введите свою сумму</div>
+        <div style="display: flex; gap: 8px; margin-top: 8px;">
+          <input type="number" id="custom-amount-input" placeholder="Например, 75000"
+            style="flex: 1; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line);
+                   background: var(--cream-dark); color: var(--ink); font-size: 14px; outline: none;">
+          <button class="cart-action" id="custom-amount-btn" style="border-radius: 12px;">OK</button>
+        </div>
+
+        <button class="btn-danger" id="topup-back-btn" style="margin-top: 16px;">Назад</button>
       </div>
     `;
     el.innerHTML = html;
@@ -824,6 +840,17 @@
     document.querySelectorAll(".amount-btn").forEach(btn => {
       btn.onclick = () => requestTopupLink(parseInt(btn.dataset.amount));
     });
+
+    document.getElementById("custom-amount-btn").onclick = () => {
+      const input = document.getElementById("custom-amount-input");
+      const value = parseInt(input.value);
+      if (!value || value < 1000) {
+        showToast("Минимальная сумма — 1 000 сум");
+        return;
+      }
+      requestTopupLink(value);
+    };
+
     document.getElementById("topup-back-btn").onclick = loadBalance;
   }
 
