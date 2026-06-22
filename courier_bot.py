@@ -66,6 +66,10 @@ class AssignRoute(StatesGroup):
     waiting_companies = State()
 
 
+class AcceptPayment(StatesGroup):
+    waiting_amount = State()
+
+
 # ─── Утилиты ──────────────────────────────────────────────────────────────────
 
 def get_today() -> str:
@@ -306,6 +310,10 @@ async def mark_delivered(callback: CallbackQuery):
 
     await mark_stop_delivered(stop_id)
 
+    # Списываем баланс за все недоплаченные заказы этой компании
+    from database.db import charge_balance_on_delivery
+    charged = await charge_balance_on_delivery(company_id, delivery_date)
+
     # Уведомляем клиентов + просим оставить отзыв на блюдо
     from database.db import get_pool
     pool = await get_pool()
@@ -322,6 +330,8 @@ async def mark_delivered(callback: CallbackQuery):
 
     main_bot = Bot(token=MAIN_BOT_TOKEN)
     notified = 0
+    charged_by_telegram_id = {c["telegram_id"]: c for c in charged}
+
     for row in client_orders:
         try:
             lang = row["lang"] or "ru"
@@ -333,16 +343,37 @@ async def mark_delivered(callback: CallbackQuery):
                 )
             builder_review.adjust(5)
 
+            charge_info = charged_by_telegram_id.get(row["telegram_id"])
+            balance_line = ""
+            if charge_info:
+                bal = charge_info["new_balance"]
+                if bal < 0:
+                    balance_line = (
+                        f"\n\n💳 Списано: {charge_info['amount']:,} сум\n"
+                        f"⚠️ Баланс: {bal:,} сум (нужно доплатить)"
+                        if lang == "ru" else
+                        f"\n\n💳 Yechildi: {charge_info['amount']:,} so'm\n"
+                        f"⚠️ Hisob: {bal:,} so'm (to'lash kerak)"
+                    )
+                else:
+                    balance_line = (
+                        f"\n\n💳 Списано: {charge_info['amount']:,} сум\n"
+                        f"Баланс: {bal:,} сум"
+                        if lang == "ru" else
+                        f"\n\n💳 Yechildi: {charge_info['amount']:,} so'm\n"
+                        f"Hisob: {bal:,} so'm"
+                    )
+
             if lang == "uz":
                 text = (
                     f"✅ *Tushligingiz yetkazildi!*\n\n"
-                    f"🍱 {row['meal_name']}\n\n"
+                    f"🍱 {row['meal_name']}{balance_line}\n\n"
                     f"Yoqdimi? Baholang va +2 ball oling! 👇"
                 )
             else:
                 text = (
                     f"✅ *Ваш обед доставлен!*\n\n"
-                    f"🍱 {row['meal_name']}\n\n"
+                    f"🍱 {row['meal_name']}{balance_line}\n\n"
                     f"Понравилось? Оцените и получите +2 балла! 👇"
                 )
 
@@ -355,12 +386,94 @@ async def mark_delivered(callback: CallbackQuery):
             logger.warning(f"Не удалось уведомить {row['telegram_id']}: {e}")
     await main_bot.session.close()
 
-    await callback.message.edit_text(
+    # Формируем отчёт курьеру с кнопками "Принять оплату" для клиентов с минусом
+    negative_clients = [c for c in charged if c["new_balance"] < 0]
+
+    report_text = (
         f"✅ *Доставлено!*\n\n"
-        f"📱 Уведомлено клиентов: {notified}",
-        parse_mode="Markdown"
+        f"📱 Уведомлено клиентов: {notified}\n"
+        f"💳 Списано с {len(charged)} клиентов\n"
+    )
+
+    builder_report = InlineKeyboardBuilder()
+    if negative_clients:
+        report_text += f"\n⚠️ *Должны доплатить наличными:*\n"
+        for c in negative_clients:
+            report_text += f"• {c['full_name']}: {abs(c['new_balance']):,} сум\n"
+            builder_report.button(
+                text=f"💰 Принять у {c['full_name']}",
+                callback_data=f"acceptpay_{c['telegram_id']}_{abs(c['new_balance'])}"
+            )
+        builder_report.adjust(1)
+
+    await callback.message.edit_text(
+        report_text, parse_mode="Markdown",
+        reply_markup=builder_report.as_markup() if negative_clients else None
     )
     await callback.answer("✅ Отмечено как доставлено!")
+
+
+@router.callback_query(F.data.startswith("acceptpay_"))
+async def accept_payment_prompt(callback: CallbackQuery, state: FSMContext):
+    parts = callback.data.split("_")
+    client_telegram_id = int(parts[1])
+    suggested_amount = int(parts[2])
+
+    await state.update_data(accept_payment_client=client_telegram_id)
+    await state.set_state(AcceptPayment.waiting_amount)
+
+    await callback.message.answer(
+        f"💰 Введите сумму, которую получили наличными\n"
+        f"(долг клиента: {suggested_amount:,} сум):"
+    )
+    await callback.answer()
+
+
+@router.message(AcceptPayment.waiting_amount)
+async def accept_payment_amount(message: Message, state: FSMContext):
+    text = message.text.strip().replace(" ", "").replace(",", "")
+    try:
+        amount = int(text)
+    except ValueError:
+        await message.answer("❌ Введите число. Например: 50000")
+        return
+
+    if amount <= 0:
+        await message.answer("❌ Сумма должна быть больше нуля")
+        return
+
+    data = await state.get_data()
+    client_telegram_id = data.get("accept_payment_client")
+    await state.clear()
+
+    from database.db import accept_cash_payment
+    result = await accept_cash_payment(client_telegram_id, amount)
+
+    if not result["success"]:
+        await message.answer(f"❌ {result['error']}")
+        return
+
+    await message.answer(
+        f"✅ *Оплата принята!*\n\n"
+        f"👤 {result['full_name']}\n"
+        f"💰 +{amount:,} сум\n"
+        f"💳 Новый баланс: {result['new_balance']:,} сум",
+        parse_mode="Markdown"
+    )
+
+    # Уведомляем клиента
+    try:
+        main_bot = Bot(token=MAIN_BOT_TOKEN)
+        await main_bot.send_message(
+            client_telegram_id,
+            f"✅ *Курьер принял оплату!*\n\n"
+            f"💰 +{amount:,} сум\n"
+            f"💳 Текущий баланс: {result['new_balance']:,} сум",
+            parse_mode="Markdown"
+        )
+        await main_bot.session.close()
+    except Exception as e:
+        logger.warning(f"Не удалось уведомить клиента об оплате: {e}")
 
 
 @router.callback_query(F.data.startswith("problem_"))
