@@ -274,16 +274,16 @@
   .setting-row:last-child { border-bottom: none; }
   .setting-label { font-size: 14px; font-weight: 600; }
   .toggle-switch {
-    width: 46px; height: 26px; border-radius: 999px; border: none; position: relative;
+    width: 46px; height: 26px; border-radius: 999px; border: 1px solid var(--line); position: relative;
     cursor: pointer; transition: background 0.2s;
   }
-  .toggle-switch.on { background: var(--green-600); }
-  .toggle-switch.off { background: var(--cream-dark); }
+  .toggle-switch.on { background: var(--green-600); border-color: var(--green-600); }
+  .toggle-switch.off { background: #3A3A3A; }
   .toggle-knob {
     position: absolute; top: 3px; width: 20px; height: 20px; border-radius: 50%;
-    background: var(--white); transition: left 0.2s;
+    background: #F5F5F0; transition: left 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.3);
   }
-  .toggle-switch.on .toggle-knob { left: 23px; }
+  .toggle-switch.on .toggle-knob { left: 23px; background: var(--on-accent); }
   .toggle-switch.off .toggle-knob { left: 3px; }
 
   .weekly-day-row {
@@ -1233,86 +1233,17 @@
 
   async function loadSettings() {
     const el = document.getElementById("settings-content");
-    el.innerHTML = '<div class="loading">Загружаем настройки…</div>';
-    try {
-      const data = await apiCall("/api/settings");
-      if (data.error) {
-        el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">${data.error}</div></div>`;
-        return;
-      }
-
-      let html = `
-        <div class="profile-card">
-          <div class="setting-row">
-            <div class="setting-label">Автозаказ по расписанию</div>
-            <button class="toggle-switch ${data.auto_order ? "on" : "off"}" id="auto-order-toggle">
-              <div class="toggle-knob"></div>
-            </button>
-          </div>
+    el.innerHTML = `
+      <div class="profile-card">
+        <div style="font-size: 13px; color: var(--ink-soft); line-height: 1.5;">
+          Настройка автозаказа (расписание на каждый день недели) теперь
+          находится в отдельном разделе <b style="color: var(--ink);">🔁 Авто</b>
+          в нижней навигации.
         </div>
-        <div class="profile-card">
-          <div style="font-size: 13px; font-weight: 600; margin-bottom: 6px;">Меню на неделю</div>
-          <div style="font-size: 12px; color: var(--ink-soft); margin-bottom: 8px;">Выберите блюдо на каждый день — оно будет заказываться автоматически при включённом автозаказе</div>
-      `;
-      DAYS_RU.forEach((dayName, i) => {
-        const item = data.weekly[i];
-        html += `
-          <div class="weekly-day-row" data-day="${i}">
-            <div class="weekly-day-name">${dayName}</div>
-            <div class="weekly-day-status">${item ? `✅ Блюдо ${item}` : "➕ Выбрать"}</div>
-          </div>
-        `;
-      });
-      html += `</div>`;
-      el.innerHTML = html;
-
-      document.getElementById("auto-order-toggle").onclick = async () => {
-        const result = await apiCall("/api/settings/toggle-auto");
-        if (result.success) {
-          showToast(result.auto_order ? "✅ Автозаказ включён" : "Автозаказ выключен");
-          loadSettings();
-        }
-      };
-
-      document.querySelectorAll(".weekly-day-row").forEach(row => {
-        row.onclick = () => showWeeklyDayPicker(parseInt(row.dataset.day));
-      });
-    } catch (e) {
-      el.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Не удалось загрузить настройки</div></div>';
-    }
-  }
-
-  async function showWeeklyDayPicker(dayOfWeek) {
-    const el = document.getElementById("settings-content");
-    el.innerHTML = '<div class="loading">Загружаем меню…</div>';
-    try {
-      const data = await apiCall("/api/settings/weekly-menu", { day_of_week: dayOfWeek });
-      const items = data.items || [];
-
-      let html = `<div class="profile-card"><div style="font-size: 14px; font-weight: 700; margin-bottom: 10px;">${DAYS_RU[dayOfWeek]}</div>`;
-      if (items.length === 0) {
-        html += `<div style="font-size: 13px; color: var(--ink-soft);">Меню на этот день не добавлено</div>`;
-      } else {
-        items.forEach(item => {
-          html += `<button class="more-link weekly-pick-btn" data-item="${item.item_number}">${item.item_number}. ${item.name} — ${fmt(item.price)}</button>`;
-        });
-        html += `<button class="more-link weekly-pick-btn" data-item="" style="color: var(--red);">🗑 Убрать этот день</button>`;
-      }
-      html += `<button class="btn-danger" id="weekly-back-btn" style="margin-top: 10px;">Назад к настройкам</button></div>`;
-      el.innerHTML = html;
-
-      document.querySelectorAll(".weekly-pick-btn").forEach(btn => {
-        btn.onclick = async () => {
-          const itemNumber = btn.dataset.item ? parseInt(btn.dataset.item) : null;
-          await apiCall("/api/settings/set-weekly", { day_of_week: dayOfWeek, item_number: itemNumber });
-          showToast("✅ Сохранено");
-          loadSettings();
-        };
-      });
-      document.getElementById("weekly-back-btn").onclick = loadSettings;
-    } catch (e) {
-      el.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Ошибка загрузки</div></div>';
-    }
+        <button class="btn-primary" id="go-to-autoorder-btn">Открыть автозаказ</button>
+      </div>
+    `;
+    document.getElementById("go-to-autoorder-btn").onclick = () => switchPage("autoorder");
   }
 
   // ─── DASHBOARD PAGE (admin only) ──────────────────────────────────────────
@@ -1419,15 +1350,19 @@
       `;
 
       DAYS_RU.forEach((dayName, i) => {
-        const item = autoorderDaysCache[i];
-        if (item && item.name) {
-          const icon = CATEGORY_META[item.category]?.icon || "🍽";
+        const dayItems = autoorderDaysCache[i] || [];
+        if (dayItems.length > 0) {
+          const namesLine = dayItems.map(it => {
+            const icon = CATEGORY_META[it.category]?.icon || "🍽";
+            return `${icon} ${it.name}`;
+          }).join(" · ");
+          const totalPrice = dayItems.reduce((s, it) => s + it.price, 0);
           html += `
             <div class="day-row" data-day="${i}">
               <div class="day-badge filled">${dayName.slice(0, 2)}</div>
               <div class="day-row-info">
-                <div class="day-row-name">${item.name}</div>
-                <div class="day-row-sub">${icon} ${CATEGORY_META[item.category]?.label || item.category} · ${fmt(item.price)}</div>
+                <div class="day-row-name">${namesLine}</div>
+                <div class="day-row-sub">${fmt(totalPrice)}</div>
               </div>
               <div class="day-row-arrow">›</div>
             </div>
@@ -1483,8 +1418,15 @@
       const data = await apiCall("/api/settings/weekly-menu", { day_of_week: dayOfWeek });
       const items = data.items || [];
 
+      // Что уже выбрано на этот день (по категориям)
+      const currentSelections = {};
+      (autoorderDaysCache[dayOfWeek] || []).forEach(it => {
+        currentSelections[it.category] = it.item_number;
+      });
+
       let html = `<button class="back-link" id="autoorder-day-back">← Назад</button>`;
-      html += `<div class="profile-card"><div style="font-size: 15px; font-weight: 700; margin-bottom: 10px;">${DAYS_RU[dayOfWeek]}</div>`;
+      html += `<div class="profile-card"><div style="font-size: 15px; font-weight: 700; margin-bottom: 4px;">${DAYS_RU[dayOfWeek]}</div>`;
+      html += `<div style="font-size: 12px; color: var(--ink-soft); margin-bottom: 10px;">Выберите по одному блюду в каждой категории</div>`;
 
       if (items.length === 0) {
         html += `<div style="font-size: 13px; color: var(--ink-soft);">Меню на этот день не добавлено в постоянном меню</div>`;
@@ -1496,23 +1438,49 @@
         });
         for (const [cat, catItems] of Object.entries(grouped)) {
           const meta = CATEGORY_META[cat] || { label: cat, icon: "🍽" };
+          const selectedItem = currentSelections[cat];
           html += `<div class="order-cat-label">${meta.icon} ${meta.label}</div>`;
           catItems.forEach(item => {
-            html += `<button class="more-link autoorder-pick-btn" data-item="${item.item_number}">${item.name} — ${fmt(item.price)}</button>`;
+            const isSelected = selectedItem === item.item_number;
+            html += `
+              <button class="more-link autoorder-pick-btn" data-item="${item.item_number}" data-category="${cat}"
+                style="display:flex; justify-content:space-between; align-items:center; ${isSelected ? "color: var(--green-600); font-weight:700;" : ""}">
+                <span>${isSelected ? "✓ " : ""}${item.name} — ${fmt(item.price)}</span>
+              </button>`;
           });
+          if (selectedItem) {
+            html += `<button class="more-link autoorder-remove-btn" data-category="${cat}" style="color: var(--red); font-size: 12px;">🗑 Убрать ${meta.label.toLowerCase()}</button>`;
+          }
         }
-        html += `<button class="more-link autoorder-pick-btn" data-item="" style="color: var(--red);">🗑 Убрать этот день</button>`;
       }
       html += `</div>`;
+      html += `<button class="btn-primary" id="autoorder-done-btn">Готово</button>`;
       el.innerHTML = html;
 
       document.getElementById("autoorder-day-back").onclick = loadAutoorder;
+      document.getElementById("autoorder-done-btn").onclick = loadAutoorder;
+
       document.querySelectorAll(".autoorder-pick-btn").forEach(btn => {
         btn.onclick = async () => {
-          const itemNumber = btn.dataset.item ? parseInt(btn.dataset.item) : null;
-          await apiCall("/api/settings/set-weekly", { day_of_week: dayOfWeek, item_number: itemNumber });
+          const itemNumber = parseInt(btn.dataset.item);
+          const category = btn.dataset.category;
+          await apiCall("/api/settings/set-weekly", { day_of_week: dayOfWeek, item_number: itemNumber, category });
           showToast("✅ Сохранено");
-          loadAutoorder();
+          // Обновляем кэш и перерисовываем экран этого же дня без выхода
+          const autoorderData = await apiCall("/api/autoorder");
+          autoorderDaysCache = autoorderData.week_days || {};
+          showAutoorderDayPicker(dayOfWeek);
+        };
+      });
+
+      document.querySelectorAll(".autoorder-remove-btn").forEach(btn => {
+        btn.onclick = async () => {
+          const category = btn.dataset.category;
+          await apiCall("/api/settings/set-weekly", { day_of_week: dayOfWeek, item_number: null, category });
+          showToast("Убрано");
+          const autoorderData = await apiCall("/api/autoorder");
+          autoorderDaysCache = autoorderData.week_days || {};
+          showAutoorderDayPicker(dayOfWeek);
         };
       });
     } catch (e) {
