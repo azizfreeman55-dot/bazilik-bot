@@ -128,15 +128,19 @@ async def process_weekly_auto_orders(day_num: int, order_date: str, menu: list) 
 
 async def send_reminder_notification(bot: Bot):
     tomorrow = str(date.today() + timedelta(days=1))
-    users = await get_all_users_for_notification()
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        users_with_pref = await db.fetch(
+            "SELECT telegram_id, lang FROM users WHERE notify_reminder = 1"
+        )
     sent = 0
 
-    for user_id in users:
+    for row in users_with_pref:
+        user_id = row["telegram_id"]
         order = await get_today_order(user_id, tomorrow)
         if not order:
             try:
-                from database.db import get_user_lang
-                lang = await get_user_lang(user_id)
+                lang = row["lang"] or "ru"
                 from langs import t
                 await bot.send_message(user_id, t(lang, "reminder"), parse_mode="Markdown")
                 sent += 1
