@@ -51,10 +51,9 @@ async def send_menu_notification(bot: Bot):
             text += f"\n{t(lang, 'free_delivery')}\n{t(lang, 'choose_dish')}"
 
             if user_id in auto_ordered:
-                item_num = auto_ordered[user_id]
-                meal = next((m for m in menu if m["item_number"] == item_num), None)
-                if meal:
-                    text += f"\n\n🤖 *Автозаказ оформлен:* {meal['name']}"
+                ordered_names = auto_ordered[user_id]
+                names_text = ", ".join(ordered_names)
+                text += f"\n\n🤖 *Автозаказ оформлен:* {names_text}"
 
             first_photo = next((i for i in menu if i.get("photo_id")), None)
             if first_photo:
@@ -73,31 +72,56 @@ async def send_menu_notification(bot: Bot):
 
 
 async def process_weekly_auto_orders(day_num: int, order_date: str, menu: list) -> dict:
+    """
+    Создаёт автозаказы по расписанию weekly_orders.
+    Клиент может выбрать блюдо в НЕСКОЛЬКИХ категориях на один день
+    (например блюдо + салат + напиток) — для каждой выбранной категории
+    создаётся отдельная позиция заказа.
+    """
     auto_ordered = {}
     pool = await get_pool()
     async with pool.acquire() as db:
         weekly_users = await db.fetch(
-            """SELECT u.telegram_id, w.menu_item
+            """SELECT u.telegram_id, w.menu_item, w.category
                FROM weekly_orders w
                JOIN users u ON w.user_id = u.id
-               WHERE w.day_of_week = $1 AND w.is_active = 1""",
+               WHERE w.day_of_week = $1 AND w.is_active = 1
+               AND u.auto_order = 1""",
             day_num
         )
 
+    # Группируем по клиенту — у одного клиента может быть несколько строк
+    # (одна на каждую категорию: main, salad, dessert, drink)
+    by_client = {}
     for row in weekly_users:
-        telegram_id = row["telegram_id"]
-        item_num = row["menu_item"]
+        by_client.setdefault(row["telegram_id"], []).append(
+            {"item_number": row["menu_item"], "category": row["category"]}
+        )
+
+    for telegram_id, selections in by_client.items():
         existing = await get_today_order(telegram_id, order_date)
         if existing:
             continue
-        menu_item = next((m for m in menu if m["item_number"] == item_num), None)
-        if not menu_item:
-            menu_item = menu[0]
-        try:
-            await create_order(telegram_id, menu_item["id"], order_date, is_auto=True)
-            auto_ordered[telegram_id] = item_num
-        except Exception as e:
-            logger.error(f"Ошибка автозаказа для {telegram_id}: {e}")
+
+        ordered_names = []
+        for sel in selections:
+            category = sel["category"]
+            item_num = sel["item_number"]
+
+            # Получаем актуальное меню именно этой категории на эту дату
+            category_menu = await get_menu(order_date, category)
+            menu_item = next((m for m in category_menu if m["item_number"] == item_num), None)
+            if not menu_item:
+                continue
+
+            try:
+                await create_order(telegram_id, menu_item["id"], order_date, is_auto=True)
+                ordered_names.append(menu_item["name"])
+            except Exception as e:
+                logger.error(f"Ошибка автозаказа для {telegram_id} ({category}): {e}")
+
+        if ordered_names:
+            auto_ordered[telegram_id] = ordered_names
 
     return auto_ordered
 
