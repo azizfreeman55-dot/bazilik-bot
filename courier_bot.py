@@ -322,9 +322,21 @@ async def mark_delivered(callback: CallbackQuery):
     from database.db import charge_balance_on_delivery
     charged = await charge_balance_on_delivery(company_id, delivery_date)
 
-    # Уведомляем клиентов + просим оставить отзыв на каждое блюдо
+    # Получаем route_id и courier_id этой остановки — нужно для привязки
+    # отзыва клиента к конкретному курьеру/маршруту
     from database.db import get_pool
     pool = await get_pool()
+    async with pool.acquire() as db:
+        stop_info = await db.fetchrow(
+            """SELECT ds.route_id, dr.courier_id FROM delivery_stops ds
+               JOIN delivery_routes dr ON dr.id = ds.route_id
+               WHERE ds.id = $1""",
+            stop_id
+        )
+    route_id = stop_info["route_id"] if stop_info else None
+    courier_id = stop_info["courier_id"] if stop_info else None
+
+    # Уведомляем клиентов + просим оставить отзыв на каждое блюдо
     async with pool.acquire() as db:
         client_orders = await db.fetch(
             """SELECT o.id as order_id, o.menu_id, u.telegram_id, u.lang, m.name as meal_name
@@ -410,6 +422,24 @@ async def mark_delivered(callback: CallbackQuery):
                 await main_bot.send_message(
                     telegram_id, f"🍱 {it['meal_name']}",
                     reply_markup=builder_review.as_markup()
+                )
+
+            # Отдельно — просим оценить самого курьера/доставку
+            if route_id and courier_id:
+                courier_review_intro = (
+                    "Qanday yetkazib berish edi?" if lang == "uz" else
+                    "Как вам доставка курьером?"
+                )
+                builder_courier = InlineKeyboardBuilder()
+                for stars in range(1, 6):
+                    builder_courier.button(
+                        text="⭐" * stars,
+                        callback_data=f"crreview_{courier_id}_{route_id}_{stars}"
+                    )
+                builder_courier.adjust(5)
+                await main_bot.send_message(
+                    telegram_id, f"🚚 {courier_review_intro}",
+                    reply_markup=builder_courier.as_markup()
                 )
 
             notified += 1
