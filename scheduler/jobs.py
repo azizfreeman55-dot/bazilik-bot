@@ -7,7 +7,8 @@ from aiogram import Bot
 from database.db import (
     get_menu, get_all_users_for_notification,
     get_today_order, close_orders_for_date,
-    get_daily_summary, create_order, get_pool
+    get_daily_summary, create_order, get_pool,
+    get_orders_by_company, get_all_couriers, create_delivery_route
 )
 from config import ADMIN_IDS
 
@@ -122,6 +123,10 @@ async def send_reminder_notification(bot: Bot):
 
 
 async def close_orders_notification(bot: Bot):
+    """
+    Закрывает заказы на завтра, отправляет сводку админам,
+    и автоматически распределяет заказы по курьерам (round-robin).
+    """
     tomorrow = str(date.today() + timedelta(days=1))
     await close_orders_for_date(tomorrow)
 
@@ -144,6 +149,94 @@ async def close_orders_notification(bot: Bot):
             pass
 
     logger.info(f"✅ Заказы закрыты. Всего: {summary['total']}")
+
+    # Автоматическое распределение по курьерам
+    await auto_assign_couriers(bot, tomorrow)
+
+
+async def auto_assign_couriers(bot: Bot, delivery_date: str):
+    """
+    Автоматически распределяет заказы (сгруппированные по компаниям)
+    между активными курьерами равномерно (round-robin).
+    Если курьер один — все компании достаются ему, как раньше.
+    """
+    companies = await get_orders_by_company(delivery_date)
+    if not companies:
+        logger.info("Автораспределение: заказов нет, пропускаем")
+        return
+
+    couriers = await get_all_couriers()
+    if not couriers:
+        for admin_id in ADMIN_IDS:
+            try:
+                await bot.send_message(
+                    admin_id,
+                    f"⚠️ Заказы на {delivery_date} закрыты, но нет ни одного "
+                    f"зарегистрированного курьера! Распределите вручную через "
+                    f"курьерский бот или зарегистрируйте курьера."
+                )
+            except Exception:
+                pass
+        return
+
+    # Round-robin: компании раздаём по очереди каждому курьеру
+    courier_assignments = {c["id"]: [] for c in couriers}
+    for i, company in enumerate(companies):
+        courier = couriers[i % len(couriers)]
+        courier_assignments[courier["id"]].append(company)
+
+    from aiogram import Bot as CourierBotImport
+    import os
+    courier_bot_token = os.getenv("COURIER_BOT_TOKEN")
+
+    for courier in couriers:
+        assigned_companies = courier_assignments[courier["id"]]
+        if not assigned_companies:
+            continue
+
+        company_ids = [c["company_id"] for c in assigned_companies]
+        await create_delivery_route(courier["id"], delivery_date, company_ids)
+
+        total_orders = sum(c["order_count"] for c in assigned_companies)
+
+        # Уведомляем курьера через КУРЬЕРСКИЙ бот (другой токен)
+        if courier_bot_token:
+            try:
+                courier_bot = CourierBotImport(token=courier_bot_token)
+                text = (
+                    f"🚚 *Автоматически назначен маршрут на {delivery_date}!*\n\n"
+                    f"📦 Компаний: {len(assigned_companies)}\n"
+                    f"👥 Заказов: {total_orders}\n\n"
+                )
+                for i, c in enumerate(assigned_companies, 1):
+                    text += f"{i}. {c['company_name']} — {c['order_count']} зак.\n"
+                    if c.get("address"):
+                        text += f"   📍 {c['address']}\n"
+                text += "\nОткройте '🗺 Мой маршрут' для начала работы."
+
+                await courier_bot.send_message(
+                    courier["telegram_id"], text, parse_mode="Markdown"
+                )
+                await courier_bot.session.close()
+            except Exception as e:
+                logger.error(f"Не удалось уведомить курьера {courier['telegram_id']}: {e}")
+
+    logger.info(
+        f"✅ Автораспределение завершено: {len(companies)} компаний "
+        f"между {len(couriers)} курьерами"
+    )
+
+    for admin_id in ADMIN_IDS:
+        try:
+            await bot.send_message(
+                admin_id,
+                f"🚚 *Заказы автоматически распределены по курьерам*\n\n"
+                f"Курьеров: {len(couriers)}\n"
+                f"Компаний: {len(companies)}",
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
 
 
 async def send_birthday_greetings(bot: Bot):
@@ -171,7 +264,6 @@ async def send_birthday_greetings(bot: Bot):
             lang = user["lang"] or "ru"
             name = user["full_name"] or ("Дорогой клиент" if lang == "ru" else "Hurmatli mijoz")
 
-            # Начисляем +50 баллов в подарок
             async with pool.acquire() as db:
                 await db.execute(
                     "UPDATE users SET points = points + 50 WHERE id = $1",
@@ -230,5 +322,8 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         args=[bot], id="close_orders", replace_existing=True
     )
 
-    logger.info("✅ Планировщик настроен (09:00 ДР, 10:00 меню, 16:00 напоминание, 20:00 закрытие)")
+    logger.info(
+        "✅ Планировщик настроен (09:00 ДР, 10:00 меню, 16:00 напоминание, "
+        "20:00 закрытие + автораспределение курьерам)"
+    )
     return scheduler
