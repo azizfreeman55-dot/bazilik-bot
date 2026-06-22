@@ -378,9 +378,9 @@ async def handle_webapp_order(request):
 
                 for _ in range(qty):
                     await db.execute(
-                        """INSERT INTO orders (user_id, menu_id, order_date, status)
-                           VALUES ($1, $2, $3::text, 'pending')""",
-                        user_db_id, real_menu_id, tomorrow
+                        """INSERT INTO orders (user_id, menu_id, order_date, status, payment_method)
+                           VALUES ($1, $2, $3::text, 'pending', $4)""",
+                        user_db_id, real_menu_id, tomorrow, payment_method
                     )
                     orders_created += 1
 
@@ -443,38 +443,23 @@ async def handle_webapp_order(request):
             )
             current_balance = balance_row["balance"] if balance_row else 0
 
-            # Если клиент явно выбрал способ оплаты — учитываем его выбор.
-            # "balance" — списываем (если хватает), "cash" — не списываем вообще,
-            # "auto" (старое поведение, на случай старой версии фронтенда) — списываем если хватает.
-            if payment_method == "cash":
-                deducted = False
-            elif payment_method == "balance":
+            # Баланс списывается ТОЛЬКО при доставке (курьер нажимает "Заказ доставлен"),
+            # а не в момент оформления заказа. Здесь просто запоминаем выбранный
+            # способ оплаты — реальное списание происходит в courier_bot.py → mark_delivered.
+            if payment_method == "balance":
                 deducted = current_balance >= total_amount and total_amount > 0
             else:
-                deducted = current_balance >= total_amount and total_amount > 0
-
-            if deducted:
-                await db.execute(
-                    """INSERT INTO user_balance (user_id, balance) VALUES ($1, $2)
-                       ON CONFLICT (user_id) DO UPDATE SET balance = user_balance.balance - $2""",
-                    user_db_id, total_amount
-                )
-                await db.execute(
-                    """INSERT INTO balance_transactions (user_id, amount, type, description)
-                       VALUES ($1, $2, 'debit', $3)""",
-                    user_db_id, total_amount, f"Заказ через Mini App|{tomorrow}"
-                )
+                deducted = False
 
         try:
             bot = Bot(token=BOT_TOKEN)
             items_text = "\n".join(f"• {s}" for s in order_summaries)
 
-            if deducted:
-                balance_text = f"\n💳 Списано с баланса: {total_amount:,} сум"
-            elif payment_method == "cash":
-                balance_text = f"\n💵 Наличными при получении: {total_amount:,} сум"
-            else:
-                balance_text = f"\n💵 Оплата при получении: {total_amount:,} сум"
+            payment_labels = {
+                "balance": "💳 С баланса (списание при доставке)",
+                "cash": "💵 Наличными при получении",
+            }
+            balance_text = f"\n{payment_labels.get(payment_method, payment_labels['balance'])}: {total_amount:,} сум"
 
             streak_text = ""
             if streak_bonus_info:
