@@ -294,6 +294,47 @@
   .weekly-day-name { font-size: 14px; font-weight: 600; }
   .weekly-day-status { font-size: 12px; color: var(--ink-soft); }
 
+  .dash-stats-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px;
+  }
+  .dash-stat-box {
+    background: var(--white); border-radius: 14px; border: 1px solid var(--line);
+    padding: 12px; text-align: center;
+  }
+  .dash-stat-value { font-size: 20px; font-weight: 700; color: var(--green-600); }
+  .dash-stat-label { font-size: 11px; color: var(--ink-soft); margin-top: 2px; }
+
+  .chart-container {
+    background: var(--white); border-radius: 16px; border: 1px solid var(--line);
+    padding: 16px 12px; margin-bottom: 12px;
+  }
+  .chart-bars {
+    display: flex; align-items: flex-end; gap: 6px; height: 120px; margin-top: 8px;
+  }
+  .chart-bar-col {
+    flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%;
+    justify-content: flex-end; gap: 4px;
+  }
+  .chart-bar {
+    width: 100%; background: var(--green-600); border-radius: 6px 6px 0 0;
+    min-height: 3px; transition: height 0.3s;
+  }
+  .chart-bar-label { font-size: 10px; color: var(--ink-soft); }
+  .chart-bar-value { font-size: 10px; font-weight: 700; color: var(--ink); }
+
+  .top-dish-row {
+    display: flex; align-items: center; gap: 10px; padding: 10px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .top-dish-row:last-child { border-bottom: none; }
+  .top-dish-rank {
+    width: 24px; height: 24px; border-radius: 50%; background: var(--cream-dark);
+    display: flex; align-items: center; justify-content: center; font-size: 12px;
+    font-weight: 700; flex-shrink: 0;
+  }
+  .top-dish-name { flex: 1; font-size: 13px; font-weight: 600; }
+  .top-dish-count { font-size: 12px; color: var(--ink-soft); font-weight: 600; }
+
   .amount-btn {
     padding: 14px; border-radius: 12px; border: 1px solid var(--line);
     background: var(--cream-dark); color: var(--ink);
@@ -355,6 +396,7 @@
       <button class="more-link" data-page="gifts">🎁 Подарки и награды</button>
       <button class="more-link" data-page="referral">👥 Пригласить коллегу</button>
       <button class="more-link" data-page="settings">⚙️ Настройки</button>
+      <button class="more-link" data-page="dashboard">📊 Дашборд (админ)</button>
     </div>
   </div>
 
@@ -374,6 +416,12 @@
   <div class="page" id="page-settings">
     <button class="back-link" onclick="switchPage('more')">← Назад</button>
     <div id="settings-content"><div class="loading">Загружаем настройки…</div></div>
+  </div>
+
+  <!-- DASHBOARD PAGE (admin only) -->
+  <div class="page" id="page-dashboard">
+    <button class="back-link" onclick="switchPage('more')">← Назад</button>
+    <div id="dashboard-content"><div class="loading">Загружаем статистику…</div></div>
   </div>
 
   <div class="cart-bar" id="cart-bar">
@@ -474,7 +522,7 @@
     document.getElementById(`page-${page}`).classList.add("active");
     document.querySelectorAll(".nav-btn").forEach(b => {
       const navPage = b.dataset.page;
-      const isMoreGroup = ["more", "rating", "gifts", "referral", "settings"].includes(page);
+      const isMoreGroup = ["more", "rating", "gifts", "referral", "settings", "dashboard"].includes(page);
       b.classList.toggle("active", navPage === page || (navPage === "more" && isMoreGroup));
     });
 
@@ -493,6 +541,7 @@
     if (page === "gifts") loadGifts();
     if (page === "referral") loadReferral();
     if (page === "settings") loadSettings();
+    if (page === "dashboard") loadDashboard();
   }
 
   document.querySelectorAll(".nav-btn").forEach(btn => {
@@ -1226,6 +1275,78 @@
       document.getElementById("weekly-back-btn").onclick = loadSettings;
     } catch (e) {
       el.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Ошибка загрузки</div></div>';
+    }
+  }
+
+  // ─── DASHBOARD PAGE (admin only) ──────────────────────────────────────────
+
+  const DAY_SHORT_RU = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
+
+  async function loadDashboard() {
+    const el = document.getElementById("dashboard-content");
+    el.innerHTML = '<div class="loading">Загружаем статистику…</div>';
+    try {
+      const data = await apiCall("/api/dashboard");
+      if (data.error) {
+        el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">🔒</div><div class="empty-state-text">${data.error}</div></div>`;
+        return;
+      }
+
+      let html = `
+        <div class="dash-stats-grid">
+          <div class="dash-stat-box"><div class="dash-stat-value">${data.total_all_orders}</div><div class="dash-stat-label">Всего заказов</div></div>
+          <div class="dash-stat-box"><div class="dash-stat-value">${data.total_users}</div><div class="dash-stat-label">Клиентов</div></div>
+          <div class="dash-stat-box"><div class="dash-stat-value">${data.total_companies}</div><div class="dash-stat-label">Компаний</div></div>
+          <div class="dash-stat-box"><div class="dash-stat-value">${data.avg_rating ?? "—"}${data.avg_rating ? " ⭐" : ""}</div><div class="dash-stat-label">Средний рейтинг</div></div>
+        </div>
+
+        <div class="chart-container">
+          <div style="font-size: 13px; font-weight: 700;">Заказы за 7 дней</div>
+          <div style="font-size: 12px; color: var(--ink-soft); margin-top: 2px;">
+            Всего: ${data.total_orders_week} | Выручка: ${fmt(data.total_revenue_week)}
+          </div>
+          <div class="chart-bars" id="orders-chart"></div>
+        </div>
+
+        <div class="profile-card">
+          <div style="font-size: 13px; font-weight: 700; margin-bottom: 4px;">🔥 Топ-5 блюд (30 дней)</div>
+      `;
+
+      if (data.top_dishes.length === 0) {
+        html += `<div style="font-size: 13px; color: var(--ink-soft); padding: 8px 0;">Пока нет данных</div>`;
+      } else {
+        data.top_dishes.forEach((d, i) => {
+          const icon = CATEGORY_META[d.category]?.icon || "🍽";
+          html += `
+            <div class="top-dish-row">
+              <div class="top-dish-rank">${i + 1}</div>
+              <div class="top-dish-name">${icon} ${d.name}</div>
+              <div class="top-dish-count">${d.cnt} раз</div>
+            </div>
+          `;
+        });
+      }
+      html += `</div>`;
+
+      el.innerHTML = html;
+
+      // Рисуем столбики графика
+      const maxCount = Math.max(...data.daily_stats.map(d => d.count), 1);
+      const chartEl = document.getElementById("orders-chart");
+      data.daily_stats.forEach(d => {
+        const dayNum = new Date(d.date).getDay();
+        const heightPct = Math.max((d.count / maxCount) * 100, 3);
+        const col = document.createElement("div");
+        col.className = "chart-bar-col";
+        col.innerHTML = `
+          <div class="chart-bar-value">${d.count || ""}</div>
+          <div class="chart-bar" style="height: ${heightPct}%;"></div>
+          <div class="chart-bar-label">${DAY_SHORT_RU[dayNum]}</div>
+        `;
+        chartEl.appendChild(col);
+      });
+    } catch (e) {
+      el.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Не удалось загрузить статистику</div></div>';
     }
   }
 
