@@ -313,6 +313,7 @@ async def handle_webapp_order(request):
         init_data = await get_init_data_from_request(request)
         body = await request.json()
         items = body.get("items", [])
+        payment_method = body.get("payment_method", "auto")  # balance | cash | auto
 
         user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
         if not user_data:
@@ -441,7 +442,16 @@ async def handle_webapp_order(request):
                 "SELECT balance FROM user_balance WHERE user_id = $1", user_db_id
             )
             current_balance = balance_row["balance"] if balance_row else 0
-            deducted = current_balance >= total_amount and total_amount > 0
+
+            # Если клиент явно выбрал способ оплаты — учитываем его выбор.
+            # "balance" — списываем (если хватает), "cash" — не списываем вообще,
+            # "auto" (старое поведение, на случай старой версии фронтенда) — списываем если хватает.
+            if payment_method == "cash":
+                deducted = False
+            elif payment_method == "balance":
+                deducted = current_balance >= total_amount and total_amount > 0
+            else:
+                deducted = current_balance >= total_amount and total_amount > 0
 
             if deducted:
                 await db.execute(
@@ -458,10 +468,14 @@ async def handle_webapp_order(request):
         try:
             bot = Bot(token=BOT_TOKEN)
             items_text = "\n".join(f"• {s}" for s in order_summaries)
-            balance_text = (
-                f"\n💳 Списано: {total_amount:,} сум" if deducted
-                else f"\n💳 Оплата при получении: {total_amount:,} сум"
-            )
+
+            if deducted:
+                balance_text = f"\n💳 Списано с баланса: {total_amount:,} сум"
+            elif payment_method == "cash":
+                balance_text = f"\n💵 Наличными при получении: {total_amount:,} сум"
+            else:
+                balance_text = f"\n💵 Оплата при получении: {total_amount:,} сум"
+
             streak_text = ""
             if streak_bonus_info:
                 streak_text = (
