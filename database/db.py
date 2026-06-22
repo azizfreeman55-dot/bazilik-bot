@@ -87,6 +87,8 @@ async def init_db():
                 order_date TEXT NOT NULL,
                 status TEXT DEFAULT 'pending',
                 is_auto_order INTEGER DEFAULT 0,
+                payment_method TEXT DEFAULT 'balance',
+                paid INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -209,6 +211,30 @@ async def init_db():
                     WHERE table_name='users' AND column_name='last_streak_bonus'
                 ) THEN
                     ALTER TABLE users ADD COLUMN last_streak_bonus INTEGER DEFAULT 0;
+                END IF;
+            END
+            $$;
+        """)
+        await db.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='orders' AND column_name='payment_method'
+                ) THEN
+                    ALTER TABLE orders ADD COLUMN payment_method TEXT DEFAULT 'balance';
+                END IF;
+            END
+            $$;
+        """)
+        await db.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='orders' AND column_name='paid'
+                ) THEN
+                    ALTER TABLE orders ADD COLUMN paid INTEGER DEFAULT 0;
                 END IF;
             END
             $$;
@@ -1029,3 +1055,123 @@ async def get_company_clients_telegram_ids(company_id: int, order_date: str) -> 
             company_id, str(order_date)
         )
         return [r["telegram_id"] for r in rows]
+
+
+# ─── Оплата при доставке ──────────────────────────────────────────────────────
+
+async def charge_balance_on_delivery(company_id: int, order_date: str) -> list:
+    """
+    Вызывается когда курьер отмечает компанию как 'Доставлено'.
+    Для каждого НЕ оплаченного заказа этой компании на эту дату:
+      - списывает сумму с баланса клиента (баланс может уйти в минус)
+      - помечает заказ как paid=1
+    Возвращает список {telegram_id, full_name, amount, new_balance} для отчёта курьеру.
+    """
+    pool = await get_pool()
+    results = []
+    async with pool.acquire() as db:
+        orders = await db.fetch(
+            """SELECT o.id as order_id, o.user_id, o.payment_method, m.price,
+               u.telegram_id, u.full_name
+               FROM orders o
+               JOIN users u ON o.user_id = u.id
+               JOIN menus m ON o.menu_id = m.id
+               WHERE u.company_id = $1 AND o.order_date = $2::text
+               AND o.status != 'cancelled' AND o.paid = 0""",
+            company_id, str(order_date)
+        )
+
+        # Группируем по user_id чтобы списать одной операцией на клиента
+        by_user = {}
+        for o in orders:
+            by_user.setdefault(o["user_id"], {
+                "telegram_id": o["telegram_id"],
+                "full_name": o["full_name"],
+                "order_ids": [],
+                "total": 0
+            })
+            by_user[o["user_id"]]["order_ids"].append(o["order_id"])
+            by_user[o["user_id"]]["total"] += o["price"]
+
+        for user_id, info in by_user.items():
+            if info["total"] <= 0:
+                continue
+
+            await db.execute(
+                """INSERT INTO user_balance (user_id, balance) VALUES ($1, $2)
+                   ON CONFLICT (user_id) DO UPDATE SET balance = user_balance.balance - $2""",
+                user_id, info["total"]
+            )
+            await db.execute(
+                """INSERT INTO balance_transactions (user_id, amount, type, description)
+                   VALUES ($1, $2, 'debit', $3)""",
+                user_id, info["total"], f"Списание за доставленный заказ ({order_date})"
+            )
+            for oid in info["order_ids"]:
+                await db.execute("UPDATE orders SET paid = 1 WHERE id = $1", oid)
+
+            new_balance = await db.fetchval(
+                "SELECT balance FROM user_balance WHERE user_id = $1", user_id
+            )
+
+            results.append({
+                "telegram_id": info["telegram_id"],
+                "full_name": info["full_name"],
+                "amount": info["total"],
+                "new_balance": new_balance
+            })
+
+    return results
+
+
+async def accept_cash_payment(telegram_id: int, amount: int) -> dict:
+    """
+    Курьер принял наличные у клиента — зачисляет указанную сумму на баланс.
+    Используется когда баланс клиента в минусе (из-за неоплаченных заказов)
+    и курьер физически получил деньги.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        user = await db.fetchrow("SELECT id, full_name FROM users WHERE telegram_id = $1", telegram_id)
+        if not user:
+            return {"success": False, "error": "Клиент не найден"}
+
+        await db.execute(
+            """INSERT INTO user_balance (user_id, balance) VALUES ($1, $2)
+               ON CONFLICT (user_id) DO UPDATE SET balance = user_balance.balance + $2""",
+            user["id"], amount
+        )
+        await db.execute(
+            """INSERT INTO balance_transactions (user_id, amount, type, description)
+               VALUES ($1, $2, 'credit', '💵 Наличные принял курьер')""",
+            user["id"], amount
+        )
+        new_balance = await db.fetchval(
+            "SELECT balance FROM user_balance WHERE user_id = $1", user["id"]
+        )
+
+    return {
+        "success": True,
+        "full_name": user["full_name"],
+        "amount": amount,
+        "new_balance": new_balance
+    }
+
+
+async def get_unpaid_clients_for_company(company_id: int, order_date: str) -> list:
+    """Список клиентов компании с неоплаченными заказами на дату (для курьера)"""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        rows = await db.fetch(
+            """SELECT u.telegram_id, u.full_name, SUM(m.price) as total,
+               bal.balance as current_balance
+               FROM orders o
+               JOIN users u ON o.user_id = u.id
+               JOIN menus m ON o.menu_id = m.id
+               LEFT JOIN user_balance bal ON bal.user_id = u.id
+               WHERE u.company_id = $1 AND o.order_date = $2::text
+               AND o.status != 'cancelled'
+               GROUP BY u.telegram_id, u.full_name, bal.balance""",
+            company_id, str(order_date)
+        )
+        return [dict(r) for r in rows]
