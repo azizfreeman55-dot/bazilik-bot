@@ -178,6 +178,17 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS courier_reviews (
+                id SERIAL PRIMARY KEY,
+                courier_id INTEGER REFERENCES couriers(id),
+                user_id INTEGER REFERENCES users(id),
+                delivery_route_id INTEGER REFERENCES delivery_routes(id),
+                rating INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, delivery_route_id)
+            )
+        """)
 
         # Миграции
         await db.execute("""
@@ -1065,6 +1076,20 @@ async def mark_route_started(route_id: int):
             route_id
         )
 
+        route = await db.fetchrow(
+            "SELECT delivery_date FROM delivery_routes WHERE id = $1", route_id
+        )
+        stop_company_ids = await db.fetch(
+            "SELECT company_id FROM delivery_stops WHERE route_id = $1", route_id
+        )
+        for stop in stop_company_ids:
+            await db.execute(
+                """UPDATE orders SET status = 'in_transit', updated_at = NOW()
+                   WHERE order_date = $1::text AND status = 'confirmed'
+                   AND user_id IN (SELECT id FROM users WHERE company_id = $2)""",
+                route["delivery_date"], stop["company_id"]
+            )
+
 
 async def mark_route_finished(route_id: int):
     pool = await get_pool()
@@ -1207,3 +1232,112 @@ async def get_unpaid_clients_for_company(company_id: int, order_date: str) -> li
             company_id, str(order_date)
         )
         return [dict(r) for r in rows]
+
+
+# ─── Рейтинг курьера ───────────────────────────────────────────────────────────
+
+async def save_courier_review(courier_id: int, user_id: int, delivery_route_id: int, rating: int) -> bool:
+    """Сохраняет оценку курьера от клиента. Возвращает False если уже оценено."""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        existing = await db.fetchrow(
+            "SELECT id FROM courier_reviews WHERE user_id = $1 AND delivery_route_id = $2",
+            user_id, delivery_route_id
+        )
+        if existing:
+            return False
+        await db.execute(
+            """INSERT INTO courier_reviews (courier_id, user_id, delivery_route_id, rating)
+               VALUES ($1, $2, $3, $4)""",
+            courier_id, user_id, delivery_route_id, rating
+        )
+    return True
+
+
+async def get_courier_rating(courier_id: int) -> dict:
+    """Средний рейтинг и количество отзывов конкретного курьера"""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        row = await db.fetchrow(
+            "SELECT AVG(rating) as avg_rating, COUNT(*) as count FROM courier_reviews WHERE courier_id = $1",
+            courier_id
+        )
+        return {
+            "avg_rating": round(float(row["avg_rating"]), 1) if row["avg_rating"] else None,
+            "count": row["count"] or 0
+        }
+
+
+async def get_all_couriers_stats() -> list:
+    """Статистика всех курьеров для админ-дашборда: доставки, рейтинг, среднее время маршрута"""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        rows = await db.fetch(
+            """SELECT c.id, c.full_name,
+               COUNT(DISTINCT dr.id) FILTER (WHERE dr.status = 'finished') as routes_finished,
+               COUNT(DISTINCT ds.id) FILTER (WHERE ds.status = 'delivered') as stops_delivered,
+               AVG(EXTRACT(EPOCH FROM (dr.finished_at - dr.started_at)) / 60)
+                   FILTER (WHERE dr.finished_at IS NOT NULL AND dr.started_at IS NOT NULL) as avg_minutes,
+               (SELECT AVG(rating) FROM courier_reviews cr WHERE cr.courier_id = c.id) as avg_rating,
+               (SELECT COUNT(*) FROM courier_reviews cr WHERE cr.courier_id = c.id) as review_count
+               FROM couriers c
+               LEFT JOIN delivery_routes dr ON dr.courier_id = c.id
+               LEFT JOIN delivery_stops ds ON ds.route_id = dr.id
+               WHERE c.is_active = TRUE
+               GROUP BY c.id, c.full_name
+               ORDER BY routes_finished DESC"""
+        )
+        result = []
+        for r in rows:
+            result.append({
+                "id": r["id"],
+                "full_name": r["full_name"],
+                "routes_finished": r["routes_finished"] or 0,
+                "stops_delivered": r["stops_delivered"] or 0,
+                "avg_minutes": round(float(r["avg_minutes"]), 1) if r["avg_minutes"] else None,
+                "avg_rating": round(float(r["avg_rating"]), 1) if r["avg_rating"] else None,
+                "review_count": r["review_count"] or 0
+            })
+        return result
+
+
+async def get_order_delivery_status(telegram_id: int, order_date: str) -> dict:
+    """
+    Возвращает агрегированный статус доставки заказа для отображения клиенту:
+    'pending' (ожидает подтверждения), 'confirmed' (готовится),
+    'in_transit' (курьер в пути), 'delivered' (доставлено), 'cancelled'.
+    Если позиций несколько — берём самый "продвинутый" статус.
+    """
+    pool = await get_pool()
+    status_priority = {"cancelled": 0, "pending": 1, "confirmed": 2, "in_transit": 3, "delivered": 4}
+    async with pool.acquire() as db:
+        rows = await db.fetch(
+            """SELECT o.status FROM orders o
+               JOIN users u ON o.user_id = u.id
+               WHERE u.telegram_id = $1 AND o.order_date = $2::text
+               AND o.status != 'cancelled'""",
+            telegram_id, str(order_date)
+        )
+    if not rows:
+        return {"status": None}
+
+    statuses = [r["status"] for r in rows]
+    best_status = max(statuses, key=lambda s: status_priority.get(s, 0))
+    return {"status": best_status}
+
+
+async def get_courier_for_route_by_company(company_id: int, order_date: str) -> dict | None:
+    """Находит курьера и route_id, который обслуживает доставку этой компании на дату —
+    используется чтобы привязать отзыв клиента к конкретному курьеру."""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        row = await db.fetchrow(
+            """SELECT dr.id as route_id, dr.courier_id, c.full_name as courier_name
+               FROM delivery_routes dr
+               JOIN delivery_stops ds ON ds.route_id = dr.id
+               JOIN couriers c ON c.id = dr.courier_id
+               WHERE ds.company_id = $1 AND dr.delivery_date = $2::text
+               ORDER BY dr.id DESC LIMIT 1""",
+            company_id, str(order_date)
+        )
+        return dict(row) if row else None
