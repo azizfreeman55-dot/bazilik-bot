@@ -249,19 +249,25 @@ async def show_stop_detail(callback: CallbackQuery):
         await callback.answer("Заказов не найдено", show_alert=True)
         return
 
-    # Группируем по клиенту
+    # Группируем по клиенту (по telegram_id, а не по имени — у разных
+    # клиентов имена могут совпадать, и это смешало бы их заказы)
     clients = {}
     for o in orders:
-        name = o["full_name"] or "—"
-        if name not in clients:
-            clients[name] = []
+        key = o.get("telegram_id") or o["full_name"]
+        if key not in clients:
+            clients[key] = {
+                "name": o["full_name"] or "—",
+                "phone": o.get("phone"),
+                "items": []
+            }
         icon = CATEGORY_ICONS.get(o["category"], "🍽")
-        clients[name].append(f"{icon} {o['meal_name']}")
+        clients[key]["items"].append(f"{icon} {o['meal_name']}")
 
     text = f"📋 *Список заказов*\n\n"
-    for i, (client, items) in enumerate(clients.items(), 1):
-        text += f"{i}. *{client}*\n"
-        for item in items:
+    for i, info in enumerate(clients.values(), 1):
+        phone_line = f" — [+{info['phone']}](tel:+{info['phone']})" if info["phone"] else ""
+        text += f"{i}. *{info['name']}*{phone_line}\n"
+        for item in info["items"]:
             text += f"   {item}\n"
         text += "\n"
 
