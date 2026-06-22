@@ -873,7 +873,8 @@ async def handle_webapp_referral(request):
 
 
 async def handle_webapp_autoorder_get(request):
-    """POST /api/autoorder — настройки автозаказа с деталями блюд (название, цена, категория)"""
+    """POST /api/autoorder — настройки автозаказа: для каждого дня — список выбранных
+    блюд по всем категориям (main/salad/dessert/drink), а не только одно блюдо."""
     try:
         init_data = await get_init_data_from_request(request)
         user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
@@ -890,29 +891,32 @@ async def handle_webapp_autoorder_get(request):
                 return web.json_response({"error": "User not registered"}, status=404, headers=cors_headers())
 
             weekly_rows = await db.fetch(
-                "SELECT day_of_week, menu_item FROM weekly_orders WHERE user_id = $1 AND is_active = 1",
+                """SELECT day_of_week, menu_item, category FROM weekly_orders
+                   WHERE user_id = $1 AND is_active = 1""",
                 user["id"]
             )
-            weekly_map = {r["day_of_week"]: r["menu_item"] for r in weekly_rows}
 
-            # Для каждого настроенного дня получаем детали блюда из weekly_menu (main category)
+            # Для каждого (день, категория) получаем детали блюда из weekly_menu
             week_days = {}
-            for day_num, item_number in weekly_map.items():
+            for row in weekly_rows:
+                day_num = row["day_of_week"]
+                item_number = row["menu_item"]
+                category = row["category"]
+
                 dish = await db.fetchrow(
-                    """SELECT name, price, category FROM weekly_menu
-                       WHERE day_of_week = $1 AND item_number = $2
-                       ORDER BY category LIMIT 1""",
-                    day_num, item_number
+                    """SELECT name, price FROM weekly_menu
+                       WHERE day_of_week = $1 AND item_number = $2 AND category = $3""",
+                    day_num, item_number, category
                 )
-                if dish:
-                    week_days[day_num] = {
-                        "item_number": item_number,
-                        "name": dish["name"],
-                        "price": dish["price"],
-                        "category": dish["category"]
-                    }
-                else:
-                    week_days[day_num] = {"item_number": item_number, "name": None}
+                if not dish:
+                    continue
+
+                week_days.setdefault(day_num, []).append({
+                    "item_number": item_number,
+                    "category": category,
+                    "name": dish["name"],
+                    "price": dish["price"]
+                })
 
         return web.json_response({
             "auto_order": bool(user["auto_order"]),
@@ -1052,6 +1056,7 @@ async def handle_webapp_settings_set_weekly(request):
         body = await request.json()
         day_of_week = body.get("day_of_week")
         item_number = body.get("item_number")
+        category = body.get("category", "main")
 
         pool = await get_pool()
         async with pool.acquire() as db:
@@ -1061,15 +1066,15 @@ async def handle_webapp_settings_set_weekly(request):
 
             if item_number is None:
                 await db.execute(
-                    "UPDATE weekly_orders SET is_active = 0 WHERE user_id = $1 AND day_of_week = $2",
-                    user["id"], day_of_week
+                    "UPDATE weekly_orders SET is_active = 0 WHERE user_id = $1 AND day_of_week = $2 AND category = $3",
+                    user["id"], day_of_week, category
                 )
             else:
                 await db.execute(
-                    """INSERT INTO weekly_orders (user_id, day_of_week, menu_item, is_active)
-                       VALUES ($1, $2, $3, 1)
-                       ON CONFLICT (user_id, day_of_week) DO UPDATE SET menu_item = $3, is_active = 1""",
-                    user["id"], day_of_week, item_number
+                    """INSERT INTO weekly_orders (user_id, day_of_week, menu_item, category, is_active)
+                       VALUES ($1, $2, $3, $4, 1)
+                       ON CONFLICT (user_id, day_of_week, category) DO UPDATE SET menu_item = $3, is_active = 1""",
+                    user["id"], day_of_week, item_number, category
                 )
 
         return web.json_response({"success": True}, headers=cors_headers())
