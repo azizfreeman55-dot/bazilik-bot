@@ -1,6 +1,6 @@
 import logging
 import asyncpg
-from datetime import date
+from datetime import date, timedelta
 from config import DATABASE_URL
 
 logger = logging.getLogger(__name__)
@@ -153,6 +153,30 @@ async def init_db():
             )
         """)
 
+        # ─── Новые таблицы для лояльности ──────────────────────────────────
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS reviews (
+                id SERIAL PRIMARY KEY,
+                order_id INTEGER REFERENCES orders(id),
+                user_id INTEGER REFERENCES users(id),
+                menu_id INTEGER REFERENCES menus(id),
+                rating INTEGER NOT NULL,
+                comment TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(order_id)
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS company_of_month (
+                id SERIAL PRIMARY KEY,
+                company_id INTEGER REFERENCES companies(id),
+                month_year TEXT NOT NULL UNIQUE,
+                order_count INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Миграции
         await db.execute("""
             DO $$
             BEGIN
@@ -173,6 +197,18 @@ async def init_db():
                     WHERE table_name='menus' AND column_name='category'
                 ) THEN
                     ALTER TABLE menus ADD COLUMN category TEXT DEFAULT 'main';
+                END IF;
+            END
+            $$;
+        """)
+        await db.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='users' AND column_name='last_streak_bonus'
+                ) THEN
+                    ALTER TABLE users ADD COLUMN last_streak_bonus INTEGER DEFAULT 0;
                 END IF;
             END
             $$;
@@ -471,7 +507,6 @@ async def delete_weekly_menu_day(day_of_week: int):
 # ─── Заказы ───────────────────────────────────────────────────────────────────
 
 async def get_today_order(telegram_id: int, order_date: str) -> dict | None:
-    """Возвращает ПЕРВУЮ позицию заказа (для обратной совместимости со старым кодом)"""
     pool = await get_pool()
     async with pool.acquire() as db:
         row = await db.fetchrow(
@@ -487,7 +522,6 @@ async def get_today_order(telegram_id: int, order_date: str) -> dict | None:
 
 
 async def get_today_orders_list(telegram_id: int, order_date: str) -> list:
-    """Возвращает ВСЕ позиции заказа пользователя на дату"""
     pool = await get_pool()
     async with pool.acquire() as db:
         rows = await db.fetch(
@@ -502,6 +536,68 @@ async def get_today_orders_list(telegram_id: int, order_date: str) -> list:
             telegram_id, str(order_date)
         )
         return [dict(r) for r in rows]
+
+
+STREAK_MILESTONES = [5, 10, 20, 50]
+STREAK_BONUS_POINTS = {5: 15, 10: 30, 20: 60, 50: 150}
+
+
+async def update_streak_and_get_bonus(telegram_id: int) -> dict | None:
+    """
+    Обновляет streak_days при заказе на следующий день подряд.
+    Если streak достиг порога (5/10/20/50) и бонус за этот порог
+    ещё не выдавался — начисляет баллы и возвращает информацию о бонусе.
+    Возвращает None если бонуса нет.
+    """
+    pool = await get_pool()
+    today = date.today()
+    yesterday = str(today - timedelta(days=1))
+
+    async with pool.acquire() as db:
+        user = await db.fetchrow(
+            "SELECT id, streak_days, last_order_date, last_streak_bonus FROM users WHERE telegram_id = $1",
+            telegram_id
+        )
+        if not user:
+            return None
+
+        last_order = user["last_order_date"]
+        current_streak = user["streak_days"] or 0
+
+        # Если последний заказ был "вчера" (по дате создания заказа) — продолжаем серию
+        # last_order_date обновляется в create_order на дату ФАКТИЧЕСКОГО создания заказа (today)
+        if last_order == yesterday:
+            new_streak = current_streak + 1
+        elif last_order == str(today):
+            # Уже заказывали сегодня — серия не меняется (защита от двойного начисления)
+            new_streak = current_streak
+        else:
+            new_streak = 1
+
+        await db.execute(
+            "UPDATE users SET streak_days = $1 WHERE id = $2",
+            new_streak, user["id"]
+        )
+
+        last_bonus_milestone = user["last_streak_bonus"] or 0
+        bonus_info = None
+
+        for milestone in STREAK_MILESTONES:
+            if new_streak >= milestone and last_bonus_milestone < milestone:
+                bonus_points = STREAK_BONUS_POINTS[milestone]
+                await db.execute(
+                    "UPDATE users SET points = points + $1, last_streak_bonus = $2 WHERE id = $3",
+                    bonus_points, milestone, user["id"]
+                )
+                await db.execute(
+                    """INSERT INTO balance_transactions (user_id, amount, type, description)
+                       VALUES ($1, $2, 'credit', $3)""",
+                    user["id"], bonus_points, f"🔥 Бонус за серию {milestone} дней"
+                )
+                bonus_info = {"milestone": milestone, "points": bonus_points, "streak": new_streak}
+                break  # начисляем только один (самый актуальный) порог за раз
+
+    return bonus_info
 
 
 async def create_order(telegram_id: int, menu_id: int, order_date: str,
@@ -522,8 +618,7 @@ async def create_order(telegram_id: int, menu_id: int, order_date: str,
             """UPDATE users SET
                total_orders = total_orders + 1,
                points = points + 5,
-               last_order_date = $1,
-               streak_days = 0
+               last_order_date = $1
                WHERE telegram_id = $2""",
             today, telegram_id
         )
@@ -539,7 +634,6 @@ async def create_order(telegram_id: int, menu_id: int, order_date: str,
 
 
 async def cancel_order(telegram_id: int, order_date: str) -> bool:
-    """Отменяет ОДНУ (первую найденную pending) позицию — для обратной совместимости"""
     pool = await get_pool()
     async with pool.acquire() as db:
         await db.execute(
@@ -561,7 +655,6 @@ async def cancel_order(telegram_id: int, order_date: str) -> bool:
 
 
 async def cancel_all_orders_for_date(telegram_id: int, order_date: str) -> int:
-    """Отменяет ВСЕ заказы пользователя на дату. Возвращает количество отменённых позиций."""
     pool = await get_pool()
     async with pool.acquire() as db:
         result = await db.fetch(
@@ -614,6 +707,123 @@ async def get_all_users_for_notification() -> list:
     async with pool.acquire() as db:
         rows = await db.fetch("SELECT telegram_id FROM users")
         return [row["telegram_id"] for row in rows]
+
+
+# ─── Отзывы на блюда ────────────────────────────────────────────────────────
+
+async def get_deliverable_orders_without_review(order_date: str) -> list:
+    """Заказы со статусом delivered за дату, на которые ещё нет отзыва"""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        rows = await db.fetch(
+            """SELECT o.id as order_id, o.menu_id, u.telegram_id, u.lang, m.name as meal_name
+               FROM orders o
+               JOIN users u ON o.user_id = u.id
+               JOIN menus m ON o.menu_id = m.id
+               LEFT JOIN reviews r ON r.order_id = o.id
+               WHERE o.order_date = $1::text AND o.status = 'delivered'
+               AND r.id IS NULL""",
+            str(order_date)
+        )
+        return [dict(r) for r in rows]
+
+
+async def save_review(order_id: int, user_id: int, menu_id: int, rating: int, comment: str = None) -> bool:
+    """Сохраняет отзыв и начисляет +2 балла. Возвращает False если отзыв уже был."""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        existing = await db.fetchrow("SELECT id FROM reviews WHERE order_id = $1", order_id)
+        if existing:
+            return False
+
+        await db.execute(
+            """INSERT INTO reviews (order_id, user_id, menu_id, rating, comment)
+               VALUES ($1, $2, $3, $4, $5)""",
+            order_id, user_id, menu_id, rating, comment
+        )
+        await db.execute(
+            "UPDATE users SET points = points + 2 WHERE id = $1", user_id
+        )
+        await db.execute(
+            """INSERT INTO balance_transactions (user_id, amount, type, description)
+               VALUES ($1, 2, 'credit', '⭐ Бонус за отзыв')""",
+            user_id
+        )
+    return True
+
+
+async def get_menu_rating(menu_id: int) -> dict:
+    """Средний рейтинг и количество отзывов для блюда"""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        row = await db.fetchrow(
+            "SELECT AVG(rating) as avg_rating, COUNT(*) as count FROM reviews WHERE menu_id = $1",
+            menu_id
+        )
+        return {
+            "avg_rating": round(float(row["avg_rating"]), 1) if row["avg_rating"] else None,
+            "count": row["count"] or 0
+        }
+
+
+# ─── Компания месяца ─────────────────────────────────────────────────────────
+
+async def calculate_and_award_company_of_month(prev_month_year: str) -> dict | None:
+    """
+    Находит компанию-лидера по заказам за прошлый месяц,
+    начисляет +50 баллов всем её сотрудникам.
+    prev_month_year в формате 'YYYY-MM'.
+    Возвращает {"company_id", "company_name", "order_count", "employees_rewarded"} или None.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        already_awarded = await db.fetchrow(
+            "SELECT id FROM company_of_month WHERE month_year = $1", prev_month_year
+        )
+        if already_awarded:
+            return None
+
+        leader = await db.fetchrow(
+            """SELECT c.id as company_id, c.name as company_name, COUNT(o.id) as order_count
+               FROM orders o
+               JOIN users u ON o.user_id = u.id
+               JOIN companies c ON u.company_id = c.id
+               WHERE to_char(o.created_at, 'YYYY-MM') = $1
+               AND o.status != 'cancelled'
+               GROUP BY c.id, c.name
+               ORDER BY order_count DESC
+               LIMIT 1""",
+            prev_month_year
+        )
+        if not leader or leader["order_count"] == 0:
+            return None
+
+        await db.execute(
+            """INSERT INTO company_of_month (company_id, month_year, order_count)
+               VALUES ($1, $2, $3)""",
+            leader["company_id"], prev_month_year, leader["order_count"]
+        )
+
+        employees = await db.fetch(
+            "SELECT id, telegram_id, lang FROM users WHERE company_id = $1",
+            leader["company_id"]
+        )
+        for emp in employees:
+            await db.execute(
+                "UPDATE users SET points = points + 50 WHERE id = $1", emp["id"]
+            )
+            await db.execute(
+                """INSERT INTO balance_transactions (user_id, amount, type, description)
+                   VALUES ($1, 50, 'credit', '🏆 Бонус Компания месяца')""",
+                emp["id"]
+            )
+
+    return {
+        "company_id": leader["company_id"],
+        "company_name": leader["company_name"],
+        "order_count": leader["order_count"],
+        "employees": [dict(e) for e in employees]
+    }
 
 
 # ─── Курьерская система ───────────────────────────────────────────────────────
