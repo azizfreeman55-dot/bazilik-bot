@@ -915,6 +915,7 @@ async def get_company_order_details(company_id: int, order_date: str) -> list:
     async with pool.acquire() as db:
         rows = await db.fetch(
             """SELECT
+                u.telegram_id,
                 u.full_name,
                 u.phone,
                 m.name as meal_name,
