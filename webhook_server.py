@@ -1178,6 +1178,34 @@ async def handle_webapp_dashboard(request):
             )
             avg_rating = await db.fetchval("SELECT AVG(rating) FROM reviews")
 
+            # Статистика курьеров
+            courier_rows = await db.fetch(
+                """SELECT c.id, c.full_name,
+                   COUNT(DISTINCT dr.id) FILTER (WHERE dr.status = 'finished') as routes_finished,
+                   COUNT(DISTINCT ds.id) FILTER (WHERE ds.status = 'delivered') as stops_delivered,
+                   AVG(EXTRACT(EPOCH FROM (dr.finished_at - dr.started_at)) / 60)
+                       FILTER (WHERE dr.finished_at IS NOT NULL AND dr.started_at IS NOT NULL) as avg_minutes,
+                   (SELECT AVG(rating) FROM courier_reviews cr WHERE cr.courier_id = c.id) as avg_rating,
+                   (SELECT COUNT(*) FROM courier_reviews cr WHERE cr.courier_id = c.id) as review_count
+                   FROM couriers c
+                   LEFT JOIN delivery_routes dr ON dr.courier_id = c.id
+                   LEFT JOIN delivery_stops ds ON ds.route_id = dr.id
+                   WHERE c.is_active = TRUE
+                   GROUP BY c.id, c.full_name
+                   ORDER BY routes_finished DESC"""
+            )
+            couriers_stats = []
+            for r in courier_rows:
+                couriers_stats.append({
+                    "id": r["id"],
+                    "full_name": r["full_name"],
+                    "routes_finished": r["routes_finished"] or 0,
+                    "stops_delivered": r["stops_delivered"] or 0,
+                    "avg_minutes": round(float(r["avg_minutes"]), 1) if r["avg_minutes"] else None,
+                    "avg_rating": round(float(r["avg_rating"]), 1) if r["avg_rating"] else None,
+                    "review_count": r["review_count"] or 0
+                })
+
         return web.json_response({
             "daily_stats": daily_stats,
             "total_orders_week": total_orders_week,
@@ -1186,7 +1214,8 @@ async def handle_webapp_dashboard(request):
             "total_users": total_users,
             "total_companies": total_companies,
             "total_all_orders": total_all_orders,
-            "avg_rating": round(float(avg_rating), 1) if avg_rating else None
+            "avg_rating": round(float(avg_rating), 1) if avg_rating else None,
+            "couriers_stats": couriers_stats
         }, headers=cors_headers())
     except Exception as e:
         logger.error(f"webapp_dashboard error: {e}")
