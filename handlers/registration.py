@@ -3,14 +3,16 @@ import string
 from aiogram import Router, F
 from aiogram.types import (
     Message, CallbackQuery,
-    ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+    ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove,
+    WebAppInfo
 )
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import CommandStart
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from database.db import get_user, create_user, get_or_create_company, get_user_lang, set_user_lang, save_user_phone, get_pool
-from keyboards.keyboards import main_menu_keyboard
+from keyboards.keyboards import main_menu_keyboard, WEBAPP_URL
 from config import ADMIN_IDS
 from langs import t
 
@@ -30,6 +32,16 @@ def generate_referral_code(name: str) -> str:
     return f"{letters}{numbers}"
 
 
+def open_app_keyboard(lang: str = "ru") -> object:
+    """Яркая кнопка открытия Mini App прямо под приветственным сообщением"""
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="🌿 Открыть Bazilik" if lang == "ru" else "🌿 Bazilik'ni ochish",
+        web_app=WebAppInfo(url=WEBAPP_URL)
+    )
+    return builder.as_markup()
+
+
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
     user = await get_user(message.from_user.id)
@@ -37,12 +49,42 @@ async def cmd_start(message: Message, state: FSMContext):
     if user:
         is_admin = message.from_user.id in ADMIN_IDS
         lang = await get_user_lang(message.from_user.id)
+
+        pool = await get_pool()
+        async with pool.acquire() as db:
+            balance_row = await db.fetchrow(
+                "SELECT balance FROM user_balance WHERE user_id = $1", user["id"]
+            )
+        balance = balance_row["balance"] if balance_row else 0
+
+        if lang == "uz":
+            text = (
+                f"👋 *Qaytib kelganingizdan xursandmiz, {user['full_name']}!*\n\n"
+                f"💰 Ball: *{user['points']}*  |  📦 Buyurtmalar: *{user['total_orders']}*\n"
+                f"🏅 Status: *{user['status']}*\n"
+                f"💳 Hisob: *{balance:,} so'm*\n\n"
+                f"Tushlik buyurtma qilish uchun pastdagi tugmani bosing 👇"
+            )
+        else:
+            text = (
+                f"👋 *С возвращением, {user['full_name']}!*\n\n"
+                f"💰 Баллы: *{user['points']}*  |  📦 Заказов: *{user['total_orders']}*\n"
+                f"🏅 Статус: *{user['status']}*\n"
+                f"💳 Баланс: *{balance:,} сум*\n\n"
+                f"Нажмите кнопку ниже, чтобы заказать обед 👇"
+            )
+
         await message.answer(
-            f"{t(lang, 'welcome_back')}, {user['full_name']}!\n\n"
-            f"{t(lang, 'points')}: {user['points']} | {t(lang, 'orders')}: {user['total_orders']}\n"
-            f"{t(lang, 'status')}: {user['status']}",
-            reply_markup=main_menu_keyboard(is_admin, lang)
+            text,
+            parse_mode="Markdown",
+            reply_markup=open_app_keyboard(lang)
         )
+
+        if is_admin:
+            await message.answer(
+                t(lang, "btn_admin"),
+                reply_markup=main_menu_keyboard(is_admin, lang)
+            )
         return
 
     args = message.text.split()
@@ -50,7 +92,6 @@ async def cmd_start(message: Message, state: FSMContext):
     await state.update_data(ref_code=ref_code)
     await state.set_state(Registration.waiting_lang)
 
-    from aiogram.utils.keyboard import InlineKeyboardBuilder
     builder = InlineKeyboardBuilder()
     builder.button(text="🇷🇺 Русский", callback_data="lang_ru")
     builder.button(text="🇺🇿 O'zbekcha (lotin)", callback_data="lang_uz_latin")
@@ -191,13 +232,13 @@ async def process_location(message: Message, state: FSMContext):
         )
 
     user = await create_user(
-    telegram_id=message.from_user.id,
-    full_name=data["name"],
-    username=message.from_user.username or "",
-    company_id=company_id,
-    referral_code=referral_code,
-    referred_by_code=data.get("ref_code")
-)
+        telegram_id=message.from_user.id,
+        full_name=data["name"],
+        username=message.from_user.username or "",
+        company_id=company_id,
+        referral_code=referral_code,
+        referred_by_code=data.get("ref_code")
+    )
 
     await save_user_phone(message.from_user.id, data.get("phone", ""))
     await set_user_lang(message.from_user.id, lang)
@@ -219,5 +260,5 @@ async def process_location(message: Message, state: FSMContext):
         f"{bonus_text}\n\n"
         f"{t(lang, 'daily_info')}",
         parse_mode="Markdown",
-        reply_markup=main_menu_keyboard(is_admin, lang)
+        reply_markup=open_app_keyboard(lang)
     )
