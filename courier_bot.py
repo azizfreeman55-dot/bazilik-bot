@@ -700,7 +700,20 @@ async def start_route(callback: CallbackQuery):
                 # в заказе (блюдо + салат + напиток), и без этого получит
                 # отдельное уведомление за каждую позицию.
                 unique_client_ids = list(set(client_ids))
+
+                # Фильтруем по предпочтению notify_delivery — кто отключил
+                # уведомления о статусе доставки, тех не уведомляем.
+                async with pool.acquire() as db:
+                    pref_rows = await db.fetch(
+                        """SELECT telegram_id FROM users
+                           WHERE telegram_id = ANY($1::bigint[]) AND notify_delivery = 1""",
+                        unique_client_ids
+                    )
+                allowed_ids = {r["telegram_id"] for r in pref_rows}
+
                 for tg_id in unique_client_ids:
+                    if tg_id not in allowed_ids:
+                        continue
                     try:
                         await main_bot.send_message(
                             tg_id,
