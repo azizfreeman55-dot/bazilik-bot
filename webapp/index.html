@@ -365,6 +365,39 @@
   .autoorder-hint-icon { font-size: 20px; flex-shrink: 0; }
   .autoorder-hint-text { font-size: 12px; color: var(--ink-soft); line-height: 1.4; }
 
+  .delivery-stepper {
+    display: flex; align-items: center; padding: 8px 4px;
+  }
+  .stepper-step {
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    opacity: 0.4; flex-shrink: 0;
+  }
+  .stepper-step.active { opacity: 1; }
+  .stepper-icon {
+    width: 36px; height: 36px; border-radius: 50%; background: var(--cream-dark);
+    display: flex; align-items: center; justify-content: center; font-size: 16px;
+  }
+  .stepper-step.active .stepper-icon { background: var(--green-600); }
+  .stepper-step.current .stepper-icon {
+    box-shadow: 0 0 0 3px rgba(182,232,75,0.3);
+  }
+  .stepper-label { font-size: 10px; font-weight: 600; color: var(--ink-soft); text-align: center; }
+  .stepper-step.active .stepper-label { color: var(--ink); }
+  .stepper-line {
+    flex: 1; height: 2px; background: var(--cream-dark); margin: 0 -4px;
+    margin-bottom: 18px;
+  }
+  .stepper-line.active { background: var(--green-600); }
+
+  .courier-stat-row {
+    display: flex; align-items: center; gap: 10px; padding: 10px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .courier-stat-row:last-child { border-bottom: none; }
+  .courier-stat-name { flex: 1; font-size: 13px; font-weight: 600; }
+  .courier-stat-detail { font-size: 11px; color: var(--ink-soft); margin-top: 1px; }
+  .courier-stat-rating { font-size: 13px; font-weight: 700; color: var(--green-600); }
+
   .amount-btn {
     padding: 14px; border-radius: 12px; border: 1px solid var(--line);
     background: var(--cream-dark); color: var(--ink);
@@ -858,7 +891,18 @@
         (byCategory[cat] = byCategory[cat] || []).push(item);
       });
 
-      let html = `<div class="order-card">`;
+      // Берём "самый продвинутый" статус среди всех позиций
+      const statusPriority = { pending: 1, confirmed: 2, in_transit: 3, delivered: 4 };
+      let bestStatus = "pending";
+      data.items.forEach(item => {
+        if ((statusPriority[item.status] || 0) > (statusPriority[bestStatus] || 0)) {
+          bestStatus = item.status;
+        }
+      });
+
+      let html = renderDeliveryStepper(bestStatus);
+
+      html += `<div class="order-card">`;
       for (const [cat, items] of Object.entries(byCategory)) {
         const meta = CATEGORY_META[cat] || { label: cat, icon: "🍽" };
         html += `<div class="order-cat-label">${meta.icon} ${meta.label}</div>`;
@@ -869,8 +913,7 @@
       html += `<div class="order-total-row"><span>Итого</span><span>${fmt(data.total)}</span></div>`;
       html += `</div>`;
 
-      const status = data.items[0]?.status || "pending";
-      if (status === "pending") {
+      if (bestStatus === "pending") {
         html += `<button class="btn-primary" id="edit-order-btn">Изменить заказ</button>`;
         html += `<button class="btn-danger" id="cancel-order-btn">Отменить весь заказ</button>`;
       }
@@ -886,6 +929,34 @@
     } catch (e) {
       el.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Не удалось загрузить заказ</div></div>';
     }
+  }
+
+  function renderDeliveryStepper(status) {
+    const steps = [
+      { key: "confirmed", icon: "👨‍🍳", label: "Готовится" },
+      { key: "in_transit", icon: "🚚", label: "В пути" },
+      { key: "delivered", icon: "✅", label: "Доставлен" },
+    ];
+    const statusPriority = { pending: 1, confirmed: 2, in_transit: 3, delivered: 4 };
+    const currentLevel = statusPriority[status] || 1;
+
+    let html = `<div class="profile-card" style="margin-bottom: 12px;"><div class="delivery-stepper">`;
+    steps.forEach((step, i) => {
+      const stepLevel = statusPriority[step.key];
+      const isActive = currentLevel >= stepLevel;
+      const isCurrent = currentLevel === stepLevel;
+      html += `
+        <div class="stepper-step ${isActive ? "active" : ""} ${isCurrent ? "current" : ""}">
+          <div class="stepper-icon">${step.icon}</div>
+          <div class="stepper-label">${step.label}</div>
+        </div>
+      `;
+      if (i < steps.length - 1) {
+        html += `<div class="stepper-line ${currentLevel > stepLevel ? "active" : ""}"></div>`;
+      }
+    });
+    html += `</div></div>`;
+    return html;
   }
 
   function confirmCancelOrder() {
@@ -1290,6 +1361,29 @@
               <div class="top-dish-rank">${i + 1}</div>
               <div class="top-dish-name">${icon} ${d.name}</div>
               <div class="top-dish-count">${d.cnt} раз</div>
+            </div>
+          `;
+        });
+      }
+      html += `</div>`;
+
+      html += `<div class="profile-card">
+        <div style="font-size: 13px; font-weight: 700; margin-bottom: 4px;">🚚 Курьеры</div>`;
+
+      const couriers = data.couriers_stats || [];
+      if (couriers.length === 0) {
+        html += `<div style="font-size: 13px; color: var(--ink-soft); padding: 8px 0;">Нет данных о курьерах</div>`;
+      } else {
+        couriers.forEach(c => {
+          const ratingText = c.avg_rating ? `${c.avg_rating} ⭐ (${c.review_count})` : "— нет оценок";
+          const timeText = c.avg_minutes ? `~${c.avg_minutes} мин/маршрут` : "—";
+          html += `
+            <div class="courier-stat-row">
+              <div style="flex: 1;">
+                <div class="courier-stat-name">${c.full_name}</div>
+                <div class="courier-stat-detail">${c.routes_finished} маршрутов · ${c.stops_delivered} точек · ${timeText}</div>
+              </div>
+              <div class="courier-stat-rating">${ratingText}</div>
             </div>
           `;
         });
