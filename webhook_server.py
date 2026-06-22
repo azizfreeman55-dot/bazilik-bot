@@ -872,6 +872,64 @@ async def handle_webapp_referral(request):
         return web.json_response({"error": str(e)}, status=500, headers=cors_headers())
 
 
+async def handle_webapp_autoorder_get(request):
+    """POST /api/autoorder — настройки автозаказа с деталями блюд (название, цена, категория)"""
+    try:
+        init_data = await get_init_data_from_request(request)
+        user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
+        if not user_data:
+            return web.json_response({"error": "Invalid auth"}, status=401, headers=cors_headers())
+
+        telegram_id = user_data.get("id")
+        pool = await get_pool()
+        async with pool.acquire() as db:
+            user = await db.fetchrow(
+                "SELECT id, auto_order FROM users WHERE telegram_id = $1", telegram_id
+            )
+            if not user:
+                return web.json_response({"error": "User not registered"}, status=404, headers=cors_headers())
+
+            weekly_rows = await db.fetch(
+                "SELECT day_of_week, menu_item FROM weekly_orders WHERE user_id = $1 AND is_active = 1",
+                user["id"]
+            )
+            weekly_map = {r["day_of_week"]: r["menu_item"] for r in weekly_rows}
+
+            # Для каждого настроенного дня получаем детали блюда из weekly_menu (main category)
+            week_days = {}
+            for day_num, item_number in weekly_map.items():
+                dish = await db.fetchrow(
+                    """SELECT name, price, category FROM weekly_menu
+                       WHERE day_of_week = $1 AND item_number = $2
+                       ORDER BY category LIMIT 1""",
+                    day_num, item_number
+                )
+                if dish:
+                    week_days[day_num] = {
+                        "item_number": item_number,
+                        "name": dish["name"],
+                        "price": dish["price"],
+                        "category": dish["category"]
+                    }
+                else:
+                    week_days[day_num] = {"item_number": item_number, "name": None}
+
+        return web.json_response({
+            "auto_order": bool(user["auto_order"]),
+            "week_days": week_days
+        }, headers=cors_headers())
+    except Exception as e:
+        logger.error(f"webapp_autoorder_get error: {e}")
+        return web.json_response({"error": str(e)}, status=500, headers=cors_headers())
+
+
+async def handle_webapp_autoorder_copy_last_week(request):
+    """POST /api/autoorder/copy-last-week — копирует выбор прошлой недели как есть (no-op заглушка,
+    так как weekly_orders уже хранит постоянный выбор без понятия 'недель'. Эндпоинт оставлен
+    для совместимости и просто возвращает текущие настройки)."""
+    return await handle_webapp_autoorder_get(request)
+
+
 async def handle_webapp_settings_get(request):
     """POST /api/settings — текущие настройки автозаказа и меню на неделю"""
     try:
@@ -1208,12 +1266,13 @@ async def create_app():
     app.router.add_post("/api/settings/weekly-menu", handle_webapp_weekly_menu_for_day)
     app.router.add_post("/api/settings/set-weekly", handle_webapp_settings_set_weekly)
     app.router.add_post("/api/dashboard", handle_webapp_dashboard)
+    app.router.add_post("/api/autoorder", handle_webapp_autoorder_get)
 
     for path in ["/api/menu", "/api/order", "/api/my-order", "/api/cancel-order",
                  "/api/profile", "/api/rating", "/api/balance-history", "/api/topup",
                  "/api/gifts", "/api/referral", "/api/settings",
                  "/api/settings/toggle-auto", "/api/settings/weekly-menu", "/api/settings/set-weekly",
-                 "/api/dashboard"]:
+                 "/api/dashboard", "/api/autoorder"]:
         app.router.add_route("OPTIONS", path, handle_options)
 
     app.router.add_get("/api/photo/{photo_id}", handle_photo_proxy)
