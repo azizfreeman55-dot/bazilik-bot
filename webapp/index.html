@@ -916,6 +916,72 @@
       }
 
       let html = `<div style="font-size: 13px; color: var(--ink-soft); margin-bottom: 12px;">Ваши баллы: <b style="color: var(--ink);">${data.points}</b></div>`;
+
+      // ─── Блок: серия заказов подряд (streak) ───
+      const streak = data.streak;
+      html += `<div class="profile-card" style="margin-bottom: 12px;">
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+          <span style="font-size: 22px;">🔥</span>
+          <div>
+            <div style="font-size: 14px; font-weight: 700;">Серия заказов: ${streak.current} ${streak.current === 1 ? "день" : "дней"} подряд</div>
+            <div style="font-size: 12px; color: var(--ink-soft);">Заказывайте каждый день, чтобы получать бонусы</div>
+          </div>
+        </div>
+        <div style="display: flex; gap: 6px; margin-top: 10px;">`;
+
+      streak.milestones.forEach(m => {
+        const active = m.unlocked;
+        html += `
+          <div style="flex: 1; text-align: center; padding: 8px 4px; border-radius: 10px;
+                      background: ${active ? "var(--green-600)" : "var(--cream-dark)"};
+                      color: ${active ? "var(--on-accent)" : "var(--ink-soft)"};">
+            <div style="font-size: 13px; font-weight: 700;">${m.days}</div>
+            <div style="font-size: 10px;">+${m.bonus}</div>
+          </div>`;
+      });
+      html += `</div>`;
+
+      if (streak.next_milestone) {
+        html += `<div style="font-size: 12px; color: var(--ink-soft); margin-top: 8px;">
+          Ещё ${streak.days_to_next} ${streak.days_to_next === 1 ? "день" : "дней"} до бонуса +${streak.next_milestone.bonus} баллов!
+        </div>`;
+      } else {
+        html += `<div style="font-size: 12px; color: var(--green-600); margin-top: 8px; font-weight: 600;">
+          🎉 Вы получили все бонусы за серию!
+        </div>`;
+      }
+      html += `</div>`;
+
+      // ─── Блок: компания месяца ───
+      if (data.company) {
+        const c = data.company;
+        const isLeader = c.rank === 1;
+        html += `<div class="profile-card" style="margin-bottom: 12px;">
+          <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+            <span style="font-size: 22px;">🏆</span>
+            <div>
+              <div style="font-size: 14px; font-weight: 700;">${c.name}</div>
+              <div style="font-size: 12px; color: var(--ink-soft);">Заказов в этом месяце: ${c.orders_this_month}</div>
+            </div>
+          </div>`;
+
+        if (isLeader) {
+          html += `<div style="background: var(--green-600); color: var(--on-accent); border-radius: 10px; padding: 10px; margin-top: 8px; font-size: 13px; font-weight: 700; text-align: center;">
+            🥇 Сейчас на 1 месте! Если так продержитесь до конца месяца —
+            каждый сотрудник получит +${c.reward_points} баллов!
+          </div>`;
+        } else if (c.rank) {
+          html += `<div style="font-size: 13px; color: var(--ink-soft); margin-top: 8px;">
+            Место в рейтинге: <b style="color: var(--ink);">#${c.rank}</b>.
+            Компания-лидер месяца получает +${c.reward_points} баллов каждому сотруднику —
+            заказывайте чаще, чтобы подняться выше! 💪
+          </div>`;
+        }
+        html += `</div>`;
+      }
+
+      // ─── Подарки за баллы ───
+      html += `<div style="font-size: 13px; font-weight: 700; margin: 4px 0 8px;">Подарки за баллы</div>`;
       data.gifts.forEach(g => {
         html += `
           <div class="gift-card ${g.unlocked ? "" : "locked"}">
