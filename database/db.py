@@ -1099,8 +1099,8 @@ async def charge_balance_on_delivery(company_id: int, order_date: str) -> list:
 
             await db.execute(
                 """INSERT INTO user_balance (user_id, balance) VALUES ($1, $2)
-                   ON CONFLICT (user_id) DO UPDATE SET balance = user_balance.balance - $2""",
-                user_id, info["total"]
+                   ON CONFLICT (user_id) DO UPDATE SET balance = user_balance.balance - $3""",
+                user_id, -info["total"], info["total"]
             )
             await db.execute(
                 """INSERT INTO balance_transactions (user_id, amount, type, description)
