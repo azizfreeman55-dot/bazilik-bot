@@ -298,6 +298,64 @@ async def send_birthday_greetings(bot: Bot):
             logger.error(f"Birthday error for {user['telegram_id']}: {e}")
 
 
+async def award_company_of_month(bot: Bot):
+    """
+    1-го числа каждого месяца в 9:30 — находит компанию-лидера прошлого
+    месяца по количеству заказов, начисляет +50 баллов всем её сотрудникам.
+    """
+    from database.db import calculate_and_award_company_of_month
+
+    today = date.today()
+    if today.day != 1:
+        return  # запускается строго 1-го числа
+
+    prev_month = today.replace(day=1) - timedelta(days=1)
+    prev_month_year = prev_month.strftime("%Y-%m")
+
+    result = await calculate_and_award_company_of_month(prev_month_year)
+    if not result:
+        logger.info(f"Компания месяца за {prev_month_year}: нет данных или уже начислено")
+        return
+
+    logger.info(
+        f"🏆 Компания месяца за {prev_month_year}: {result['company_name']} "
+        f"({result['order_count']} заказов, {len(result['employees'])} сотрудников)"
+    )
+
+    for emp in result["employees"]:
+        try:
+            lang = emp.get("lang", "ru")
+            if lang == "uz":
+                text = (
+                    f"🏆 *Tabriklaymiz!*\n\n"
+                    f"Sizning kompaniyangiz — *{result['company_name']}* — "
+                    f"o'tgan oyning eng faol kompaniyasi bo'ldi! 🎉\n\n"
+                    f"🎁 Sovg'a sifatida *+50 ball* hisobingizga qo'shildi!"
+                )
+            else:
+                text = (
+                    f"🏆 *Поздравляем!*\n\n"
+                    f"Ваша компания — *{result['company_name']}* — стала "
+                    f"самой активной компанией прошлого месяца! 🎉\n\n"
+                    f"🎁 В подарок вам начислено *+50 баллов*!"
+                )
+            await bot.send_message(emp["telegram_id"], text, parse_mode="Markdown")
+        except Exception as e:
+            logger.warning(f"Не удалось уведомить {emp['telegram_id']}: {e}")
+
+    for admin_id in ADMIN_IDS:
+        try:
+            await bot.send_message(
+                admin_id,
+                f"🏆 *Компания месяца ({prev_month_year}): {result['company_name']}*\n\n"
+                f"📦 Заказов: {result['order_count']}\n"
+                f"👥 Сотрудников получили бонус: {len(result['employees'])}",
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
+
+
 def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone="Asia/Tashkent")
 
@@ -321,9 +379,14 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         trigger=CronTrigger(hour=20, minute=0),
         args=[bot], id="close_orders", replace_existing=True
     )
+    scheduler.add_job(
+        award_company_of_month,
+        trigger=CronTrigger(day=1, hour=9, minute=30),
+        args=[bot], id="company_of_month", replace_existing=True
+    )
 
     logger.info(
-        "✅ Планировщик настроен (09:00 ДР, 10:00 меню, 16:00 напоминание, "
-        "20:00 закрытие + автораспределение курьерам)"
+        "✅ Планировщик настроен (09:00 ДР, 09:30/1-го компания месяца, "
+        "10:00 меню, 16:00 напоминание, 20:00 закрытие + автораспределение курьерам)"
     )
     return scheduler
