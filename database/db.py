@@ -897,7 +897,8 @@ async def get_orders_by_company(order_date: str) -> list:
                 c.name as company_name,
                 c.address,
                 c.maps_link,
-                COUNT(o.id) as order_count
+                COUNT(o.id) as order_count,
+                COUNT(DISTINCT o.user_id) as client_count
                FROM orders o
                JOIN users u ON o.user_id = u.id
                JOIN companies c ON u.company_id = c.id
@@ -979,7 +980,8 @@ async def get_courier_route(courier_id: int, delivery_date: str) -> dict | None:
 
         stops = await db.fetch(
             """SELECT ds.*, c.name as company_name, c.address, c.maps_link,
-               COUNT(o.id) as order_count
+               COUNT(o.id) as order_count,
+               COUNT(DISTINCT o.user_id) as client_count
                FROM delivery_stops ds
                JOIN companies c ON ds.company_id = c.id
                LEFT JOIN orders o ON o.order_date = $2::text
