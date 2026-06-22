@@ -316,7 +316,7 @@ async def mark_delivered(callback: CallbackQuery):
     from database.db import charge_balance_on_delivery
     charged = await charge_balance_on_delivery(company_id, delivery_date)
 
-    # Уведомляем клиентов + просим оставить отзыв на блюдо
+    # Уведомляем клиентов + просим оставить отзыв на каждое блюдо
     from database.db import get_pool
     pool = await get_pool()
     async with pool.acquire() as db:
@@ -331,21 +331,25 @@ async def mark_delivered(callback: CallbackQuery):
         )
 
     main_bot = Bot(token=MAIN_BOT_TOKEN)
-    notified = 0
     charged_by_telegram_id = {c["telegram_id"]: c for c in charged}
 
+    # Группируем позиции по клиенту — одно сообщение на человека,
+    # а не по одному сообщению на каждую позицию заказа.
+    orders_by_client = {}
     for row in client_orders:
-        try:
-            lang = row["lang"] or "ru"
-            builder_review = InlineKeyboardBuilder()
-            for stars in range(1, 6):
-                builder_review.button(
-                    text="⭐" * stars,
-                    callback_data=f"review_{row['order_id']}_{row['menu_id']}_{stars}"
-                )
-            builder_review.adjust(5)
+        orders_by_client.setdefault(row["telegram_id"], {
+            "lang": row["lang"] or "ru",
+            "items": []
+        })
+        orders_by_client[row["telegram_id"]]["items"].append(row)
 
-            charge_info = charged_by_telegram_id.get(row["telegram_id"])
+    notified = 0
+    for telegram_id, info in orders_by_client.items():
+        try:
+            lang = info["lang"]
+            items = info["items"]
+
+            charge_info = charged_by_telegram_id.get(telegram_id)
             balance_line = ""
             if charge_info:
                 bal = charge_info["new_balance"]
@@ -366,26 +370,45 @@ async def mark_delivered(callback: CallbackQuery):
                         f"Hisob: {bal:,} so'm"
                     )
 
+            items_list = "\n".join(f"• {it['meal_name']}" for it in items)
+
             if lang == "uz":
                 text = (
                     f"✅ *Tushligingiz yetkazildi!*\n\n"
-                    f"🍱 {row['meal_name']}{balance_line}\n\n"
-                    f"Yoqdimi? Baholang va +2 ball oling! 👇"
+                    f"{items_list}{balance_line}"
                 )
             else:
                 text = (
                     f"✅ *Ваш обед доставлен!*\n\n"
-                    f"🍱 {row['meal_name']}{balance_line}\n\n"
-                    f"Понравилось? Оцените и получите +2 балла! 👇"
+                    f"{items_list}{balance_line}"
                 )
 
-            await main_bot.send_message(
-                row["telegram_id"], text, parse_mode="Markdown",
-                reply_markup=builder_review.as_markup()
+            await main_bot.send_message(telegram_id, text, parse_mode="Markdown")
+
+            # Отдельное сообщение с просьбой оценить — каждое блюдо своим блоком кнопок
+            review_intro = (
+                "Понравилось? Оцените каждое блюдо и получите +2 балла за отзыв! 👇"
+                if lang == "ru" else
+                "Yoqdimi? Har bir taomni baholang va +2 ball oling! 👇"
             )
+            await main_bot.send_message(telegram_id, review_intro)
+
+            for it in items:
+                builder_review = InlineKeyboardBuilder()
+                for stars in range(1, 6):
+                    builder_review.button(
+                        text="⭐" * stars,
+                        callback_data=f"review_{it['order_id']}_{it['menu_id']}_{stars}"
+                    )
+                builder_review.adjust(5)
+                await main_bot.send_message(
+                    telegram_id, f"🍱 {it['meal_name']}",
+                    reply_markup=builder_review.as_markup()
+                )
+
             notified += 1
         except Exception as e:
-            logger.warning(f"Не удалось уведомить {row['telegram_id']}: {e}")
+            logger.warning(f"Не удалось уведомить {telegram_id}: {e}")
     await main_bot.session.close()
 
     # Формируем отчёт курьеру с кнопками "Принять оплату" для клиентов с минусом
@@ -637,7 +660,11 @@ async def start_route(callback: CallbackQuery):
                 client_ids = await get_company_clients_telegram_ids(
                     stop["company_id"], delivery_date
                 )
-                for tg_id in client_ids:
+                # Убираем дубликаты — один клиент может иметь несколько позиций
+                # в заказе (блюдо + салат + напиток), и без этого получит
+                # отдельное уведомление за каждую позицию.
+                unique_client_ids = list(set(client_ids))
+                for tg_id in unique_client_ids:
                     try:
                         await main_bot.send_message(
                             tg_id,
