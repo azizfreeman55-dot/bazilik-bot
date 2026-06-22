@@ -1047,6 +1047,89 @@ async def handle_photo_proxy(request):
         return web.Response(status=404)
 
 
+async def handle_webapp_dashboard(request):
+    """POST /api/dashboard — статистика для админ-дашборда (только для ADMIN_IDS)"""
+    try:
+        init_data = await get_init_data_from_request(request)
+        user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
+        if not user_data:
+            return web.json_response({"error": "Invalid auth"}, status=401, headers=cors_headers())
+
+        telegram_id = user_data.get("id")
+        import os
+        admin_ids_str = os.getenv("ADMIN_IDS", "")
+        admin_ids = [int(x.strip()) for x in admin_ids_str.split(",") if x.strip()]
+        if telegram_id not in admin_ids:
+            return web.json_response({"error": "Доступ только для администраторов"}, status=403, headers=cors_headers())
+
+        from datetime import date as date_cls, timedelta as td_cls
+        today = date_cls.today()
+        week_ago = today - td_cls(days=6)
+
+        pool = await get_pool()
+        async with pool.acquire() as db:
+            # Динамика заказов за последние 7 дней (по дате доставки order_date)
+            daily_rows = await db.fetch(
+                """SELECT o.order_date, COUNT(*) as cnt, COALESCE(SUM(m.price), 0) as revenue
+                   FROM orders o
+                   JOIN menus m ON o.menu_id = m.id
+                   WHERE o.order_date >= $1::text AND o.order_date <= $2::text
+                   AND o.status != 'cancelled'
+                   GROUP BY o.order_date
+                   ORDER BY o.order_date""",
+                str(week_ago), str(today)
+            )
+            daily_map = {r["order_date"]: {"count": r["cnt"], "revenue": r["revenue"]} for r in daily_rows}
+
+            daily_stats = []
+            for i in range(7):
+                d = str(week_ago + td_cls(days=i))
+                entry = daily_map.get(d, {"count": 0, "revenue": 0})
+                daily_stats.append({
+                    "date": d,
+                    "count": entry["count"],
+                    "revenue": entry["revenue"]
+                })
+
+            total_orders_week = sum(d["count"] for d in daily_stats)
+            total_revenue_week = sum(d["revenue"] for d in daily_stats)
+
+            # Топ-5 блюд за последние 30 дней
+            top_dishes = await db.fetch(
+                """SELECT m.name, m.category, COUNT(*) as cnt
+                   FROM orders o
+                   JOIN menus m ON o.menu_id = m.id
+                   WHERE o.order_date >= $1::text
+                   AND o.status != 'cancelled'
+                   GROUP BY m.name, m.category
+                   ORDER BY cnt DESC
+                   LIMIT 5""",
+                str(today - td_cls(days=30))
+            )
+
+            # Общая статистика
+            total_users = await db.fetchval("SELECT COUNT(*) FROM users")
+            total_companies = await db.fetchval("SELECT COUNT(*) FROM companies")
+            total_all_orders = await db.fetchval(
+                "SELECT COUNT(*) FROM orders WHERE status != 'cancelled'"
+            )
+            avg_rating = await db.fetchval("SELECT AVG(rating) FROM reviews")
+
+        return web.json_response({
+            "daily_stats": daily_stats,
+            "total_orders_week": total_orders_week,
+            "total_revenue_week": total_revenue_week,
+            "top_dishes": [dict(r) for r in top_dishes],
+            "total_users": total_users,
+            "total_companies": total_companies,
+            "total_all_orders": total_all_orders,
+            "avg_rating": round(float(avg_rating), 1) if avg_rating else None
+        }, headers=cors_headers())
+    except Exception as e:
+        logger.error(f"webapp_dashboard error: {e}")
+        return web.json_response({"error": str(e)}, status=500, headers=cors_headers())
+
+
 async def handle_options(request):
     return web.Response(headers=cors_headers())
 
@@ -1124,11 +1207,13 @@ async def create_app():
     app.router.add_post("/api/settings/toggle-auto", handle_webapp_settings_toggle_auto)
     app.router.add_post("/api/settings/weekly-menu", handle_webapp_weekly_menu_for_day)
     app.router.add_post("/api/settings/set-weekly", handle_webapp_settings_set_weekly)
+    app.router.add_post("/api/dashboard", handle_webapp_dashboard)
 
     for path in ["/api/menu", "/api/order", "/api/my-order", "/api/cancel-order",
                  "/api/profile", "/api/rating", "/api/balance-history", "/api/topup",
                  "/api/gifts", "/api/referral", "/api/settings",
-                 "/api/settings/toggle-auto", "/api/settings/weekly-menu", "/api/settings/set-weekly"]:
+                 "/api/settings/toggle-auto", "/api/settings/weekly-menu", "/api/settings/set-weekly",
+                 "/api/dashboard"]:
         app.router.add_route("OPTIONS", path, handle_options)
 
     app.router.add_get("/api/photo/{photo_id}", handle_photo_proxy)
