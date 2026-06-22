@@ -1304,17 +1304,195 @@
 
   async function loadSettings() {
     const el = document.getElementById("settings-content");
-    el.innerHTML = `
-      <div class="profile-card">
-        <div style="font-size: 13px; color: var(--ink-soft); line-height: 1.5;">
-          Настройка автозаказа (расписание на каждый день недели) теперь
-          находится в отдельном разделе <b style="color: var(--ink);">🔁 Авто</b>
-          в нижней навигации.
+    el.innerHTML = '<div class="loading">Загружаем настройки…</div>';
+    try {
+      const data = await apiCall("/api/full-settings");
+      if (data.error) {
+        el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">${data.error}</div></div>`;
+        return;
+      }
+
+      const langLabel = data.lang === "uz" ? "O'zbekcha" : "Русский";
+      const birthdayLabel = data.birthday
+        ? new Date(data.birthday).toLocaleDateString("ru-RU", { day: "numeric", month: "long" })
+        : "Не указан";
+
+      let html = `
+        <div class="profile-card" style="padding: 4px;">
+          <button class="more-link" id="settings-profile-btn" style="display:flex; justify-content:space-between; align-items:center;">
+            <span>👤 Профиль<br><span style="font-size:11px; color:var(--ink-soft); font-weight:400;">${data.full_name || "—"}</span></span>
+            <span style="color:var(--ink-soft);">›</span>
+          </button>
+          <button class="more-link" id="settings-birthday-btn" style="display:flex; justify-content:space-between; align-items:center;">
+            <span>🎂 День рождения<br><span style="font-size:11px; color:var(--ink-soft); font-weight:400;">${birthdayLabel}</span></span>
+            <span style="color:var(--ink-soft);">›</span>
+          </button>
+          <button class="more-link" id="settings-lang-btn" style="display:flex; justify-content:space-between; align-items:center;">
+            <span>🌐 Язык<br><span style="font-size:11px; color:var(--ink-soft); font-weight:400;">${langLabel}</span></span>
+            <span style="color:var(--ink-soft);">›</span>
+          </button>
+          ${data.company_name ? `
+          <button class="more-link" id="settings-address-btn" style="display:flex; justify-content:space-between; align-items:center;">
+            <span>🏢 Адрес компании<br><span style="font-size:11px; color:var(--ink-soft); font-weight:400;">${data.company_address || "Не указан"}</span></span>
+            <span style="color:var(--ink-soft);">›</span>
+          </button>` : ""}
         </div>
-        <button class="btn-primary" id="go-to-autoorder-btn">Открыть автозаказ</button>
+
+        <div class="profile-card">
+          <div style="font-size: 13px; font-weight: 700; margin-bottom: 8px;">🔔 Уведомления</div>
+          <div class="setting-row">
+            <div class="setting-label">Напоминание о заказе</div>
+            <button class="toggle-switch ${data.notify_reminder ? "on" : "off"}" id="notify-reminder-toggle"><div class="toggle-knob"></div></button>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label">Статус доставки</div>
+            <button class="toggle-switch ${data.notify_delivery ? "on" : "off"}" id="notify-delivery-toggle"><div class="toggle-knob"></div></button>
+          </div>
+          <div class="setting-row">
+            <div class="setting-label">Акции и новости</div>
+            <button class="toggle-switch ${data.notify_marketing ? "on" : "off"}" id="notify-marketing-toggle"><div class="toggle-knob"></div></button>
+          </div>
+        </div>
+
+        <button class="btn-primary" id="go-to-autoorder-btn" style="background: var(--cream-dark); color: var(--ink);">🔁 Открыть автозаказ</button>
+      `;
+      el.innerHTML = html;
+
+      document.getElementById("settings-profile-btn").onclick = () => showProfileEditor(data);
+      document.getElementById("settings-birthday-btn").onclick = () => showBirthdayPicker(data);
+      document.getElementById("settings-lang-btn").onclick = () => showLangPicker(data);
+      const addressBtn = document.getElementById("settings-address-btn");
+      if (addressBtn) addressBtn.onclick = () => showAddressEditor(data);
+      document.getElementById("go-to-autoorder-btn").onclick = () => switchPage("autoorder");
+
+      ["reminder", "delivery", "marketing"].forEach(type => {
+        document.getElementById(`notify-${type}-toggle`).onclick = async () => {
+          const result = await apiCall("/api/toggle-notification", { notify_type: `notify_${type}` });
+          if (result.success) {
+            showToast(result.value ? "✅ Включено" : "Выключено");
+            loadSettings();
+          }
+        };
+      });
+    } catch (e) {
+      el.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Не удалось загрузить настройки</div></div>';
+    }
+  }
+
+  function showProfileEditor(data) {
+    const el = document.getElementById("settings-content");
+    el.innerHTML = `
+      <button class="back-link" id="profile-editor-back">← Назад</button>
+      <div class="profile-card">
+        <div style="font-size: 13px; font-weight: 600; margin-bottom: 6px;">Имя</div>
+        <input type="text" id="edit-name-input" value="${data.full_name || ""}"
+          style="width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line);
+                 background: var(--cream-dark); color: var(--ink); font-size: 14px; margin-bottom: 14px;">
+
+        <div style="font-size: 13px; font-weight: 600; margin-bottom: 6px;">Телефон</div>
+        <input type="tel" id="edit-phone-input" value="${data.phone || ""}" placeholder="998901234567"
+          style="width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line);
+                 background: var(--cream-dark); color: var(--ink); font-size: 14px;">
+
+        <button class="btn-primary" id="save-profile-btn">Сохранить</button>
       </div>
     `;
-    document.getElementById("go-to-autoorder-btn").onclick = () => switchPage("autoorder");
+    document.getElementById("profile-editor-back").onclick = loadSettings;
+    document.getElementById("save-profile-btn").onclick = async () => {
+      const name = document.getElementById("edit-name-input").value.trim();
+      const phone = document.getElementById("edit-phone-input").value.trim();
+
+      const r1 = await apiCall("/api/update-profile", { field: "full_name", value: name });
+      if (!r1.success) { showToast(r1.error); return; }
+
+      const r2 = await apiCall("/api/update-profile", { field: "phone", value: phone });
+      if (!r2.success) { showToast(r2.error); return; }
+
+      showToast("✅ Профиль обновлён");
+      loadSettings();
+    };
+  }
+
+  function showBirthdayPicker(data) {
+    const el = document.getElementById("settings-content");
+    el.innerHTML = `
+      <button class="back-link" id="birthday-editor-back">← Назад</button>
+      <div class="profile-card">
+        <div style="font-size: 13px; font-weight: 600; margin-bottom: 6px;">Дата рождения</div>
+        <input type="date" id="edit-birthday-input" value="${data.birthday || ""}"
+          style="width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line);
+                 background: var(--cream-dark); color: var(--ink); font-size: 14px;">
+        <div style="font-size: 12px; color: var(--ink-soft); margin-top: 8px;">
+          🎁 В день рождения мы начислим вам +50 баллов!
+        </div>
+        <button class="btn-primary" id="save-birthday-btn">Сохранить</button>
+      </div>
+    `;
+    document.getElementById("birthday-editor-back").onclick = loadSettings;
+    document.getElementById("save-birthday-btn").onclick = async () => {
+      const birthday = document.getElementById("edit-birthday-input").value;
+      if (!birthday) { showToast("Выберите дату"); return; }
+      const result = await apiCall("/api/update-birthday", { birthday });
+      if (result.success) {
+        showToast("✅ Сохранено");
+        loadSettings();
+      } else {
+        showToast(result.error || "Ошибка");
+      }
+    };
+  }
+
+  function showLangPicker(data) {
+    const el = document.getElementById("settings-content");
+    el.innerHTML = `
+      <button class="back-link" id="lang-editor-back">← Назад</button>
+      <div class="profile-card" style="padding: 4px;">
+        <button class="more-link lang-pick-btn" data-lang="ru" style="display:flex; justify-content:space-between;">
+          <span>🇷🇺 Русский</span> ${data.lang === "ru" ? "<span style='color:var(--green-600);'>✓</span>" : ""}
+        </button>
+        <button class="more-link lang-pick-btn" data-lang="uz" style="display:flex; justify-content:space-between;">
+          <span>🇺🇿 O'zbekcha</span> ${data.lang === "uz" ? "<span style='color:var(--green-600);'>✓</span>" : ""}
+        </button>
+      </div>
+    `;
+    document.getElementById("lang-editor-back").onclick = loadSettings;
+    document.querySelectorAll(".lang-pick-btn").forEach(btn => {
+      btn.onclick = async () => {
+        const result = await apiCall("/api/update-lang", { lang: btn.dataset.lang });
+        if (result.success) {
+          showToast("✅ Язык изменён");
+          loadSettings();
+        }
+      };
+    });
+  }
+
+  function showAddressEditor(data) {
+    const el = document.getElementById("settings-content");
+    el.innerHTML = `
+      <button class="back-link" id="address-editor-back">← Назад</button>
+      <div class="profile-card">
+        <div style="font-size: 13px; font-weight: 600; margin-bottom: 6px;">Адрес компании «${data.company_name}»</div>
+        <input type="text" id="edit-address-input" value="${data.company_address || ""}" placeholder="Улица, дом, офис"
+          style="width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line);
+                 background: var(--cream-dark); color: var(--ink); font-size: 14px;">
+        <div style="font-size: 12px; color: var(--ink-soft); margin-top: 8px;">
+          Этот адрес видят курьеры при доставке. Изменение коснётся всех сотрудников вашей компании.
+        </div>
+        <button class="btn-primary" id="save-address-btn">Сохранить</button>
+      </div>
+    `;
+    document.getElementById("address-editor-back").onclick = loadSettings;
+    document.getElementById("save-address-btn").onclick = async () => {
+      const address = document.getElementById("edit-address-input").value.trim();
+      const result = await apiCall("/api/update-company-address", { address });
+      if (result.success) {
+        showToast("✅ Адрес обновлён");
+        loadSettings();
+      } else {
+        showToast(result.error || "Ошибка");
+      }
+    };
   }
 
   // ─── DASHBOARD PAGE (admin only) ──────────────────────────────────────────
