@@ -304,7 +304,7 @@ async def show_stop_detail(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("delivered_"))
 async def mark_delivered(callback: CallbackQuery):
-    _, _, stop_id, company_id, delivery_date = callback.data.split("_", 4)
+    _, stop_id, company_id, delivery_date = callback.data.split("_", 3)
     stop_id = int(stop_id)
     company_id = int(company_id)
 
