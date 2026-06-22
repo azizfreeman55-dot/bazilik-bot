@@ -386,16 +386,56 @@ async def handle_webapp_order(request):
                 total_amount += item_price * qty
                 order_summaries.append(f"{item_name} x{qty}")
 
+            streak_bonus_info = None
             if orders_created > 0:
-                await db.execute(
-                    "UPDATE users SET total_orders = total_orders + 1, points = points + 5 WHERE id = $1",
+                from datetime import date as date_cls, timedelta as td_cls
+                today_str = str(date_cls.today())
+                yesterday_str = str(date_cls.today() - td_cls(days=1))
+
+                # Узнаём текущий streak ДО обновления, чтобы посчитать новый
+                streak_row = await db.fetchrow(
+                    "SELECT streak_days, last_order_date, last_streak_bonus FROM users WHERE id = $1",
                     user_db_id
+                )
+                current_streak = streak_row["streak_days"] or 0
+                last_order = streak_row["last_order_date"]
+                last_bonus_milestone = streak_row["last_streak_bonus"] or 0
+
+                if last_order == yesterday_str:
+                    new_streak = current_streak + 1
+                elif last_order == today_str:
+                    new_streak = current_streak
+                else:
+                    new_streak = 1
+
+                await db.execute(
+                    """UPDATE users SET total_orders = total_orders + 1, points = points + 5,
+                       last_order_date = $1, streak_days = $2
+                       WHERE id = $3""",
+                    today_str, new_streak, user_db_id
                 )
                 if user["company_id"]:
                     await db.execute(
                         "UPDATE companies SET total_orders = total_orders + 1 WHERE id = $1",
                         user["company_id"]
                     )
+
+                STREAK_MILESTONES = [5, 10, 20, 50]
+                STREAK_BONUS_POINTS = {5: 15, 10: 30, 20: 60, 50: 150}
+                for milestone in STREAK_MILESTONES:
+                    if new_streak >= milestone and last_bonus_milestone < milestone:
+                        bonus_points = STREAK_BONUS_POINTS[milestone]
+                        await db.execute(
+                            "UPDATE users SET points = points + $1, last_streak_bonus = $2 WHERE id = $3",
+                            bonus_points, milestone, user_db_id
+                        )
+                        await db.execute(
+                            """INSERT INTO balance_transactions (user_id, amount, type, description)
+                               VALUES ($1, $2, 'credit', $3)""",
+                            user_db_id, bonus_points, f"🔥 Бонус за серию {milestone} дней"
+                        )
+                        streak_bonus_info = {"milestone": milestone, "points": bonus_points}
+                        break
 
             balance_row = await db.fetchrow(
                 "SELECT balance FROM user_balance WHERE user_id = $1", user_db_id
@@ -422,9 +462,15 @@ async def handle_webapp_order(request):
                 f"\n💳 Списано: {total_amount:,} сум" if deducted
                 else f"\n💳 Оплата при получении: {total_amount:,} сум"
             )
+            streak_text = ""
+            if streak_bonus_info:
+                streak_text = (
+                    f"\n\n🔥 *Серия {streak_bonus_info['milestone']} дней подряд!*\n"
+                    f"🎁 Бонус: +{streak_bonus_info['points']} баллов"
+                )
             await bot.send_message(
                 telegram_id,
-                f"✅ *Заказ оформлен через Mini App!*\n\n{items_text}{balance_text}\n\n"
+                f"✅ *Заказ оформлен через Mini App!*\n\n{items_text}{balance_text}{streak_text}\n\n"
                 f"📅 Доставка завтра, {tomorrow}",
                 parse_mode="Markdown"
             )
