@@ -279,6 +279,30 @@ async def init_db():
             END
             $$;
         """)
+        await db.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='users' AND column_name='notify_reminder'
+                ) THEN
+                    ALTER TABLE users ADD COLUMN notify_reminder INTEGER DEFAULT 1;
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='users' AND column_name='notify_delivery'
+                ) THEN
+                    ALTER TABLE users ADD COLUMN notify_delivery INTEGER DEFAULT 1;
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='users' AND column_name='notify_marketing'
+                ) THEN
+                    ALTER TABLE users ADD COLUMN notify_marketing INTEGER DEFAULT 1;
+                END IF;
+            END
+            $$;
+        """)
 
     logger.info("✅ Таблицы созданы / обновлены")
 
@@ -1341,3 +1365,92 @@ async def get_courier_for_route_by_company(company_id: int, order_date: str) -> 
             company_id, str(order_date)
         )
         return dict(row) if row else None
+
+
+# ─── Расширенные настройки профиля ─────────────────────────────────────────────
+
+async def get_full_settings(telegram_id: int) -> dict | None:
+    """Полные настройки пользователя для раздела Настройки в Mini App"""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        row = await db.fetchrow(
+            """SELECT full_name, phone, lang, birthday,
+               notify_reminder, notify_delivery, notify_marketing,
+               company_id
+               FROM users WHERE telegram_id = $1""",
+            telegram_id
+        )
+        if not row:
+            return None
+
+        company_name = None
+        company_address = None
+        if row["company_id"]:
+            company = await db.fetchrow(
+                "SELECT name, address FROM companies WHERE id = $1", row["company_id"]
+            )
+            if company:
+                company_name = company["name"]
+                company_address = company["address"]
+
+        return {
+            "full_name": row["full_name"],
+            "phone": row["phone"],
+            "lang": row["lang"],
+            "birthday": row["birthday"].isoformat() if row["birthday"] else None,
+            "notify_reminder": bool(row["notify_reminder"]),
+            "notify_delivery": bool(row["notify_delivery"]),
+            "notify_marketing": bool(row["notify_marketing"]),
+            "company_name": company_name,
+            "company_address": company_address
+        }
+
+
+async def update_profile_field(telegram_id: int, field: str, value: str) -> bool:
+    """Обновляет одно из разрешённых полей профиля: full_name, phone"""
+    allowed_fields = {"full_name", "phone"}
+    if field not in allowed_fields:
+        return False
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            f"UPDATE users SET {field} = $1 WHERE telegram_id = $2",
+            value, telegram_id
+        )
+    return True
+
+
+async def update_company_address(telegram_id: int, address: str) -> bool:
+    """Обновляет адрес компании клиента"""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        user = await db.fetchrow(
+            "SELECT company_id FROM users WHERE telegram_id = $1", telegram_id
+        )
+        if not user or not user["company_id"]:
+            return False
+        await db.execute(
+            "UPDATE companies SET address = $1 WHERE id = $2",
+            address, user["company_id"]
+        )
+    return True
+
+
+async def toggle_notification(telegram_id: int, notify_type: str) -> bool | None:
+    """Переключает один из notify_reminder/notify_delivery/notify_marketing. Возвращает новое значение."""
+    allowed = {"notify_reminder", "notify_delivery", "notify_marketing"}
+    if notify_type not in allowed:
+        return None
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        current = await db.fetchrow(
+            f"SELECT {notify_type} as val FROM users WHERE telegram_id = $1", telegram_id
+        )
+        if current is None:
+            return None
+        new_value = 0 if current["val"] else 1
+        await db.execute(
+            f"UPDATE users SET {notify_type} = $1 WHERE telegram_id = $2",
+            new_value, telegram_id
+        )
+        return bool(new_value)
