@@ -753,7 +753,7 @@ async def handle_webapp_topup(request):
 
 
 async def handle_webapp_gifts(request):
-    """POST /api/gifts — список подарков с прогрессом по баллам"""
+    """POST /api/gifts — список подарков + прогресс streak + статус компании месяца"""
     try:
         init_data = await get_init_data_from_request(request)
         user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
@@ -763,11 +763,40 @@ async def handle_webapp_gifts(request):
         telegram_id = user_data.get("id")
         pool = await get_pool()
         async with pool.acquire() as db:
-            user = await db.fetchrow("SELECT points FROM users WHERE telegram_id = $1", telegram_id)
+            user = await db.fetchrow(
+                """SELECT u.points, u.streak_days, u.last_streak_bonus, u.company_id,
+                   c.name as company_name
+                   FROM users u LEFT JOIN companies c ON u.company_id = c.id
+                   WHERE u.telegram_id = $1""",
+                telegram_id
+            )
             if not user:
                 return web.json_response({"error": "User not registered"}, status=404, headers=cors_headers())
 
+            # Текущее место компании пользователя в рейтинге месяца
+            company_rank = None
+            company_orders = 0
+            if user["company_id"]:
+                ranking = await db.fetch(
+                    """SELECT c.id, c.name,
+                       (SELECT COUNT(*) FROM orders o
+                        JOIN users u2 ON o.user_id = u2.id
+                        WHERE u2.company_id = c.id
+                        AND to_char(o.created_at, 'YYYY-MM') = to_char(NOW(), 'YYYY-MM')
+                        AND o.status != 'cancelled') as month_orders
+                       FROM companies c
+                       ORDER BY month_orders DESC"""
+                )
+                for i, row in enumerate(ranking, 1):
+                    if row["id"] == user["company_id"]:
+                        company_rank = i
+                        company_orders = row["month_orders"]
+                        break
+
         points = user["points"]
+        streak = user["streak_days"] or 0
+        last_milestone = user["last_streak_bonus"] or 0
+
         gifts = [
             {"id": "drink", "points": 50, "emoji": "🥤", "name": "Напиток",
              "desc": "Освежающий напиток на выбор к вашему обеду!"},
@@ -781,9 +810,32 @@ async def handle_webapp_gifts(request):
         for g in gifts:
             g["unlocked"] = points >= g["points"]
 
+        streak_milestones = [
+            {"days": 5, "bonus": 15},
+            {"days": 10, "bonus": 30},
+            {"days": 20, "bonus": 60},
+            {"days": 50, "bonus": 150},
+        ]
+        for m in streak_milestones:
+            m["unlocked"] = last_milestone >= m["days"]
+
+        next_milestone = next((m for m in streak_milestones if not m["unlocked"]), None)
+
         return web.json_response({
             "points": points,
-            "gifts": gifts
+            "gifts": gifts,
+            "streak": {
+                "current": streak,
+                "milestones": streak_milestones,
+                "next_milestone": next_milestone,
+                "days_to_next": (next_milestone["days"] - streak) if next_milestone else 0
+            },
+            "company": {
+                "name": user["company_name"],
+                "rank": company_rank,
+                "orders_this_month": company_orders,
+                "reward_points": 50
+            } if user["company_id"] else None
         }, headers=cors_headers())
     except Exception as e:
         logger.error(f"webapp_gifts error: {e}")
