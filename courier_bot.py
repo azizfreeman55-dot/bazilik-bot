@@ -306,22 +306,53 @@ async def mark_delivered(callback: CallbackQuery):
 
     await mark_stop_delivered(stop_id)
 
-    # Уведомляем клиентов
-    client_ids = await get_company_clients_telegram_ids(company_id, delivery_date)
+    # Уведомляем клиентов + просим оставить отзыв на блюдо
+    from database.db import get_pool
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        client_orders = await db.fetch(
+            """SELECT o.id as order_id, o.menu_id, u.telegram_id, u.lang, m.name as meal_name
+               FROM orders o
+               JOIN users u ON o.user_id = u.id
+               JOIN menus m ON o.menu_id = m.id
+               WHERE u.company_id = $1 AND o.order_date = $2::text
+               AND o.status = 'delivered'""",
+            company_id, delivery_date
+        )
+
     main_bot = Bot(token=MAIN_BOT_TOKEN)
     notified = 0
-    for tg_id in client_ids:
+    for row in client_orders:
         try:
+            lang = row["lang"] or "ru"
+            builder_review = InlineKeyboardBuilder()
+            for stars in range(1, 6):
+                builder_review.button(
+                    text="⭐" * stars,
+                    callback_data=f"review_{row['order_id']}_{row['menu_id']}_{stars}"
+                )
+            builder_review.adjust(5)
+
+            if lang == "uz":
+                text = (
+                    f"✅ *Tushligingiz yetkazildi!*\n\n"
+                    f"🍱 {row['meal_name']}\n\n"
+                    f"Yoqdimi? Baholang va +2 ball oling! 👇"
+                )
+            else:
+                text = (
+                    f"✅ *Ваш обед доставлен!*\n\n"
+                    f"🍱 {row['meal_name']}\n\n"
+                    f"Понравилось? Оцените и получите +2 балла! 👇"
+                )
+
             await main_bot.send_message(
-                tg_id,
-                "✅ *Ваш обед доставлен!*\n\n"
-                "Приятного аппетита! 🍱\n\n"
-                "_Bazilik Catering_",
-                parse_mode="Markdown"
+                row["telegram_id"], text, parse_mode="Markdown",
+                reply_markup=builder_review.as_markup()
             )
             notified += 1
         except Exception as e:
-            logger.warning(f"Не удалось уведомить {tg_id}: {e}")
+            logger.warning(f"Не удалось уведомить {row['telegram_id']}: {e}")
     await main_bot.session.close()
 
     await callback.message.edit_text(
