@@ -470,6 +470,42 @@ async def start_route(callback: CallbackQuery):
         parse_mode="Markdown"
     )
 
+    # Уведомляем клиентов ВСЕХ компаний этого маршрута, что обед готовится к отправке
+    try:
+        from database.db import get_pool
+        pool = await get_pool()
+        async with pool.acquire() as db:
+            route = await db.fetchrow(
+                "SELECT delivery_date FROM delivery_routes WHERE id = $1", route_id
+            )
+            stops = await db.fetch(
+                "SELECT company_id FROM delivery_stops WHERE route_id = $1", route_id
+            )
+
+        if route:
+            delivery_date = route["delivery_date"]
+            main_bot = Bot(token=MAIN_BOT_TOKEN)
+            notified = 0
+            for stop in stops:
+                client_ids = await get_company_clients_telegram_ids(
+                    stop["company_id"], delivery_date
+                )
+                for tg_id in client_ids:
+                    try:
+                        await main_bot.send_message(
+                            tg_id,
+                            "🚚 *Ваш обед готовится к отправке!*\n\n"
+                            "Курьер начал маршрут — скоро доставим. 🍱",
+                            parse_mode="Markdown"
+                        )
+                        notified += 1
+                    except Exception as e:
+                        logger.warning(f"Не удалось уведомить {tg_id}: {e}")
+            await main_bot.session.close()
+            logger.info(f"Уведомлено о начале маршрута: {notified} клиентов")
+    except Exception as e:
+        logger.error(f"Ошибка уведомления о старте маршрута: {e}")
+
 
 @router.callback_query(F.data.startswith("finish_route_"))
 async def finish_route(callback: CallbackQuery):
