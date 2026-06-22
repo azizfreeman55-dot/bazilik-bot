@@ -93,8 +93,7 @@ def settings_keyboard(auto_order: bool) -> InlineKeyboardMarkup:
 def admin_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="📊 Сводка заказов", callback_data="admin_summary")
-    builder.button(text="🍽️ Меню на дату", callback_data="admin_add_menu")
-    builder.button(text="📅 Постоянное меню", callback_data="admin_weekly_menu")
+    builder.button(text="🍽️ Управление меню", callback_data="admin_add_menu")
     builder.button(text="📨 Рассылка", callback_data="admin_broadcast")
     builder.button(text="👥 Все пользователи", callback_data="admin_users")
     builder.adjust(2)
