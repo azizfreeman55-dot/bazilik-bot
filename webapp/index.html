@@ -623,17 +623,90 @@
     document.getElementById("cart-total").textContent = fmt(total);
   }
 
-  async function submitOrder() {
+  function submitOrder() {
     const items = Object.values(cart).map(c => ({ menu_id: c.item.id, qty: c.qty, category: c.category }));
     if (items.length === 0) return;
+    showPaymentChoice(items);
+  }
 
+  function showPaymentChoice(items) {
     const total = Object.values(cart).reduce((s, c) => s + c.qty * c.item.price, 0);
-    if (total > userBalance) showToast("Недостаточно баланса — оплата при получении");
+    const enoughBalance = userBalance >= total;
 
+    const modal = document.createElement("div");
+    modal.id = "payment-modal";
+    modal.style.cssText = `
+      position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 300;
+      display: flex; align-items: flex-end; justify-content: center;
+    `;
+    modal.innerHTML = `
+      <div style="background: var(--cream-dark); border-radius: 20px 20px 0 0; padding: 20px 18px;
+                  width: 100%; max-width: 420px; max-height: 80vh; overflow-y: auto;">
+        <div style="font-size: 16px; font-weight: 700; margin-bottom: 4px;">Способ оплаты</div>
+        <div style="font-size: 13px; color: var(--ink-soft); margin-bottom: 16px;">К оплате: ${fmt(total)}</div>
+
+        <button class="pay-option-btn" data-method="balance" ${enoughBalance ? "" : "disabled"}
+          style="width: 100%; display: flex; align-items: center; gap: 12px; padding: 14px;
+                 border-radius: 14px; border: 1px solid var(--line); background: var(--white);
+                 margin-bottom: 10px; text-align: left; cursor: ${enoughBalance ? "pointer" : "not-allowed"};
+                 opacity: ${enoughBalance ? "1" : "0.5"};">
+          <span style="font-size: 24px;">💳</span>
+          <div style="flex: 1;">
+            <div style="font-size: 14px; font-weight: 700; color: var(--ink);">С баланса</div>
+            <div style="font-size: 12px; color: var(--ink-soft);">
+              ${enoughBalance ? `Доступно: ${fmt(userBalance)}` : `Недостаточно средств (есть ${fmt(userBalance)})`}
+            </div>
+          </div>
+        </button>
+
+        <button class="pay-option-btn" data-method="cash"
+          style="width: 100%; display: flex; align-items: center; gap: 12px; padding: 14px;
+                 border-radius: 14px; border: 1px solid var(--line); background: var(--white);
+                 margin-bottom: 10px; text-align: left; cursor: pointer;">
+          <span style="font-size: 24px;">💵</span>
+          <div style="flex: 1;">
+            <div style="font-size: 14px; font-weight: 700; color: var(--ink);">Наличными при получении</div>
+            <div style="font-size: 12px; color: var(--ink-soft);">Оплатите курьеру наличными</div>
+          </div>
+        </button>
+
+        <button class="pay-option-btn" data-method="click"
+          style="width: 100%; display: flex; align-items: center; gap: 12px; padding: 14px;
+                 border-radius: 14px; border: 1px solid var(--line); background: var(--white);
+                 margin-bottom: 14px; text-align: left; cursor: pointer;">
+          <span style="font-size: 24px;">🔵</span>
+          <div style="flex: 1;">
+            <div style="font-size: 14px; font-weight: 700; color: var(--ink);">Click</div>
+            <div style="font-size: 12px; color: var(--ink-soft);">Пополнить баланс и оплатить сразу</div>
+          </div>
+        </button>
+
+        <button class="btn-danger" id="payment-cancel-btn" style="margin-top: 0;">Отмена</button>
+      </div>
+    `;
+    document.body.appendChild(modal);
+
+    modal.querySelectorAll(".pay-option-btn").forEach(btn => {
+      if (btn.disabled) return;
+      btn.onclick = () => {
+        const method = btn.dataset.method;
+        document.body.removeChild(modal);
+        if (method === "click") {
+          startClickTopupForOrder(items, total);
+        } else {
+          finalizeOrder(items, method);
+        }
+      };
+    });
+    document.getElementById("payment-cancel-btn").onclick = () => {
+      document.body.removeChild(modal);
+    };
+  }
+
+  async function finalizeOrder(items, paymentMethod) {
     document.getElementById("cart-action").textContent = "Отправляем…";
-
     try {
-      const result = await apiCall("/api/order", { items });
+      const result = await apiCall("/api/order", { items, payment_method: paymentMethod });
       if (result.success) {
         cart = {};
         renderCart();
@@ -649,6 +722,33 @@
     } catch (e) {
       showToast("Ошибка соединения");
       document.getElementById("cart-action").innerHTML = "Оформить заказ <span>→</span>";
+    }
+  }
+
+  async function startClickTopupForOrder(items, total) {
+    showToast("Открываем Click для оплаты…");
+    try {
+      const neededAmount = total - userBalance;
+      const result = await apiCall("/api/topup", { amount: neededAmount > 0 ? neededAmount : total });
+      if (result.click_link) {
+        // Сохраняем заказ "в ожидании" — он будет создан после успешного пополнения.
+        // Простой надёжный способ: открываем Click, просим пользователя вернуться
+        // в Mini App и нажать "Оформить" повторно — баланс уже обновится.
+        if (tg?.openLink) {
+          tg.openLink(result.click_link);
+        } else {
+          window.open(result.click_link, "_blank");
+        }
+        if (tg?.showAlert) {
+          tg.showAlert("После оплаты в Click вернитесь сюда и нажмите 'Оформить заказ' ещё раз — баланс обновится автоматически.");
+        } else {
+          showToast("После оплаты вернитесь и нажмите 'Оформить заказ' снова");
+        }
+      } else {
+        showToast(result.error || "Не удалось создать ссылку на оплату");
+      }
+    } catch (e) {
+      showToast("Ошибка соединения");
     }
   }
 
