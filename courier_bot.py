@@ -218,16 +218,18 @@ async def show_my_orders(message: Message):
         text += f"{status_icon} *{stop['stop_order']}. {stop['company_name']}*\n"
         if stop.get("address"):
             text += f"📍 {stop['address']}\n"
-        text += f"👥 {stop['order_count']} заказов\n\n"
+        clients_word = "клиент" if stop['client_count'] == 1 else "клиента" if stop['client_count'] < 5 else "клиентов"
+        text += f"👥 {stop['client_count']} {clients_word}, {stop['order_count']} позиций\n\n"
 
     total = sum(s["order_count"] for s in stops)
-    text += f"📊 Всего точек: {len(stops)} | Заказов: {total}"
+    total_clients = sum(s["client_count"] for s in stops)
+    text += f"📊 Всего точек: {len(stops)} | Клиентов: {total_clients} | Позиций: {total}"
 
     builder = InlineKeyboardBuilder()
     for stop in stops:
         if stop["status"] != "delivered":
             builder.button(
-                text=f"📋 {stop['company_name']} ({stop['order_count']} зак.)",
+                text=f"📋 {stop['company_name']} ({stop['client_count']} кл., {stop['order_count']} поз.)",
                 callback_data=f"stop_detail_{stop['id']}_{stop['company_id']}_{delivery_date}"
             )
     builder.adjust(1)
@@ -570,7 +572,8 @@ async def show_route(message: Message):
         text += f"{icon} *{stop['stop_order']}. {stop['company_name']}*\n"
         if stop.get("address"):
             text += f"    {stop['address']}\n"
-        text += f"    👥 {stop['order_count']} заказов\n\n"
+        clients_word2 = "клиент" if stop['client_count'] == 1 else "клиента" if stop['client_count'] < 5 else "клиентов"
+        text += f"    👥 {stop['client_count']} {clients_word2}, {stop['order_count']} позиций\n\n"
 
     builder = InlineKeyboardBuilder()
 
@@ -700,7 +703,7 @@ async def distribute_orders(message: Message):
     text = f"🚚 *Распределение заказов на {delivery_date}*\n\n"
     text += "📦 *Компании:*\n"
     for c in companies:
-        text += f"• {c['company_name']}: {c['order_count']} заказов\n"
+        text += f"• {c['company_name']}: {c['client_count']} кл., {c['order_count']} поз.\n"
 
     text += f"\n👥 *Курьеры:*\n"
     for c in couriers:
@@ -740,16 +743,17 @@ async def assign_all_to_courier(callback: CallbackQuery):
         courier = await db.fetchrow("SELECT * FROM couriers WHERE id = $1", courier_id)
 
     total_orders = sum(c["order_count"] for c in companies)
+    total_clients = sum(c["client_count"] for c in companies)
 
     # Уведомление курьеру
     try:
         text = (
             f"🚚 *Вам назначен маршрут на {delivery_date}!*\n\n"
             f"📦 Компаний: {len(companies)}\n"
-            f"👥 Заказов: {total_orders}\n\n"
+            f"👥 Клиентов: {total_clients} | Позиций: {total_orders}\n\n"
         )
         for i, c in enumerate(companies, 1):
-            text += f"{i}. {c['company_name']} — {c['order_count']} зак.\n"
+            text += f"{i}. {c['company_name']} — {c['client_count']} кл., {c['order_count']} поз.\n"
             if c.get("address"):
                 text += f"   📍 {c['address']}\n"
         text += "\nОткройте '🗺 Мой маршрут' для начала работы."
@@ -764,7 +768,7 @@ async def assign_all_to_courier(callback: CallbackQuery):
         f"✅ *Маршрут назначен!*\n\n"
         f"Курьер: *{courier['full_name']}*\n"
         f"Компаний: {len(companies)}\n"
-        f"Заказов: {total_orders}",
+        f"Клиентов: {total_clients} | Позиций: {total_orders}",
         parse_mode="Markdown"
     )
     await callback.answer("✅ Маршрут создан!")
