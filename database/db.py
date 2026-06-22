@@ -99,8 +99,9 @@ async def init_db():
                 user_id INTEGER REFERENCES users(id),
                 day_of_week INTEGER NOT NULL,
                 menu_item INTEGER NOT NULL,
+                category TEXT NOT NULL DEFAULT 'main',
                 is_active INTEGER DEFAULT 1,
-                UNIQUE(user_id, day_of_week)
+                UNIQUE(user_id, day_of_week, category)
             )
         """)
         await db.execute("""
@@ -235,6 +236,34 @@ async def init_db():
                     WHERE table_name='orders' AND column_name='paid'
                 ) THEN
                     ALTER TABLE orders ADD COLUMN paid INTEGER DEFAULT 0;
+                END IF;
+            END
+            $$;
+        """)
+        await db.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='weekly_orders' AND column_name='category'
+                ) THEN
+                    ALTER TABLE weekly_orders ADD COLUMN category TEXT NOT NULL DEFAULT 'main';
+
+                    -- Старый constraint UNIQUE(user_id, day_of_week) больше не подходит,
+                    -- так как теперь можно выбрать блюдо в каждой категории на один день.
+                    -- Удаляем его и создаём новый с учётом category.
+                    IF EXISTS (
+                        SELECT 1 FROM pg_constraint WHERE conname = 'weekly_orders_user_id_day_of_week_key'
+                    ) THEN
+                        ALTER TABLE weekly_orders DROP CONSTRAINT weekly_orders_user_id_day_of_week_key;
+                    END IF;
+
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_constraint WHERE conname = 'weekly_orders_user_day_category_key'
+                    ) THEN
+                        ALTER TABLE weekly_orders ADD CONSTRAINT weekly_orders_user_day_category_key
+                        UNIQUE (user_id, day_of_week, category);
+                    END IF;
                 END IF;
             END
             $$;
