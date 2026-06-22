@@ -934,6 +934,219 @@ async def handle_webapp_autoorder_copy_last_week(request):
     return await handle_webapp_autoorder_get(request)
 
 
+async def handle_webapp_full_settings(request):
+    """POST /api/full-settings — расширенные настройки: профиль, ДР, язык, уведомления"""
+    try:
+        init_data = await get_init_data_from_request(request)
+        user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
+        if not user_data:
+            return web.json_response({"error": "Invalid auth"}, status=401, headers=cors_headers())
+
+        telegram_id = user_data.get("id")
+        pool = await get_pool()
+        async with pool.acquire() as db:
+            row = await db.fetchrow(
+                """SELECT full_name, phone, lang, birthday,
+                   notify_reminder, notify_delivery, notify_marketing, company_id
+                   FROM users WHERE telegram_id = $1""",
+                telegram_id
+            )
+            if not row:
+                return web.json_response({"error": "User not registered"}, status=404, headers=cors_headers())
+
+            company_name = None
+            company_address = None
+            if row["company_id"]:
+                company = await db.fetchrow(
+                    "SELECT name, address FROM companies WHERE id = $1", row["company_id"]
+                )
+                if company:
+                    company_name = company["name"]
+                    company_address = company["address"]
+
+        return web.json_response({
+            "full_name": row["full_name"],
+            "phone": row["phone"],
+            "lang": row["lang"] or "ru",
+            "birthday": row["birthday"].isoformat() if row["birthday"] else None,
+            "notify_reminder": bool(row["notify_reminder"]) if row["notify_reminder"] is not None else True,
+            "notify_delivery": bool(row["notify_delivery"]) if row["notify_delivery"] is not None else True,
+            "notify_marketing": bool(row["notify_marketing"]) if row["notify_marketing"] is not None else True,
+            "company_name": company_name,
+            "company_address": company_address
+        }, headers=cors_headers())
+    except Exception as e:
+        logger.error(f"webapp_full_settings error: {e}")
+        return web.json_response({"error": str(e)}, status=500, headers=cors_headers())
+
+
+async def handle_webapp_update_profile(request):
+    """POST /api/update-profile — обновить имя или телефон"""
+    try:
+        init_data = await get_init_data_from_request(request)
+        user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
+        if not user_data:
+            return web.json_response({"success": False, "error": "Invalid auth"}, status=401, headers=cors_headers())
+
+        telegram_id = user_data.get("id")
+        body = await request.json()
+        field = body.get("field")
+        value = body.get("value", "").strip()
+
+        if field not in ("full_name", "phone"):
+            return web.json_response({"success": False, "error": "Недопустимое поле"}, headers=cors_headers())
+
+        if field == "full_name" and len(value) < 3:
+            return web.json_response({"success": False, "error": "Имя слишком короткое"}, headers=cors_headers())
+
+        if field == "phone":
+            value = value.replace("+", "").replace(" ", "").replace("-", "")
+            if not value.isdigit() or len(value) < 9:
+                return web.json_response({"success": False, "error": "Неверный формат телефона"}, headers=cors_headers())
+
+        pool = await get_pool()
+        async with pool.acquire() as db:
+            await db.execute(
+                f"UPDATE users SET {field} = $1 WHERE telegram_id = $2",
+                value, telegram_id
+            )
+
+        return web.json_response({"success": True}, headers=cors_headers())
+    except Exception as e:
+        logger.error(f"webapp_update_profile error: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500, headers=cors_headers())
+
+
+async def handle_webapp_update_company_address(request):
+    """POST /api/update-company-address — обновить адрес компании"""
+    try:
+        init_data = await get_init_data_from_request(request)
+        user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
+        if not user_data:
+            return web.json_response({"success": False, "error": "Invalid auth"}, status=401, headers=cors_headers())
+
+        telegram_id = user_data.get("id")
+        body = await request.json()
+        address = body.get("address", "").strip()
+
+        if len(address) < 3:
+            return web.json_response({"success": False, "error": "Введите корректный адрес"}, headers=cors_headers())
+
+        pool = await get_pool()
+        async with pool.acquire() as db:
+            user = await db.fetchrow("SELECT company_id FROM users WHERE telegram_id = $1", telegram_id)
+            if not user or not user["company_id"]:
+                return web.json_response({"success": False, "error": "Компания не найдена"}, headers=cors_headers())
+            await db.execute(
+                "UPDATE companies SET address = $1 WHERE id = $2",
+                address, user["company_id"]
+            )
+
+        return web.json_response({"success": True}, headers=cors_headers())
+    except Exception as e:
+        logger.error(f"webapp_update_company_address error: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500, headers=cors_headers())
+
+
+async def handle_webapp_update_birthday(request):
+    """POST /api/update-birthday — установить дату рождения"""
+    try:
+        init_data = await get_init_data_from_request(request)
+        user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
+        if not user_data:
+            return web.json_response({"success": False, "error": "Invalid auth"}, status=401, headers=cors_headers())
+
+        telegram_id = user_data.get("id")
+        body = await request.json()
+        birthday_str = body.get("birthday")  # формат YYYY-MM-DD
+
+        from datetime import date as date_cls
+        try:
+            birthday = date_cls.fromisoformat(birthday_str)
+        except (ValueError, TypeError):
+            return web.json_response({"success": False, "error": "Неверный формат даты"}, headers=cors_headers())
+
+        today = date_cls.today()
+        age = (today - birthday).days // 365
+        if age < 10 or age > 100:
+            return web.json_response({"success": False, "error": "Проверьте дату рождения"}, headers=cors_headers())
+
+        pool = await get_pool()
+        async with pool.acquire() as db:
+            await db.execute(
+                "UPDATE users SET birthday = $1 WHERE telegram_id = $2",
+                birthday, telegram_id
+            )
+
+        return web.json_response({"success": True}, headers=cors_headers())
+    except Exception as e:
+        logger.error(f"webapp_update_birthday error: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500, headers=cors_headers())
+
+
+async def handle_webapp_update_lang(request):
+    """POST /api/update-lang — сменить язык интерфейса (ru/uz)"""
+    try:
+        init_data = await get_init_data_from_request(request)
+        user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
+        if not user_data:
+            return web.json_response({"success": False, "error": "Invalid auth"}, status=401, headers=cors_headers())
+
+        telegram_id = user_data.get("id")
+        body = await request.json()
+        lang = body.get("lang")
+
+        if lang not in ("ru", "uz"):
+            return web.json_response({"success": False, "error": "Недопустимый язык"}, headers=cors_headers())
+
+        pool = await get_pool()
+        async with pool.acquire() as db:
+            await db.execute(
+                "UPDATE users SET lang = $1 WHERE telegram_id = $2",
+                lang, telegram_id
+            )
+
+        return web.json_response({"success": True}, headers=cors_headers())
+    except Exception as e:
+        logger.error(f"webapp_update_lang error: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500, headers=cors_headers())
+
+
+async def handle_webapp_toggle_notification(request):
+    """POST /api/toggle-notification — переключить тип уведомлений"""
+    try:
+        init_data = await get_init_data_from_request(request)
+        user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
+        if not user_data:
+            return web.json_response({"success": False, "error": "Invalid auth"}, status=401, headers=cors_headers())
+
+        telegram_id = user_data.get("id")
+        body = await request.json()
+        notify_type = body.get("notify_type")
+
+        allowed = {"notify_reminder", "notify_delivery", "notify_marketing"}
+        if notify_type not in allowed:
+            return web.json_response({"success": False, "error": "Недопустимый тип"}, headers=cors_headers())
+
+        pool = await get_pool()
+        async with pool.acquire() as db:
+            current = await db.fetchrow(
+                f"SELECT {notify_type} as val FROM users WHERE telegram_id = $1", telegram_id
+            )
+            if current is None:
+                return web.json_response({"success": False, "error": "User not found"}, status=404, headers=cors_headers())
+            new_value = 0 if current["val"] else 1
+            await db.execute(
+                f"UPDATE users SET {notify_type} = $1 WHERE telegram_id = $2",
+                new_value, telegram_id
+            )
+
+        return web.json_response({"success": True, "value": bool(new_value)}, headers=cors_headers())
+    except Exception as e:
+        logger.error(f"webapp_toggle_notification error: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500, headers=cors_headers())
+
+
 async def handle_webapp_settings_get(request):
     """POST /api/settings — текущие настройки автозаказа и меню на неделю"""
     try:
@@ -1301,12 +1514,20 @@ async def create_app():
     app.router.add_post("/api/settings/set-weekly", handle_webapp_settings_set_weekly)
     app.router.add_post("/api/dashboard", handle_webapp_dashboard)
     app.router.add_post("/api/autoorder", handle_webapp_autoorder_get)
+    app.router.add_post("/api/full-settings", handle_webapp_full_settings)
+    app.router.add_post("/api/update-profile", handle_webapp_update_profile)
+    app.router.add_post("/api/update-company-address", handle_webapp_update_company_address)
+    app.router.add_post("/api/update-birthday", handle_webapp_update_birthday)
+    app.router.add_post("/api/update-lang", handle_webapp_update_lang)
+    app.router.add_post("/api/toggle-notification", handle_webapp_toggle_notification)
 
     for path in ["/api/menu", "/api/order", "/api/my-order", "/api/cancel-order",
                  "/api/profile", "/api/rating", "/api/balance-history", "/api/topup",
                  "/api/gifts", "/api/referral", "/api/settings",
                  "/api/settings/toggle-auto", "/api/settings/weekly-menu", "/api/settings/set-weekly",
-                 "/api/dashboard", "/api/autoorder"]:
+                 "/api/dashboard", "/api/autoorder", "/api/full-settings", "/api/update-profile",
+                 "/api/update-company-address", "/api/update-birthday", "/api/update-lang",
+                 "/api/toggle-notification"]:
         app.router.add_route("OPTIONS", path, handle_options)
 
     app.router.add_get("/api/photo/{photo_id}", handle_photo_proxy)
