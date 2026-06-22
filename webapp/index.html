@@ -335,6 +335,36 @@
   .top-dish-name { flex: 1; font-size: 13px; font-weight: 600; }
   .top-dish-count { font-size: 12px; color: var(--ink-soft); font-weight: 600; }
 
+  .autoorder-header {
+    display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;
+  }
+  .autoorder-title { font-size: 17px; font-weight: 700; }
+  .autoorder-subtitle { font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
+
+  .day-row {
+    display: flex; align-items: center; gap: 10px; padding: 12px;
+    border-bottom: 1px solid var(--line); cursor: pointer;
+  }
+  .day-row:last-child { border-bottom: none; }
+  .day-badge {
+    width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center;
+    justify-content: center; font-size: 13px; font-weight: 700; flex-shrink: 0;
+  }
+  .day-badge.filled { background: var(--green-600); color: var(--on-accent); }
+  .day-badge.empty { background: var(--cream-dark); color: var(--ink-soft); }
+  .day-row-info { flex: 1; min-width: 0; }
+  .day-row-name { font-size: 13px; font-weight: 600; }
+  .day-row-name.empty { color: var(--ink-soft); }
+  .day-row-sub { font-size: 11px; color: var(--ink-soft); margin-top: 1px; }
+  .day-row-arrow { color: var(--ink-soft); font-size: 18px; flex-shrink: 0; }
+
+  .autoorder-hint {
+    background: var(--white); border-radius: 14px; padding: 12px; display: flex;
+    gap: 10px; align-items: flex-start; margin-top: 12px; border: 1px solid var(--line);
+  }
+  .autoorder-hint-icon { font-size: 20px; flex-shrink: 0; }
+  .autoorder-hint-text { font-size: 12px; color: var(--ink-soft); line-height: 1.4; }
+
   .amount-btn {
     padding: 14px; border-radius: 12px; border: 1px solid var(--line);
     background: var(--cream-dark); color: var(--ink);
@@ -392,6 +422,7 @@
   <!-- MORE MENU PAGE -->
   <div class="page" id="page-more">
     <div class="profile-card" style="padding: 8px;">
+      <button class="more-link" data-page="profile">👤 Профиль</button>
       <button class="more-link" data-page="rating">🏆 Рейтинг компаний</button>
       <button class="more-link" data-page="gifts">🎁 Подарки и награды</button>
       <button class="more-link" data-page="referral">👥 Пригласить коллегу</button>
@@ -416,6 +447,11 @@
   <div class="page" id="page-settings">
     <button class="back-link" onclick="switchPage('more')">← Назад</button>
     <div id="settings-content"><div class="loading">Загружаем настройки…</div></div>
+  </div>
+
+  <!-- AUTOORDER PAGE -->
+  <div class="page" id="page-autoorder">
+    <div id="autoorder-content"><div class="loading">Загружаем автозаказ…</div></div>
   </div>
 
   <!-- DASHBOARD PAGE (admin only) -->
@@ -443,8 +479,8 @@
     <button class="nav-btn" data-page="order">
       <span class="nav-icon">📝</span>Заказ
     </button>
-    <button class="nav-btn" data-page="profile">
-      <span class="nav-icon">👤</span>Профиль
+    <button class="nav-btn" data-page="autoorder">
+      <span class="nav-icon">🔁</span>Авто
     </button>
     <button class="nav-btn" data-page="balance">
       <span class="nav-icon">💳</span>Баланс
@@ -522,7 +558,7 @@
     document.getElementById(`page-${page}`).classList.add("active");
     document.querySelectorAll(".nav-btn").forEach(b => {
       const navPage = b.dataset.page;
-      const isMoreGroup = ["more", "rating", "gifts", "referral", "settings", "dashboard"].includes(page);
+      const isMoreGroup = ["more", "rating", "gifts", "referral", "settings", "dashboard", "profile"].includes(page);
       b.classList.toggle("active", navPage === page || (navPage === "more" && isMoreGroup));
     });
 
@@ -542,6 +578,7 @@
     if (page === "referral") loadReferral();
     if (page === "settings") loadSettings();
     if (page === "dashboard") loadDashboard();
+    if (page === "autoorder") loadAutoorder();
   }
 
   document.querySelectorAll(".nav-btn").forEach(btn => {
@@ -1347,6 +1384,139 @@
       });
     } catch (e) {
       el.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Не удалось загрузить статистику</div></div>';
+    }
+  }
+
+  // ─── AUTOORDER PAGE ─────────────────────────────────────────────────────────
+
+  let autoorderDaysCache = {};
+
+  async function loadAutoorder() {
+    const el = document.getElementById("autoorder-content");
+    el.innerHTML = '<div class="loading">Загружаем автозаказ…</div>';
+    try {
+      const data = await apiCall("/api/autoorder");
+      if (data.error) {
+        el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">${data.error}</div></div>`;
+        return;
+      }
+
+      autoorderDaysCache = data.week_days || {};
+      const filledCount = Object.keys(autoorderDaysCache).length;
+
+      let html = `
+        <div class="autoorder-header">
+          <div>
+            <div class="autoorder-title">🔁 Автозаказ</div>
+            <div class="autoorder-subtitle">Заказывает автоматически по расписанию</div>
+          </div>
+          <button class="toggle-switch ${data.auto_order ? "on" : "off"}" id="autoorder-toggle">
+            <div class="toggle-knob"></div>
+          </button>
+        </div>
+
+        <div class="profile-card" style="padding: 4px;">
+      `;
+
+      DAYS_RU.forEach((dayName, i) => {
+        const item = autoorderDaysCache[i];
+        if (item && item.name) {
+          const icon = CATEGORY_META[item.category]?.icon || "🍽";
+          html += `
+            <div class="day-row" data-day="${i}">
+              <div class="day-badge filled">${dayName.slice(0, 2)}</div>
+              <div class="day-row-info">
+                <div class="day-row-name">${item.name}</div>
+                <div class="day-row-sub">${icon} ${CATEGORY_META[item.category]?.label || item.category} · ${fmt(item.price)}</div>
+              </div>
+              <div class="day-row-arrow">›</div>
+            </div>
+          `;
+        } else {
+          html += `
+            <div class="day-row" data-day="${i}">
+              <div class="day-badge empty">${dayName.slice(0, 2)}</div>
+              <div class="day-row-info">
+                <div class="day-row-name empty">Не выбрано</div>
+                <div class="day-row-sub">Нажмите, чтобы добавить</div>
+              </div>
+              <div class="day-row-arrow">+</div>
+            </div>
+          `;
+        }
+      });
+
+      html += `</div>`;
+
+      html += `
+        <div class="autoorder-hint">
+          <div class="autoorder-hint-icon">💡</div>
+          <div class="autoorder-hint-text">
+            Настроено ${filledCount} из 7 дней. Автозаказ создаст заказ автоматически в 10:00,
+            если у вас ещё нет заказа на этот день.
+          </div>
+        </div>
+      `;
+
+      el.innerHTML = html;
+
+      document.getElementById("autoorder-toggle").onclick = async () => {
+        const result = await apiCall("/api/settings/toggle-auto");
+        if (result.success) {
+          showToast(result.auto_order ? "✅ Автозаказ включён" : "Автозаказ выключен");
+          loadAutoorder();
+        }
+      };
+
+      document.querySelectorAll(".day-row").forEach(row => {
+        row.onclick = () => showAutoorderDayPicker(parseInt(row.dataset.day));
+      });
+    } catch (e) {
+      el.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Не удалось загрузить автозаказ</div></div>';
+    }
+  }
+
+  async function showAutoorderDayPicker(dayOfWeek) {
+    const el = document.getElementById("autoorder-content");
+    el.innerHTML = '<div class="loading">Загружаем меню…</div>';
+    try {
+      const data = await apiCall("/api/settings/weekly-menu", { day_of_week: dayOfWeek });
+      const items = data.items || [];
+
+      let html = `<button class="back-link" id="autoorder-day-back">← Назад</button>`;
+      html += `<div class="profile-card"><div style="font-size: 15px; font-weight: 700; margin-bottom: 10px;">${DAYS_RU[dayOfWeek]}</div>`;
+
+      if (items.length === 0) {
+        html += `<div style="font-size: 13px; color: var(--ink-soft);">Меню на этот день не добавлено в постоянном меню</div>`;
+      } else {
+        const grouped = {};
+        items.forEach(item => {
+          const cat = item.category || "main";
+          (grouped[cat] = grouped[cat] || []).push(item);
+        });
+        for (const [cat, catItems] of Object.entries(grouped)) {
+          const meta = CATEGORY_META[cat] || { label: cat, icon: "🍽" };
+          html += `<div class="order-cat-label">${meta.icon} ${meta.label}</div>`;
+          catItems.forEach(item => {
+            html += `<button class="more-link autoorder-pick-btn" data-item="${item.item_number}">${item.name} — ${fmt(item.price)}</button>`;
+          });
+        }
+        html += `<button class="more-link autoorder-pick-btn" data-item="" style="color: var(--red);">🗑 Убрать этот день</button>`;
+      }
+      html += `</div>`;
+      el.innerHTML = html;
+
+      document.getElementById("autoorder-day-back").onclick = loadAutoorder;
+      document.querySelectorAll(".autoorder-pick-btn").forEach(btn => {
+        btn.onclick = async () => {
+          const itemNumber = btn.dataset.item ? parseInt(btn.dataset.item) : null;
+          await apiCall("/api/settings/set-weekly", { day_of_week: dayOfWeek, item_number: itemNumber });
+          showToast("✅ Сохранено");
+          loadAutoorder();
+        };
+      });
+    } catch (e) {
+      el.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Ошибка загрузки</div></div>';
     }
   }
 
