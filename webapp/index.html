@@ -478,7 +478,6 @@
 
   <!-- SETTINGS PAGE -->
   <div class="page" id="page-settings">
-    <button class="back-link" onclick="switchPage('more')">← Назад</button>
     <div id="settings-content"><div class="loading">Загружаем настройки…</div></div>
   </div>
 
@@ -1318,6 +1317,7 @@
         : "Не указан";
 
       let html = `
+        <button class="back-link" id="settings-back-to-more">← Назад</button>
         <div class="profile-card" style="padding: 4px;">
           <button class="more-link" id="settings-profile-btn" style="display:flex; justify-content:space-between; align-items:center;">
             <span>👤 Профиль<br><span style="font-size:11px; color:var(--ink-soft); font-weight:400;">${data.full_name || "—"}</span></span>
@@ -1333,7 +1333,7 @@
           </button>
           ${data.company_name ? `
           <button class="more-link" id="settings-address-btn" style="display:flex; justify-content:space-between; align-items:center;">
-            <span>🏢 Адрес компании<br><span style="font-size:11px; color:var(--ink-soft); font-weight:400;">${data.company_address || "Не указан"}</span></span>
+            <span>🏢 Локация компании<br><span style="font-size:11px; color:var(--ink-soft); font-weight:400;">${data.company_address && data.company_address.includes("maps.google.com") ? "📍 Указана" : "Не указана"}</span></span>
             <span style="color:var(--ink-soft);">›</span>
           </button>` : ""}
         </div>
@@ -1358,6 +1358,7 @@
       `;
       el.innerHTML = html;
 
+      document.getElementById("settings-back-to-more").onclick = () => switchPage("more");
       document.getElementById("settings-profile-btn").onclick = () => showProfileEditor(data);
       document.getElementById("settings-birthday-btn").onclick = () => showBirthdayPicker(data);
       document.getElementById("settings-lang-btn").onclick = () => showLangPicker(data);
@@ -1469,30 +1470,72 @@
 
   function showAddressEditor(data) {
     const el = document.getElementById("settings-content");
+    const hasLocation = data.company_address && data.company_address.includes("maps.google.com");
+
     el.innerHTML = `
       <button class="back-link" id="address-editor-back">← Назад</button>
       <div class="profile-card">
-        <div style="font-size: 13px; font-weight: 600; margin-bottom: 6px;">Адрес компании «${data.company_name}»</div>
-        <input type="text" id="edit-address-input" value="${data.company_address || ""}" placeholder="Улица, дом, офис"
-          style="width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line);
-                 background: var(--cream-dark); color: var(--ink); font-size: 14px;">
-        <div style="font-size: 12px; color: var(--ink-soft); margin-top: 8px;">
-          Этот адрес видят курьеры при доставке. Изменение коснётся всех сотрудников вашей компании.
+        <div style="font-size: 13px; font-weight: 600; margin-bottom: 6px;">Локация компании «${data.company_name}»</div>
+        <div style="font-size: 12px; color: var(--ink-soft); margin-bottom: 14px;">
+          Курьеры используют точную геолокацию для построения маршрута — это надёжнее текстового адреса.
         </div>
-        <button class="btn-primary" id="save-address-btn">Сохранить</button>
+
+        <div id="current-location-display" style="margin-bottom: 14px;">
+          ${hasLocation
+            ? `<a href="${data.company_address}" target="_blank" style="color: var(--green-600); font-size: 13px; font-weight: 600;">📍 Текущая локация (открыть на карте)</a>`
+            : `<div style="font-size: 13px; color: var(--ink-soft);">📍 Локация пока не указана</div>`}
+        </div>
+
+        <button class="btn-primary" id="share-location-btn">📍 Отправить текущую локацию</button>
+        <div style="font-size: 11px; color: var(--ink-soft); margin-top: 8px; text-align: center;">
+          Откроется запрос доступа к геолокации устройства
+        </div>
       </div>
     `;
     document.getElementById("address-editor-back").onclick = loadSettings;
-    document.getElementById("save-address-btn").onclick = async () => {
-      const address = document.getElementById("edit-address-input").value.trim();
-      const result = await apiCall("/api/update-company-address", { address });
-      if (result.success) {
-        showToast("✅ Адрес обновлён");
-        loadSettings();
-      } else {
-        showToast(result.error || "Ошибка");
-      }
+
+    document.getElementById("share-location-btn").onclick = () => {
+      requestLocationAndSave();
     };
+  }
+
+  function requestLocationAndSave() {
+    // Telegram WebApp LocationManager (если доступен в этой версии клиента)
+    if (tg?.LocationManager) {
+      tg.LocationManager.init(() => {
+        tg.LocationManager.getLocation((data) => {
+          if (data && data.latitude && data.longitude) {
+            saveCompanyLocation(data.latitude, data.longitude);
+          } else {
+            showToast("Не удалось получить геолокацию");
+          }
+        });
+      });
+      return;
+    }
+
+    // Фоллбэк на стандартный browser geolocation API (работает в большинстве клиентов)
+    if (navigator.geolocation) {
+      showToast("Запрашиваем доступ к геолокации…");
+      navigator.geolocation.getCurrentPosition(
+        (pos) => saveCompanyLocation(pos.coords.latitude, pos.coords.longitude),
+        () => showToast("Доступ к геолокации не предоставлен"),
+        { enableHighAccuracy: true, timeout: 10000 }
+      );
+    } else {
+      showToast("Геолокация не поддерживается на этом устройстве");
+    }
+  }
+
+  async function saveCompanyLocation(lat, lon) {
+    const mapsLink = `https://maps.google.com/?q=${lat},${lon}`;
+    const result = await apiCall("/api/update-company-address", { address: mapsLink });
+    if (result.success) {
+      showToast("✅ Локация сохранена");
+      loadSettings();
+    } else {
+      showToast(result.error || "Ошибка сохранения");
+    }
   }
 
   // ─── DASHBOARD PAGE (admin only) ──────────────────────────────────────────
