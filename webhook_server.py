@@ -103,20 +103,33 @@ async def parse_click_request_data(request) -> dict:
     Эта функция надёжно читает оба варианта.
     """
     content_type = request.headers.get("Content-Type", "")
-    if "application/json" in content_type:
+    raw_body = await request.read()
+    logger.info(
+        f"[CLICK DEBUG] Content-Type={content_type!r} "
+        f"Query={dict(request.query)!r} "
+        f"Raw body ({len(raw_body)} bytes)={raw_body[:500]!r}"
+    )
+
+    if raw_body:
+        if "application/json" in content_type:
+            try:
+                import json
+                return json.loads(raw_body)
+            except Exception:
+                pass
         try:
-            return await request.json()
+            from urllib.parse import parse_qsl
+            parsed = dict(parse_qsl(raw_body.decode("utf-8")))
+            if parsed:
+                return parsed
         except Exception:
             pass
-    # Пытаемся прочитать как form-urlencoded (или multipart) — основной формат Click
-    post_data = await request.post()
-    if post_data:
-        return dict(post_data)
-    # Последний шанс — может быть JSON без правильного Content-Type заголовка
-    try:
-        return await request.json()
-    except Exception:
-        return {}
+
+    # Click может прислать параметры через query string (GET-style) даже у POST-запроса
+    if request.query:
+        return dict(request.query)
+
+    return {}
 
 
 async def handle_click_prepare(request):
