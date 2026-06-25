@@ -141,15 +141,19 @@ async def handle_click_prepare(request):
         click_trans_id = data.get("click_trans_id")
         service_id = data.get("service_id")
         merchant_trans_id = data.get("merchant_trans_id")
-        amount = float(data.get("amount", 0))
+        amount_raw = data.get("amount", "0")  # строка как пришла от Click — важно для подписи!
         sign_time = data.get("sign_time")
         sign_string = data.get("sign_string")
 
         my_sign = hashlib.md5(
-            f"{click_trans_id}{service_id}{CLICK_SECRET_KEY}{merchant_trans_id}{amount}{1}{sign_time}".encode()
+            f"{click_trans_id}{service_id}{CLICK_SECRET_KEY}{merchant_trans_id}{amount_raw}{0}{sign_time}".encode()
         ).hexdigest()
 
         if my_sign != sign_string:
+            logger.warning(
+                f"[PREPARE] Sign mismatch. computed={my_sign} received={sign_string} "
+                f"amount_raw={amount_raw!r}"
+            )
             return web.json_response({"error": -1, "error_note": "SIGN CHECK FAILED!"})
 
         parts = str(merchant_trans_id).split("_")
@@ -162,13 +166,15 @@ async def handle_click_prepare(request):
         # и уже числовой, поэтому отдельная таблица/счётчик не нужны.
         merchant_prepare_id = int(click_trans_id)
 
-        return web.json_response({
+        response_data = {
             "click_trans_id": int(click_trans_id),
             "merchant_trans_id": merchant_trans_id,
             "merchant_prepare_id": merchant_prepare_id,
             "error": 0,
             "error_note": "Success"
-        })
+        }
+        logger.info(f"[PREPARE] Responding: {response_data}")
+        return web.json_response(response_data)
     except Exception as e:
         logger.error(f"[PREPARE] Exception: {e}")
         return web.json_response({"error": -9, "error_note": str(e)})
@@ -184,16 +190,20 @@ async def handle_click_complete(request):
         service_id = data.get("service_id")
         merchant_trans_id = data.get("merchant_trans_id")
         merchant_prepare_id = data.get("merchant_prepare_id")
-        amount = float(data.get("amount", 0))
+        amount_raw = data.get("amount", "0")  # строка как пришла от Click — важно для подписи!
         sign_time = data.get("sign_time")
         sign_string = data.get("sign_string")
         error = int(data.get("error", 0))
 
         my_sign = hashlib.md5(
-            f"{click_trans_id}{service_id}{CLICK_SECRET_KEY}{merchant_trans_id}{merchant_prepare_id}{amount}{2}{sign_time}".encode()
+            f"{click_trans_id}{service_id}{CLICK_SECRET_KEY}{merchant_trans_id}{merchant_prepare_id}{amount_raw}{1}{sign_time}".encode()
         ).hexdigest()
 
         if my_sign != sign_string:
+            logger.warning(
+                f"[COMPLETE] Sign mismatch. computed={my_sign} received={sign_string} "
+                f"amount_raw={amount_raw!r}"
+            )
             return web.json_response({"error": -1, "error_note": "SIGN CHECK FAILED!"})
 
         if error < 0:
@@ -208,7 +218,7 @@ async def handle_click_complete(request):
         parts = str(merchant_trans_id).split("_")
         if len(parts) >= 3 and parts[0] == "balance":
             user_db_id = int(parts[1])
-            amount_sum = int(float(amount))
+            amount_sum = int(float(amount_raw))
             added = await add_balance(user_db_id, amount_sum, "Пополнение через Click", click_trans_id)
             if added:
                 try:
