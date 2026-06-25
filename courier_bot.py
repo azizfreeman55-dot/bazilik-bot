@@ -832,7 +832,7 @@ async def assign_all_to_courier(callback: CallbackQuery):
             text += f"{i}. {c['company_name']} — {c['client_count']} кл., {c['order_count']} поз.\n"
             if c.get("address"):
                 text += f"   📍 {c['address']}\n"
-        text += "\nОткройте '🗺 Мой маршрут' для начала работы."
+        text += "\n📍 Порядок точек оптимизирован по расстоянию.\nОткройте '🗺 Мой маршрут' для начала работы."
 
         await callback.bot.send_message(
             courier["telegram_id"], text, parse_mode="Markdown"
