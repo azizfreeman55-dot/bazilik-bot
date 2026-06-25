@@ -778,8 +778,8 @@ async def handle_webapp_topup(request):
         if not user_data:
             return web.json_response({"error": "Invalid auth"}, status=401, headers=cors_headers())
 
-        if not amount or amount < 1000:
-            return web.json_response({"error": "Минимальная сумма — 1000 сум"}, headers=cors_headers())
+        if not amount or amount < 100:
+            return web.json_response({"error": "Минимальная сумма — 100 сум"}, headers=cors_headers())
 
         telegram_id = user_data.get("id")
         pool = await get_pool()
