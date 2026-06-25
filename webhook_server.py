@@ -1074,6 +1074,45 @@ async def handle_webapp_update_profile(request):
         return web.json_response({"success": False, "error": str(e)}, status=500, headers=cors_headers())
 
 
+async def handle_webapp_update_order_location(request):
+    """
+    POST /api/update-order-location — обновляет локацию компании на основе
+    геопозиции клиента в момент оформления заказа. Полезно для случаев когда
+    клиент зарегистрировался из дома (например, увидев рекламу вечером),
+    а реально работает в офисе — локация на момент заказа точнее.
+    """
+    try:
+        init_data = await get_init_data_from_request(request)
+        user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
+        if not user_data:
+            return web.json_response({"success": False, "error": "Invalid auth"}, status=401, headers=cors_headers())
+
+        telegram_id = user_data.get("id")
+        body = await request.json()
+        lat = body.get("latitude")
+        lon = body.get("longitude")
+
+        if lat is None or lon is None:
+            return web.json_response({"success": False, "error": "Координаты не переданы"}, headers=cors_headers())
+
+        maps_link = f"https://maps.google.com/?q={lat},{lon}"
+
+        pool = await get_pool()
+        async with pool.acquire() as db:
+            user = await db.fetchrow("SELECT company_id FROM users WHERE telegram_id = $1", telegram_id)
+            if not user or not user["company_id"]:
+                return web.json_response({"success": False, "error": "Компания не найдена"}, headers=cors_headers())
+            await db.execute(
+                "UPDATE companies SET maps_link = $1 WHERE id = $2",
+                maps_link, user["company_id"]
+            )
+
+        return web.json_response({"success": True}, headers=cors_headers())
+    except Exception as e:
+        logger.error(f"webapp_update_order_location error: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500, headers=cors_headers())
+
+
 async def handle_webapp_update_company_address(request):
     """POST /api/update-company-address — обновить адрес компании"""
     try:
@@ -1577,6 +1616,7 @@ async def create_app():
     app.router.add_post("/api/update-birthday", handle_webapp_update_birthday)
     app.router.add_post("/api/update-lang", handle_webapp_update_lang)
     app.router.add_post("/api/toggle-notification", handle_webapp_toggle_notification)
+    app.router.add_post("/api/update-order-location", handle_webapp_update_order_location)
 
     for path in ["/api/menu", "/api/order", "/api/my-order", "/api/cancel-order",
                  "/api/profile", "/api/rating", "/api/balance-history", "/api/topup",
@@ -1584,7 +1624,7 @@ async def create_app():
                  "/api/settings/toggle-auto", "/api/settings/weekly-menu", "/api/settings/set-weekly",
                  "/api/dashboard", "/api/autoorder", "/api/full-settings", "/api/update-profile",
                  "/api/update-company-address", "/api/update-birthday", "/api/update-lang",
-                 "/api/toggle-notification"]:
+                 "/api/toggle-notification", "/api/update-order-location"]:
         app.router.add_route("OPTIONS", path, handle_options)
 
     app.router.add_get("/api/photo/{photo_id}", handle_photo_proxy)
