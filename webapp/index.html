@@ -455,12 +455,12 @@
   <!-- MORE MENU PAGE -->
   <div class="page" id="page-more">
     <div class="profile-card" style="padding: 8px;">
-      <button class="more-link" data-page="profile">👤 Профиль</button>
-      <button class="more-link" data-page="rating">🏆 Рейтинг компаний</button>
-      <button class="more-link" data-page="gifts">🎁 Подарки и награды</button>
-      <button class="more-link" data-page="referral">👥 Пригласить коллегу</button>
-      <button class="more-link" data-page="settings">⚙️ Настройки</button>
-      <button class="more-link" data-page="dashboard">📊 Дашборд (админ)</button>
+      <button class="more-link" data-page="profile">👤 <span id="more-label-profile">Профиль</span></button>
+      <button class="more-link" data-page="rating">🏆 <span id="more-label-rating">Рейтинг компаний</span></button>
+      <button class="more-link" data-page="gifts">🎁 <span id="more-label-gifts">Подарки и награды</span></button>
+      <button class="more-link" data-page="referral">👥 <span id="more-label-referral">Пригласить коллегу</span></button>
+      <button class="more-link" data-page="settings">⚙️ <span id="more-label-settings">Настройки</span></button>
+      <button class="more-link" data-page="dashboard">📊 <span id="more-label-dashboard">Дашборд (админ)</span></button>
     </div>
   </div>
 
@@ -506,23 +506,241 @@
 
   <div class="navbar">
     <button class="nav-btn active" data-page="menu">
-      <span class="nav-icon">🍽️</span>Меню
+      <span class="nav-icon">🍽️</span><span id="nav-label-menu">Меню</span>
     </button>
     <button class="nav-btn" data-page="order">
-      <span class="nav-icon">📝</span>Заказ
+      <span class="nav-icon">📝</span><span id="nav-label-order">Заказ</span>
     </button>
     <button class="nav-btn" data-page="autoorder">
-      <span class="nav-icon">🔁</span>Авто
+      <span class="nav-icon">🔁</span><span id="nav-label-auto">Авто</span>
     </button>
     <button class="nav-btn" data-page="balance">
-      <span class="nav-icon">💳</span>Баланс
+      <span class="nav-icon">💳</span><span id="nav-label-balance">Баланс</span>
     </button>
     <button class="nav-btn" data-page="more">
-      <span class="nav-icon">⋯</span>Ещё
+      <span class="nav-icon">⋯</span><span id="nav-label-more">Ещё</span>
     </button>
   </div>
 
 <script>
+  const CATEGORY_META_BY_LANG = {
+    ru: {
+      main:    { label: "Основные",  icon: "🍱" },
+      salad:   { label: "Салаты",    icon: "🥗" },
+      dessert: { label: "Десерты",   icon: "🍰" },
+      drink:   { label: "Напитки",   icon: "🥤" },
+    },
+    uz: {
+      main:    { label: "Asosiy",    icon: "🍱" },
+      salad:   { label: "Salatlar",  icon: "🥗" },
+      dessert: { label: "Desertlar", icon: "🍰" },
+      drink:   { label: "Ichimliklar", icon: "🥤" },
+    }
+  };
+
+  // Текущий язык интерфейса — по умолчанию русский, переключается после
+  // загрузки настроек пользователя (см. applyUserLang). Узбекский здесь —
+  // латиница (o'zbekcha), как и во всём остальном боте.
+  let CURRENT_LANG = "ru";
+
+  const TRANSLATIONS = {
+    ru: {
+      menu: "Меню", order: "Заказ", auto: "Авто", balance: "Баланс", more: "Ещё",
+      profile: "Профиль", rating: "Рейтинг компаний", gifts: "Подарки и награды",
+      referral: "Пригласить коллегу", settings: "Настройки", dashboard: "Дашборд (админ)",
+      menu_for: "Меню на", loading_menu: "Загружаем меню…", loading_order: "Загружаем заказ…",
+      loading_profile: "Загружаем профиль…", loading_balance: "Загружаем баланс…",
+      loading_rating: "Загружаем рейтинг…", loading_gifts: "Загружаем подарки…",
+      loading_referral: "Загружаем…", loading_settings: "Загружаем настройки…",
+      loading_stats: "Загружаем статистику…", loading_autoorder: "Загружаем автозаказ…",
+      empty_category: "В этой категории пока пусто", empty_menu: "Меню на эту дату ещё не добавлено",
+      add: "+ Добавить", checkout: "Оформить заказ", sending: "Отправляем…",
+      positions_count: ["позиция", "позиции", "позиций"],
+      order_total: "Итого", change_order: "Изменить заказ", cancel_order: "Отменить весь заказ",
+      no_order_yet: "У вас пока нет заказа на", confirm_cancel: "Точно отменить весь заказ?",
+      cancelled_refund: "Отменено", payment_method_title: "Способ оплаты", to_pay: "К оплате",
+      pay_balance: "С баланса", pay_cash: "Наличными при получении", pay_click: "Click",
+      pay_balance_desc: "Доступно", pay_balance_insufficient: "Недостаточно средств (есть",
+      pay_cash_desc: "Оплатите курьеру наличными", pay_click_desc: "Пополнить баланс и оплатить сразу",
+      cancel: "Отмена", where_are_you: "Где вы сейчас находитесь?",
+      location_hint: "Это поможет курьеру точно найти вас при доставке. Локация обновит адрес доставки для всей компании.",
+      share_location: "📍 Отправить мою локацию", skip_location: "Пропустить, использовать прошлую локацию",
+      determining_location: "Определяем локацию…", location_updated: "📍 Локация обновлена",
+      location_failed: "Не удалось определить локацию — используем прошлую",
+      order_placed: "✅ Заказ оформлен!", insufficient_balance_cod: "Недостаточно баланса — оплата при получении",
+      connection_error: "Ошибка соединения", order_error: "Ошибка оформления заказа",
+      opening_click: "Открываем Click для оплаты…", click_return_hint: "После оплаты в Click вернитесь сюда и нажмите 'Оформить заказ' ещё раз — баланс обновится автоматически.",
+      cant_create_link: "Не удалось создать ссылку на оплату",
+      delivered_status_cooking: "Готовится", delivered_status_transit: "В пути", delivered_status_done: "Доставлен",
+      your_balance: "Ваш баланс", topup_via_click: "🔵 Пополнить через Click",
+      choose_amount: "Выберите сумму", or_enter_custom: "Или введите свою сумму",
+      amount_placeholder: "Например, 75000", min_amount: "Минимальная сумма — 100 сум",
+      back: "Назад", history_title: "История операций", no_operations: "Операций пока нет",
+      ok: "OK",
+      profile_loading_err: "Не удалось загрузить профиль", company_not_set: "Компания не указана",
+      orders_count: "Заказов", points_count: "Баллов", invite_code_title: "Код для приглашения друзей",
+      points_label: "Ваши баллы", gift_unlocked: "✓ Получено", gift_locked: "Закрыто",
+      gifts_not_loaded: "Не удалось загрузить подарки", streak_title: "🔥 Серия заказов:",
+      streak_days_word: ["день", "дня", "дней"], streak_hint: "Заказывайте каждый день, чтобы получать бонусы",
+      days_to_bonus: "Ещё", days_to_bonus_end: "до бонуса +", days_word: ["день", "дня", "дней"],
+      all_streak_done: "🎉 Вы получили все бонусы за серию!", company_orders_month: "Заказов в этом месяце:",
+      company_leader: "🥇 Сейчас на 1 месте! Если так продержитесь до конца месяца — каждый сотрудник получит +",
+      points_word: "баллов!", company_rank: "Место в рейтинге:", company_rank_hint: "Компания-лидер месяца получает +",
+      company_rank_hint2: "баллов каждому сотруднику — заказывайте чаще, чтобы подняться выше! 💪",
+      gifts_section_title: "Подарки за баллы",
+      rating_empty: "Рейтинг пока пуст", rating_orders: "зак.", rating_not_loaded: "Не удалось загрузить рейтинг",
+      referral_title: "Ваш код приглашения", invited_friends: "Приглашено друзей",
+      referral_hint: "За каждого друга вы получаете +5 баллов, друг получает +10 баллов при регистрации",
+      share_friend: "Поделиться с другом", join_text: "Присоединяйся к Bazilik Catering!",
+      link_copied: "Ссылка скопирована!", referral_not_loaded: "Не удалось загрузить данные",
+      settings_not_loaded: "Не удалось загрузить настройки", name_label: "Имя", phone_label: "Телефон",
+      save: "Сохранить", profile_updated: "✅ Профиль обновлён", birthday_label: "Дата рождения",
+      birthday_gift_hint: "🎁 В день рождения мы начислим вам +50 баллов!", choose_date: "Выберите дату",
+      saved: "✅ Сохранено", company_location_title: "Локация компании",
+      location_courier_hint: "Курьеры используют точную геолокацию для построения маршрута — это надёжнее текстового адреса.",
+      location_not_set: "📍 Локация пока не указана", location_set_link: "📍 Текущая локация (открыть на карте)",
+      location_request_hint: "Откроется запрос доступа к геолокации устройства",
+      location_no_access: "Доступ к геолокации не предоставлен", location_not_supported: "Геолокация не поддерживается на этом устройстве",
+      location_saved: "✅ Локация сохранена", location_save_error: "Ошибка сохранения",
+      lang_changed: "✅ Язык изменён", notifications_title: "🔔 Уведомления", notify_reminder: "Напоминание о заказе",
+      notify_delivery: "Статус доставки", notify_marketing: "Акции и новости",
+      enabled: "✅ Включено", disabled: "Выключено", open_autoorder: "🔁 Открыть автозаказ",
+      autoorder_title: "🔁 Автозаказ", autoorder_subtitle: "Заказывает автоматически по расписанию",
+      not_selected: "Не выбрано", tap_to_add: "Нажмите, чтобы добавить",
+      autoorder_configured: "Настроено", autoorder_of: "из 7 дней. Автозаказ создаст заказ автоматически в 10:00, если у вас ещё нет заказа на этот день.",
+      autoorder_not_loaded: "Не удалось загрузить автозаказ", choose_per_category: "Выберите по одному блюду в каждой категории",
+      menu_not_set_day: "Меню на этот день не добавлено в постоянном меню", remove_category: "🗑 Убрать",
+      load_error: "Ошибка загрузки", dashboard_access_error: "Доступ только для администраторов",
+      total_orders: "Всего заказов", total_clients: "Клиентов", total_companies: "Компаний",
+      avg_rating: "Средний рейтинг", orders_week: "Заказы за 7 дней", total_label: "Всего",
+      revenue_label: "Выручка", top_dishes: "🔥 Топ-5 блюд (30 дней)", no_data: "Пока нет данных",
+      times_word: "раз", couriers_title: "🚚 Курьеры", no_courier_data: "Нет данных о курьерах",
+      no_ratings: "нет оценок", routes_word: "маршрутов", points_word_label: "точек",
+      min_per_route: "мин/маршрут", dashboard_not_loaded: "Не удалось загрузить статистику",
+      reviewed_thanks: "Спасибо!",
+    },
+    uz: {
+      menu: "Menyu", order: "Buyurtma", auto: "Avto", balance: "Hisob", more: "Yana",
+      profile: "Profil", rating: "Kompaniyalar reytingi", gifts: "Sovg'alar va mukofotlar",
+      referral: "Hamkasbni taklif qilish", settings: "Sozlamalar", dashboard: "Boshqaruv paneli (admin)",
+      menu_for: "Menyu", loading_menu: "Menyu yuklanmoqda…", loading_order: "Buyurtma yuklanmoqda…",
+      loading_profile: "Profil yuklanmoqda…", loading_balance: "Hisob yuklanmoqda…",
+      loading_rating: "Reyting yuklanmoqda…", loading_gifts: "Sovg'alar yuklanmoqda…",
+      loading_referral: "Yuklanmoqda…", loading_settings: "Sozlamalar yuklanmoqda…",
+      loading_stats: "Statistika yuklanmoqda…", loading_autoorder: "Avtobuyurtma yuklanmoqda…",
+      empty_category: "Bu kategoriyada hozircha bo'sh", empty_menu: "Bu sanaga menyu hali qo'shilmagan",
+      add: "+ Qo'shish", checkout: "Buyurtma berish", sending: "Yuborilmoqda…",
+      positions_count: ["pozitsiya", "pozitsiya", "pozitsiya"],
+      order_total: "Jami", change_order: "Buyurtmani o'zgartirish", cancel_order: "Hammasini bekor qilish",
+      no_order_yet: "Sizda hali buyurtma yo'q", confirm_cancel: "Haqiqatan hammasini bekor qilmoqchimisiz?",
+      cancelled_refund: "Bekor qilindi", payment_method_title: "To'lov usuli", to_pay: "To'lov uchun",
+      pay_balance: "Hisobdan", pay_cash: "Yetkazib berishda naqd", pay_click: "Click",
+      pay_balance_desc: "Mavjud", pay_balance_insufficient: "Mablag' yetarli emas (mavjud",
+      pay_cash_desc: "Kuryerga naqd to'lang", pay_click_desc: "Hisobni to'ldirib darhol to'lash",
+      cancel: "Bekor qilish", where_are_you: "Hozir qayerdasiz?",
+      location_hint: "Bu kuryerga sizni topishda yordam beradi. Joylashuv kompaniyaning yetkazib berish manzilini yangilaydi.",
+      share_location: "📍 Joylashuvimni yuborish", skip_location: "O'tkazib yuborish, oldingi joylashuvdan foydalanish",
+      determining_location: "Joylashuv aniqlanmoqda…", location_updated: "📍 Joylashuv yangilandi",
+      location_failed: "Joylashuvni aniqlab bo'lmadi — avvalgisidan foydalanamiz",
+      order_placed: "✅ Buyurtma rasmiylashtirildi!", insufficient_balance_cod: "Hisobda mablag' yetarli emas — yetkazib berishda to'lov",
+      connection_error: "Aloqa xatosi", order_error: "Buyurtmani rasmiylashtirishda xatolik",
+      opening_click: "Click ochilmoqda…", click_return_hint: "To'lovdan keyin bu yerga qaytib, 'Buyurtma berish' tugmasini yana bosing — hisob avtomatik yangilanadi.",
+      cant_create_link: "To'lov havolasini yaratib bo'lmadi",
+      delivered_status_cooking: "Tayyorlanmoqda", delivered_status_transit: "Yo'lda", delivered_status_done: "Yetkazildi",
+      your_balance: "Hisobingiz", topup_via_click: "🔵 Click orqali to'ldirish",
+      choose_amount: "Summani tanlang", or_enter_custom: "Yoki o'z summangizni kiriting",
+      amount_placeholder: "Masalan, 75000", min_amount: "Minimal summa — 100 so'm",
+      back: "Orqaga", history_title: "Amaliyotlar tarixi", no_operations: "Hozircha amaliyot yo'q",
+      ok: "OK",
+      profile_loading_err: "Profilni yuklab bo'lmadi", company_not_set: "Kompaniya ko'rsatilmagan",
+      orders_count: "Buyurtmalar", points_count: "Ball", invite_code_title: "Do'stlarni taklif qilish kodi",
+      points_label: "Ballaringiz", gift_unlocked: "✓ Olindi", gift_locked: "Yopiq",
+      gifts_not_loaded: "Sovg'alarni yuklab bo'lmadi", streak_title: "🔥 Buyurtmalar seriyasi:",
+      streak_days_word: ["kun", "kun", "kun"], streak_hint: "Bonus olish uchun har kuni buyurtma bering",
+      days_to_bonus: "Yana", days_to_bonus_end: "kun +", days_word: ["kun", "kun", "kun"],
+      all_streak_done: "🎉 Siz seriya uchun barcha bonuslarni oldingiz!", company_orders_month: "Bu oydagi buyurtmalar:",
+      company_leader: "🥇 Hozir 1-o'rindasiz! Agar oy oxirigacha shunday qolsangiz — har bir xodim +",
+      points_word: "ball oladi!", company_rank: "Reytingdagi o'rin:", company_rank_hint: "Oy g'olibi kompaniyasi har bir xodimga +",
+      company_rank_hint2: "ball oladi — yuqoriroq ko'tarilish uchun ko'proq buyurtma bering! 💪",
+      gifts_section_title: "Ball uchun sovg'alar",
+      rating_empty: "Reyting hali bo'sh", rating_orders: "buyurtma", rating_not_loaded: "Reytingni yuklab bo'lmadi",
+      referral_title: "Sizning taklif kodingiz", invited_friends: "Taklif qilingan do'stlar",
+      referral_hint: "Har bir do'st uchun +5 ball olasiz, do'stingiz ro'yxatdan o'tganda +10 ball oladi",
+      share_friend: "Do'stga ulashish", join_text: "Bazilik Catering'ga qo'shiling!",
+      link_copied: "Havola nusxalandi!", referral_not_loaded: "Ma'lumotlarni yuklab bo'lmadi",
+      settings_not_loaded: "Sozlamalarni yuklab bo'lmadi", name_label: "Ism", phone_label: "Telefon",
+      save: "Saqlash", profile_updated: "✅ Profil yangilandi", birthday_label: "Tug'ilgan kun",
+      birthday_gift_hint: "🎁 Tug'ilgan kuningizda sizga +50 ball beramiz!", choose_date: "Sanani tanlang",
+      saved: "✅ Saqlandi", company_location_title: "Kompaniya joylashuvi",
+      location_courier_hint: "Kuryerlar marshrutni qurish uchun aniq geolokatsiyadan foydalanadi — bu matnli manzildan ishonchliroq.",
+      location_not_set: "📍 Joylashuv hali ko'rsatilmagan", location_set_link: "📍 Joriy joylashuv (xaritada ochish)",
+      location_request_hint: "Qurilma geolokatsiyasiga ruxsat so'raladi",
+      location_no_access: "Geolokatsiyaga ruxsat berilmadi", location_not_supported: "Bu qurilmada geolokatsiya qo'llab-quvvatlanmaydi",
+      location_saved: "✅ Joylashuv saqlandi", location_save_error: "Saqlashda xatolik",
+      lang_changed: "✅ Til o'zgartirildi", notifications_title: "🔔 Bildirishnomalar", notify_reminder: "Buyurtma haqida eslatma",
+      notify_delivery: "Yetkazib berish holati", notify_marketing: "Aksiyalar va yangiliklar",
+      enabled: "✅ Yoqildi", disabled: "O'chirildi", open_autoorder: "🔁 Avtobuyurtmani ochish",
+      autoorder_title: "🔁 Avtobuyurtma", autoorder_subtitle: "Jadval bo'yicha avtomatik buyurtma beradi",
+      not_selected: "Tanlanmagan", tap_to_add: "Qo'shish uchun bosing",
+      autoorder_configured: "Sozlangan", autoorder_of: "/ 7 kun. Agar bu kunga buyurtmangiz bo'lmasa, soat 10:00 da avtobuyurtma yaratiladi.",
+      autoorder_not_loaded: "Avtobuyurtmani yuklab bo'lmadi", choose_per_category: "Har bir kategoriyadan bittadan taom tanlang",
+      menu_not_set_day: "Bu kunga doimiy menyuda taom qo'shilmagan", remove_category: "🗑 O'chirish",
+      load_error: "Yuklashda xatolik", dashboard_access_error: "Faqat administratorlar uchun",
+      total_orders: "Jami buyurtmalar", total_clients: "Mijozlar", total_companies: "Kompaniyalar",
+      avg_rating: "O'rtacha baho", orders_week: "7 kunlik buyurtmalar", total_label: "Jami",
+      revenue_label: "Tushum", top_dishes: "🔥 TOP-5 taom (30 kun)", no_data: "Hozircha ma'lumot yo'q",
+      times_word: "marta", couriers_title: "🚚 Kuryerlar", no_courier_data: "Kuryerlar haqida ma'lumot yo'q",
+      no_ratings: "baho yo'q", routes_word: "marshrut", points_word_label: "nuqta",
+      min_per_route: "daq/marshrut", dashboard_not_loaded: "Statistikani yuklab bo'lmadi",
+      reviewed_thanks: "Rahmat!",
+    }
+  };
+
+  function T(key) {
+    const dict = TRANSLATIONS[CURRENT_LANG] || TRANSLATIONS.ru;
+    return dict[key] !== undefined ? dict[key] : (TRANSLATIONS.ru[key] !== undefined ? TRANSLATIONS.ru[key] : key);
+  }
+
+  function pluralWord(n, formsKey) {
+    const forms = T(formsKey);
+    if (!Array.isArray(forms)) return "";
+    if (CURRENT_LANG === "uz") return forms[0]; // узбекский не склоняет числительные
+    const mod10 = n % 10, mod100 = n % 100;
+    if (mod10 === 1 && mod100 !== 11) return forms[0];
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return forms[1];
+    return forms[2];
+  }
+
+  function getCategoryMeta() {
+    return CATEGORY_META_BY_LANG[CURRENT_LANG] || CATEGORY_META_BY_LANG.ru;
+  }
+
+  function updateStaticLabels() {
+    const map = {
+      "nav-label-menu": "menu", "nav-label-order": "order", "nav-label-auto": "auto",
+      "nav-label-balance": "balance", "nav-label-more": "more",
+      "more-label-profile": "profile", "more-label-rating": "rating",
+      "more-label-gifts": "gifts", "more-label-referral": "referral",
+      "more-label-settings": "settings", "more-label-dashboard": "dashboard",
+    };
+    for (const [id, key] of Object.entries(map)) {
+      const el = document.getElementById(id);
+      if (el) el.textContent = T(key);
+    }
+  }
+
+  async function applyUserLang() {
+    try {
+      const data = await apiCall("/api/full-settings");
+      if (data && data.lang) {
+        CURRENT_LANG = data.lang.startsWith("uz") ? "uz" : "ru";
+      }
+    } catch (e) {
+      CURRENT_LANG = "ru";
+    }
+    updateStaticLabels();
+  }
+
   const tg = window.Telegram?.WebApp;
   if (tg) {
     tg.ready();
@@ -544,13 +762,6 @@
       check();
     });
   }
-
-  const CATEGORY_META = {
-    main:    { label: "Основные",  icon: "🍱" },
-    salad:   { label: "Салаты",    icon: "🥗" },
-    dessert: { label: "Десерты",   icon: "🍰" },
-    drink:   { label: "Напитки",   icon: "🥤" },
-  };
 
   const API_BASE = "https://bazilik-webhook.onrender.com";
 
@@ -637,14 +848,14 @@
       userBalance = data.balance || 0;
       document.getElementById("balance-pill").textContent = fmt(userBalance);
 
-      const dateLabel = data.date_label || "завтра";
+      const dateLabel = data.date_label || (CURRENT_LANG === "uz" ? "ertaga" : "завтра");
       document.getElementById("header-extra").innerHTML =
-        `<div class="header-sub-label">Меню на</div><div class="header-sub-value">${dateLabel}</div>`;
+        `<div class="header-sub-label">${T("menu_for")}</div><div class="header-sub-value">${dateLabel}</div>`;
 
       const availableCats = Object.keys(MENU).filter(c => MENU[c].length > 0);
       if (availableCats.length === 0) {
         document.getElementById("menu-list").innerHTML =
-          '<div class="empty-state"><div class="empty-state-icon">🍽️</div><div class="empty-state-text">Меню на эту дату ещё не добавлено</div></div>';
+          `<div class="empty-state"><div class="empty-state-icon">🍽️</div><div class="empty-state-text">${T("empty_menu")}</div></div>`;
         return;
       }
 
@@ -653,7 +864,7 @@
       renderMenuList();
     } catch (e) {
       document.getElementById("menu-list").innerHTML =
-        '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Не удалось загрузить меню</div></div>';
+        `<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">${T("loading_menu")}</div></div>`;
     }
   }
 
@@ -661,7 +872,7 @@
     const tabsEl = document.getElementById("tabs");
     tabsEl.innerHTML = "";
     cats.forEach(cat => {
-      const meta = CATEGORY_META[cat] || { label: cat, icon: "🍽" };
+      const meta = getCategoryMeta()[cat] || { label: cat, icon: "🍽" };
       const btn = document.createElement("button");
       btn.className = "tab" + (cat === currentCat ? " active" : "");
       btn.innerHTML = `${meta.icon} ${meta.label} <span class="tab-count">${MENU[cat].length}</span>`;
@@ -676,7 +887,7 @@
     listEl.innerHTML = "";
 
     if (items.length === 0) {
-      listEl.innerHTML = '<div class="empty-state"><div class="empty-state-icon">🍽️</div><div class="empty-state-text">В этой категории пока пусто</div></div>';
+      listEl.innerHTML = `<div class="empty-state"><div class="empty-state-icon">🍽️</div><div class="empty-state-text">${T("empty_category")}</div></div>`;
       return;
     }
 
@@ -687,7 +898,7 @@
 
       const thumbHtml = item.photo_url
         ? `<img class="item-thumb-img" src="${item.photo_url}" alt="${item.name}" loading="lazy">`
-        : `<div class="item-thumb">${CATEGORY_META[currentCat]?.icon || "🍽"}</div>`;
+        : `<div class="item-thumb">${getCategoryMeta()[currentCat]?.icon || "🍽"}</div>`;
 
       card.innerHTML = `
         ${thumbHtml}
@@ -705,7 +916,7 @@
   function renderStepper(item, qty) {
     const el = document.getElementById(`stepper-${item.id}`);
     if (qty === 0) {
-      el.innerHTML = `<button class="step-plus add" data-id="${item.id}">+ Добавить</button>`;
+      el.innerHTML = `<button class="step-plus add" data-id="${item.id}">${T("add")}</button>`;
     } else {
       el.innerHTML = `
         <button class="step-btn step-minus" data-id="${item.id}" data-action="dec">−</button>
@@ -737,8 +948,9 @@
     const bar = document.getElementById("cart-bar");
     if (count === 0 || currentPage !== "menu") { bar.classList.remove("visible"); return; }
     bar.classList.add("visible");
-    document.getElementById("cart-count").textContent = count === 1 ? "1 позиция" : `${count} позиций`;
+    document.getElementById("cart-count").textContent = `${count} ${pluralWord(count, "positions_count")}`;
     document.getElementById("cart-total").textContent = fmt(total);
+    document.getElementById("cart-action").innerHTML = `${T("checkout")} <span>→</span>`;
   }
 
   function submitOrder() {
@@ -760,8 +972,8 @@
     modal.innerHTML = `
       <div style="background: var(--cream-dark); border-radius: 20px 20px 0 0; padding: 20px 18px;
                   width: 100%; max-width: 420px; max-height: 80vh; overflow-y: auto;">
-        <div style="font-size: 16px; font-weight: 700; margin-bottom: 4px;">Способ оплаты</div>
-        <div style="font-size: 13px; color: var(--ink-soft); margin-bottom: 16px;">К оплате: ${fmt(total)}</div>
+        <div style="font-size: 16px; font-weight: 700; margin-bottom: 4px;">${T("payment_method_title")}</div>
+        <div style="font-size: 13px; color: var(--ink-soft); margin-bottom: 16px;">${T("to_pay")}: ${fmt(total)}</div>
 
         <button class="pay-option-btn" data-method="balance" ${enoughBalance ? "" : "disabled"}
           style="width: 100%; display: flex; align-items: center; gap: 12px; padding: 14px;
@@ -770,9 +982,9 @@
                  opacity: ${enoughBalance ? "1" : "0.5"};">
           <span style="font-size: 24px;">💳</span>
           <div style="flex: 1;">
-            <div style="font-size: 14px; font-weight: 700; color: var(--ink);">С баланса</div>
+            <div style="font-size: 14px; font-weight: 700; color: var(--ink);">${T("pay_balance")}</div>
             <div style="font-size: 12px; color: var(--ink-soft);">
-              ${enoughBalance ? `Доступно: ${fmt(userBalance)}` : `Недостаточно средств (есть ${fmt(userBalance)})`}
+              ${enoughBalance ? `${T("pay_balance_desc")}: ${fmt(userBalance)}` : `${T("pay_balance_insufficient")} ${fmt(userBalance)})`}
             </div>
           </div>
         </button>
@@ -783,8 +995,8 @@
                  margin-bottom: 10px; text-align: left; cursor: pointer;">
           <span style="font-size: 24px;">💵</span>
           <div style="flex: 1;">
-            <div style="font-size: 14px; font-weight: 700; color: var(--ink);">Наличными при получении</div>
-            <div style="font-size: 12px; color: var(--ink-soft);">Оплатите курьеру наличными</div>
+            <div style="font-size: 14px; font-weight: 700; color: var(--ink);">${T("pay_cash")}</div>
+            <div style="font-size: 12px; color: var(--ink-soft);">${T("pay_cash_desc")}</div>
           </div>
         </button>
 
@@ -794,12 +1006,12 @@
                  margin-bottom: 14px; text-align: left; cursor: pointer;">
           <span style="font-size: 24px;">🔵</span>
           <div style="flex: 1;">
-            <div style="font-size: 14px; font-weight: 700; color: var(--ink);">Click</div>
-            <div style="font-size: 12px; color: var(--ink-soft);">Пополнить баланс и оплатить сразу</div>
+            <div style="font-size: 14px; font-weight: 700; color: var(--ink);">${T("pay_click")}</div>
+            <div style="font-size: 12px; color: var(--ink-soft);">${T("pay_click_desc")}</div>
           </div>
         </button>
 
-        <button class="btn-danger" id="payment-cancel-btn" style="margin-top: 0;">Отмена</button>
+        <button class="btn-danger" id="payment-cancel-btn" style="margin-top: 0;">${T("cancel")}</button>
       </div>
     `;
     document.body.appendChild(modal);
@@ -833,14 +1045,13 @@
                   width: 100%; max-width: 420px;">
         <div style="font-size: 36px; text-align: center; margin-bottom: 8px;">📍</div>
         <div style="font-size: 16px; font-weight: 700; text-align: center; margin-bottom: 6px;">
-          Где вы сейчас находитесь?
+          ${T("where_are_you")}
         </div>
         <div style="font-size: 13px; color: var(--ink-soft); text-align: center; margin-bottom: 18px; line-height: 1.4;">
-          Это поможет курьеру точно найти вас при доставке.
-          Локация обновит адрес доставки для всей компании.
+          ${T("location_hint")}
         </div>
-        <button class="btn-primary" id="share-location-now-btn">📍 Отправить мою локацию</button>
-        <button class="btn-danger" id="skip-location-btn" style="margin-top: 8px;">Пропустить, использовать прошлую локацию</button>
+        <button class="btn-primary" id="share-location-now-btn">${T("share_location")}</button>
+        <button class="btn-danger" id="skip-location-btn" style="margin-top: 8px;">${T("skip_location")}</button>
       </div>
     `;
     document.body.appendChild(modal);
@@ -856,18 +1067,18 @@
 
   function requestOrderLocation(items, paymentMethod, modal) {
     const btn = document.getElementById("share-location-now-btn");
-    btn.textContent = "Определяем локацию…";
+    btn.textContent = T("determining_location");
 
     const onSuccess = async (lat, lon) => {
       document.body.removeChild(modal);
-      showToast("📍 Локация обновлена");
+      showToast(T("location_updated"));
       await apiCall("/api/update-order-location", { latitude: lat, longitude: lon });
       finalizeOrder(items, paymentMethod);
     };
 
     const onFail = () => {
       document.body.removeChild(modal);
-      showToast("Не удалось определить локацию — используем прошлую");
+      showToast(T("location_failed"));
       finalizeOrder(items, paymentMethod);
     };
 
@@ -896,29 +1107,29 @@
   }
 
   async function finalizeOrder(items, paymentMethod) {
-    document.getElementById("cart-action").textContent = "Отправляем…";
+    document.getElementById("cart-action").textContent = T("sending");
     try {
       const result = await apiCall("/api/order", { items, payment_method: paymentMethod });
       if (result.success) {
         cart = {};
         renderCart();
         if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred("success");
-        showToast("✅ Заказ оформлен!");
+        showToast(T("order_placed"));
         loadMenu();
-        document.getElementById("cart-action").innerHTML = "Оформить заказ <span>→</span>";
+        document.getElementById("cart-action").innerHTML = `${T("checkout")} <span>→</span>`;
         switchPage("order");
       } else {
-        showToast(result.error || "Ошибка оформления заказа");
-        document.getElementById("cart-action").innerHTML = "Оформить заказ <span>→</span>";
+        showToast(result.error || T("order_error"));
+        document.getElementById("cart-action").innerHTML = `${T("checkout")} <span>→</span>`;
       }
     } catch (e) {
-      showToast("Ошибка соединения");
-      document.getElementById("cart-action").innerHTML = "Оформить заказ <span>→</span>";
+      showToast(T("connection_error"));
+      document.getElementById("cart-action").innerHTML = `${T("checkout")} <span>→</span>`;
     }
   }
 
   async function startClickTopupForOrder(items, total) {
-    showToast("Открываем Click для оплаты…");
+    showToast(T("opening_click"));
     try {
       const neededAmount = total - userBalance;
       const result = await apiCall("/api/topup", { amount: neededAmount > 0 ? neededAmount : total });
@@ -932,15 +1143,15 @@
           window.open(result.click_link, "_blank");
         }
         if (tg?.showAlert) {
-          tg.showAlert("После оплаты в Click вернитесь сюда и нажмите 'Оформить заказ' ещё раз — баланс обновится автоматически.");
+          tg.showAlert(T("click_return_hint"));
         } else {
-          showToast("После оплаты вернитесь и нажмите 'Оформить заказ' снова");
+          showToast(T("click_return_hint"));
         }
       } else {
-        showToast(result.error || "Не удалось создать ссылку на оплату");
+        showToast(result.error || T("cant_create_link"));
       }
     } catch (e) {
-      showToast("Ошибка соединения");
+      showToast(T("connection_error"));
     }
   }
 
@@ -950,11 +1161,12 @@
 
   async function loadMyOrder() {
     const el = document.getElementById("order-content");
-    el.innerHTML = '<div class="loading">Загружаем заказ…</div>';
+    el.innerHTML = `<div class="loading">${T("loading_order")}</div>`;
     try {
       const data = await apiCall("/api/my-order");
       if (!data.items || data.items.length === 0) {
-        el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">📝</div><div class="empty-state-text">У вас пока нет заказа на ${data.date_label || "завтра"}</div></div>`;
+        const dl = data.date_label || (CURRENT_LANG === "uz" ? "ertaga" : "завтра");
+        el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">📝</div><div class="empty-state-text">${T("no_order_yet")} ${dl}</div></div>`;
         return;
       }
 
@@ -977,18 +1189,18 @@
 
       html += `<div class="order-card">`;
       for (const [cat, items] of Object.entries(byCategory)) {
-        const meta = CATEGORY_META[cat] || { label: cat, icon: "🍽" };
+        const meta = getCategoryMeta()[cat] || { label: cat, icon: "🍽" };
         html += `<div class="order-cat-label">${meta.icon} ${meta.label}</div>`;
         items.forEach(item => {
           html += `<div class="order-item-row"><span>${item.meal_name}</span><span>${fmt(item.price)}</span></div>`;
         });
       }
-      html += `<div class="order-total-row"><span>Итого</span><span>${fmt(data.total)}</span></div>`;
+      html += `<div class="order-total-row"><span>${T("order_total")}</span><span>${fmt(data.total)}</span></div>`;
       html += `</div>`;
 
       if (bestStatus === "pending") {
-        html += `<button class="btn-primary" id="edit-order-btn">Изменить заказ</button>`;
-        html += `<button class="btn-danger" id="cancel-order-btn">Отменить весь заказ</button>`;
+        html += `<button class="btn-primary" id="edit-order-btn">${T("change_order")}</button>`;
+        html += `<button class="btn-danger" id="cancel-order-btn">${T("cancel_order")}</button>`;
       }
 
       el.innerHTML = html;
@@ -1000,15 +1212,15 @@
       if (cancelBtn) cancelBtn.onclick = () => confirmCancelOrder();
 
     } catch (e) {
-      el.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Не удалось загрузить заказ</div></div>';
+      el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">${T("loading_order")}</div></div>`;
     }
   }
 
   function renderDeliveryStepper(status) {
     const steps = [
-      { key: "confirmed", icon: "👨‍🍳", label: "Готовится" },
-      { key: "in_transit", icon: "🚚", label: "В пути" },
-      { key: "delivered", icon: "✅", label: "Доставлен" },
+      { key: "confirmed", icon: "👨‍🍳", label: T("delivered_status_cooking") },
+      { key: "in_transit", icon: "🚚", label: T("delivered_status_transit") },
+      { key: "delivered", icon: "✅", label: T("delivered_status_done") },
     ];
     const statusPriority = { pending: 1, confirmed: 2, in_transit: 3, delivered: 4 };
     const currentLevel = statusPriority[status] || 1;
@@ -1034,11 +1246,11 @@
 
   function confirmCancelOrder() {
     if (tg?.showConfirm) {
-      tg.showConfirm("Точно отменить весь заказ?", (confirmed) => {
+      tg.showConfirm(T("confirm_cancel"), (confirmed) => {
         if (confirmed) doCancelOrder();
       });
     } else {
-      if (confirm("Точно отменить весь заказ?")) doCancelOrder();
+      if (confirm(T("confirm_cancel"))) doCancelOrder();
     }
   }
 
@@ -1046,13 +1258,13 @@
     try {
       const result = await apiCall("/api/cancel-order");
       if (result.success) {
-        showToast(result.refund_amount > 0 ? `✅ Отменено. +${fmt(result.refund_amount)} на баланс` : "✅ Заказ отменён");
+        showToast(result.refund_amount > 0 ? `✅ ${T("cancelled_refund")}. +${fmt(result.refund_amount)}` : `✅ ${T("cancelled_refund")}`);
         loadMyOrder();
       } else {
-        showToast(result.error || "Ошибка отмены");
+        showToast(result.error || T("load_error"));
       }
     } catch (e) {
-      showToast("Ошибка соединения");
+      showToast(T("connection_error"));
     }
   }
 
@@ -1060,7 +1272,7 @@
 
   async function loadProfile() {
     const el = document.getElementById("profile-content");
-    el.innerHTML = '<div class="loading">Загружаем профиль…</div>';
+    el.innerHTML = `<div class="loading">${T("loading_profile")}</div>`;
     try {
       const data = await apiCall("/api/profile");
       if (data.error) {
@@ -1071,23 +1283,23 @@
       el.innerHTML = `
         <div class="profile-card">
           <div class="profile-name">${data.full_name || "—"}</div>
-          <div class="profile-sub">${data.company_name || "Компания не указана"}</div>
+          <div class="profile-sub">${data.company_name || T("company_not_set")}</div>
           <div class="profile-sub">📱 ${data.phone ? "+" + data.phone : "—"}</div>
           <div class="profile-stats">
-            <div class="stat-box"><div class="stat-value">${data.total_orders}</div><div class="stat-label">Заказов</div></div>
-            <div class="stat-box"><div class="stat-value">${data.points}</div><div class="stat-label">Баллов</div></div>
+            <div class="stat-box"><div class="stat-value">${data.total_orders}</div><div class="stat-label">${T("orders_count")}</div></div>
+            <div class="stat-box"><div class="stat-value">${data.points}</div><div class="stat-label">${T("points_count")}</div></div>
           </div>
           <div style="margin-top: 10px; text-align: center; font-size: 13px; color: var(--ink-soft);">
-            🏅 ${data.status || "Новый"}
+            🏅 ${data.status || "—"}
           </div>
         </div>
         <div class="profile-card">
-          <div style="font-size: 13px; color: var(--ink-soft); margin-bottom: 4px;">Код для приглашения друзей</div>
+          <div style="font-size: 13px; color: var(--ink-soft); margin-bottom: 4px;">${T("invite_code_title")}</div>
           <div style="font-size: 18px; font-weight: 700; letter-spacing: 1px;">${data.referral_code || "—"}</div>
         </div>
       `;
     } catch (e) {
-      el.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Не удалось загрузить профиль</div></div>';
+      el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">${T("profile_loading_err")}</div></div>`;
     }
   }
 
@@ -1095,7 +1307,7 @@
 
   async function loadBalance() {
     const el = document.getElementById("balance-content");
-    el.innerHTML = '<div class="loading">Загружаем баланс…</div>';
+    el.innerHTML = `<div class="loading">${T("loading_balance")}</div>`;
     try {
       const data = await apiCall("/api/balance-history");
       if (data.error) {
@@ -1105,16 +1317,16 @@
 
       let html = `
         <div class="balance-hero">
-          <div class="balance-hero-label">Ваш баланс</div>
+          <div class="balance-hero-label">${T("your_balance")}</div>
           <div class="balance-hero-value">${fmt(data.balance)}</div>
         </div>
-        <button class="btn-primary" id="topup-btn">🔵 Пополнить через Click</button>
+        <button class="btn-primary" id="topup-btn">${T("topup_via_click")}</button>
         <div class="profile-card" style="margin-top: 12px;">
-          <div style="font-size: 13px; font-weight: 600; margin-bottom: 8px;">История операций</div>
+          <div style="font-size: 13px; font-weight: 600; margin-bottom: 8px;">${T("history_title")}</div>
       `;
 
       if (!data.history || data.history.length === 0) {
-        html += `<div style="color: var(--ink-soft); font-size: 13px; padding: 8px 0;">Операций пока нет</div>`;
+        html += `<div style="color: var(--ink-soft); font-size: 13px; padding: 8px 0;">${T("no_operations")}</div>`;
       } else {
         data.history.forEach(h => {
           const sign = h.type === "credit" ? "+" : "−";
@@ -1135,7 +1347,7 @@
       const topupBtn = document.getElementById("topup-btn");
       if (topupBtn) topupBtn.onclick = showTopupOptions;
     } catch (e) {
-      el.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Не удалось загрузить баланс</div></div>';
+      el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">${T("loading_balance")}</div></div>`;
     }
   }
 
@@ -1145,7 +1357,7 @@
 
     let html = `
       <div class="profile-card">
-        <div style="font-size: 15px; font-weight: 700; margin-bottom: 12px;">Выберите сумму</div>
+        <div style="font-size: 15px; font-weight: 700; margin-bottom: 12px;">${T("choose_amount")}</div>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
     `;
     amounts.forEach(a => {
@@ -1154,15 +1366,15 @@
     html += `
         </div>
 
-        <div style="margin-top: 16px; font-size: 13px; font-weight: 600; color: var(--ink-soft);">Или введите свою сумму</div>
+        <div style="margin-top: 16px; font-size: 13px; font-weight: 600; color: var(--ink-soft);">${T("or_enter_custom")}</div>
         <div style="display: flex; gap: 8px; margin-top: 8px;">
-          <input type="number" id="custom-amount-input" placeholder="Например, 75000"
+          <input type="number" id="custom-amount-input" placeholder="${T("amount_placeholder")}"
             style="flex: 1; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line);
                    background: var(--cream-dark); color: var(--ink); font-size: 14px; outline: none;">
-          <button class="cart-action" id="custom-amount-btn" style="border-radius: 12px;">OK</button>
+          <button class="cart-action" id="custom-amount-btn" style="border-radius: 12px;">${T("ok")}</button>
         </div>
 
-        <button class="btn-danger" id="topup-back-btn" style="margin-top: 16px;">Назад</button>
+        <button class="btn-danger" id="topup-back-btn" style="margin-top: 16px;">${T("back")}</button>
       </div>
     `;
     el.innerHTML = html;
@@ -1175,7 +1387,7 @@
       const input = document.getElementById("custom-amount-input");
       const value = parseInt(input.value);
       if (!value || value < 100) {
-        showToast("Минимальная сумма — 100 сум");
+        showToast(T("min_amount"));
         return;
       }
       requestTopupLink(value);
@@ -1193,12 +1405,12 @@
         } else {
           window.open(result.click_link, "_blank");
         }
-        showToast("Открываем Click для оплаты…");
+        showToast(T("opening_click"));
       } else {
-        showToast(result.error || "Не удалось создать ссылку на оплату");
+        showToast(result.error || T("cant_create_link"));
       }
     } catch (e) {
-      showToast("Ошибка соединения");
+      showToast(T("connection_error"));
     }
   }
 
@@ -1206,13 +1418,13 @@
 
   async function loadRating() {
     const el = document.getElementById("rating-content");
-    el.innerHTML = '<div class="loading">Загружаем рейтинг…</div>';
+    el.innerHTML = `<div class="loading">${T("loading_rating")}</div>`;
     try {
       const data = await apiCall("/api/rating");
       const companies = data.companies || [];
 
       if (companies.length === 0) {
-        el.innerHTML = '<div class="empty-state"><div class="empty-state-icon">🏆</div><div class="empty-state-text">Рейтинг пока пуст</div></div>';
+        el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">🏆</div><div class="empty-state-text">${T("rating_empty")}</div></div>`;
         return;
       }
 
@@ -1223,13 +1435,13 @@
           <div class="rating-row">
             <div class="rating-rank ${rank === 1 ? "top1" : ""}">${rank}</div>
             <div class="rating-name">${c.name}</div>
-            <div class="rating-count">${c.month_orders} зак.</div>
+            <div class="rating-count">${c.month_orders} ${T("rating_orders")}</div>
           </div>
         `;
       });
       el.innerHTML = html;
     } catch (e) {
-      el.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Не удалось загрузить рейтинг</div></div>';
+      el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">${T("rating_not_loaded")}</div></div>`;
     }
   }
 
@@ -1237,7 +1449,7 @@
 
   async function loadGifts() {
     const el = document.getElementById("gifts-content");
-    el.innerHTML = '<div class="loading">Загружаем подарки…</div>';
+    el.innerHTML = `<div class="loading">${T("loading_gifts")}</div>`;
     try {
       const data = await apiCall("/api/gifts");
       if (data.error) {
@@ -1245,7 +1457,7 @@
         return;
       }
 
-      let html = `<div style="font-size: 13px; color: var(--ink-soft); margin-bottom: 12px;">Ваши баллы: <b style="color: var(--ink);">${data.points}</b></div>`;
+      let html = `<div style="font-size: 13px; color: var(--ink-soft); margin-bottom: 12px;">${T("points_label")}: <b style="color: var(--ink);">${data.points}</b></div>`;
 
       // ─── Блок: серия заказов подряд (streak) ───
       const streak = data.streak;
@@ -1253,8 +1465,8 @@
         <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
           <span style="font-size: 22px;">🔥</span>
           <div>
-            <div style="font-size: 14px; font-weight: 700;">Серия заказов: ${streak.current} ${streak.current === 1 ? "день" : "дней"} подряд</div>
-            <div style="font-size: 12px; color: var(--ink-soft);">Заказывайте каждый день, чтобы получать бонусы</div>
+            <div style="font-size: 14px; font-weight: 700;">${T("streak_title")} ${streak.current} ${pluralWord(streak.current, "streak_days_word")}</div>
+            <div style="font-size: 12px; color: var(--ink-soft);">${T("streak_hint")}</div>
           </div>
         </div>
         <div style="display: flex; gap: 6px; margin-top: 10px;">`;
@@ -1273,11 +1485,11 @@
 
       if (streak.next_milestone) {
         html += `<div style="font-size: 12px; color: var(--ink-soft); margin-top: 8px;">
-          Ещё ${streak.days_to_next} ${streak.days_to_next === 1 ? "день" : "дней"} до бонуса +${streak.next_milestone.bonus} баллов!
+          ${T("days_to_bonus")} ${streak.days_to_next} ${pluralWord(streak.days_to_next, "days_word")} ${T("days_to_bonus_end")}${streak.next_milestone.bonus} ${T("points_word")}
         </div>`;
       } else {
         html += `<div style="font-size: 12px; color: var(--green-600); margin-top: 8px; font-weight: 600;">
-          🎉 Вы получили все бонусы за серию!
+          ${T("all_streak_done")}
         </div>`;
       }
       html += `</div>`;
@@ -1291,27 +1503,25 @@
             <span style="font-size: 22px;">🏆</span>
             <div>
               <div style="font-size: 14px; font-weight: 700;">${c.name}</div>
-              <div style="font-size: 12px; color: var(--ink-soft);">Заказов в этом месяце: ${c.orders_this_month}</div>
+              <div style="font-size: 12px; color: var(--ink-soft);">${T("company_orders_month")} ${c.orders_this_month}</div>
             </div>
           </div>`;
 
         if (isLeader) {
           html += `<div style="background: var(--green-600); color: var(--on-accent); border-radius: 10px; padding: 10px; margin-top: 8px; font-size: 13px; font-weight: 700; text-align: center;">
-            🥇 Сейчас на 1 месте! Если так продержитесь до конца месяца —
-            каждый сотрудник получит +${c.reward_points} баллов!
+            ${T("company_leader")}${c.reward_points} ${T("points_word")}
           </div>`;
         } else if (c.rank) {
           html += `<div style="font-size: 13px; color: var(--ink-soft); margin-top: 8px;">
-            Место в рейтинге: <b style="color: var(--ink);">#${c.rank}</b>.
-            Компания-лидер месяца получает +${c.reward_points} баллов каждому сотруднику —
-            заказывайте чаще, чтобы подняться выше! 💪
+            ${T("company_rank")} <b style="color: var(--ink);">#${c.rank}</b>.
+            ${T("company_rank_hint")}${c.reward_points} ${T("company_rank_hint2")}
           </div>`;
         }
         html += `</div>`;
       }
 
       // ─── Подарки за баллы ───
-      html += `<div style="font-size: 13px; font-weight: 700; margin: 4px 0 8px;">Подарки за баллы</div>`;
+      html += `<div style="font-size: 13px; font-weight: 700; margin: 4px 0 8px;">${T("gifts_section_title")}</div>`;
       data.gifts.forEach(g => {
         html += `
           <div class="gift-card ${g.unlocked ? "" : "locked"}">
@@ -1319,15 +1529,15 @@
             <div class="gift-info">
               <div class="gift-name">${g.name}</div>
               <div class="gift-desc">${g.desc}</div>
-              <div class="gift-points">${g.points} баллов</div>
+              <div class="gift-points">${g.points} ${T("points_count")}</div>
             </div>
-            <div class="gift-badge ${g.unlocked ? "unlocked" : "locked"}">${g.unlocked ? "✓ Получено" : "Закрыто"}</div>
+            <div class="gift-badge ${g.unlocked ? "unlocked" : "locked"}">${g.unlocked ? T("gift_unlocked") : T("gift_locked")}</div>
           </div>
         `;
       });
       el.innerHTML = html;
     } catch (e) {
-      el.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Не удалось загрузить подарки</div></div>';
+      el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">${T("gifts_not_loaded")}</div></div>`;
     }
   }
 
@@ -1335,7 +1545,7 @@
 
   async function loadReferral() {
     const el = document.getElementById("referral-content");
-    el.innerHTML = '<div class="loading">Загружаем…</div>';
+    el.innerHTML = `<div class="loading">${T("loading_referral")}</div>`;
     try {
       const data = await apiCall("/api/referral");
       if (data.error) {
@@ -1347,37 +1557,39 @@
 
       el.innerHTML = `
         <div class="referral-code-box">
-          <div style="font-size: 12px; opacity: 0.8;">Ваш код приглашения</div>
+          <div style="font-size: 12px; opacity: 0.8;">${T("invite_code_title")}</div>
           <div class="referral-code-value">${data.referral_code}</div>
         </div>
         <div class="profile-card">
-          <div style="font-size: 13px; color: var(--ink-soft);">Приглашено друзей</div>
+          <div style="font-size: 13px; color: var(--ink-soft);">${T("invited_friends")}</div>
           <div style="font-size: 22px; font-weight: 700; margin-top: 2px;">${data.invited_count}</div>
-          <div style="font-size: 12px; color: var(--ink-soft); margin-top: 8px;">За каждого друга вы получаете +5 баллов, друг получает +10 баллов при регистрации</div>
+          <div style="font-size: 12px; color: var(--ink-soft); margin-top: 8px;">${T("referral_hint")}</div>
         </div>
-        <button class="share-btn" id="share-referral-btn">Поделиться с другом</button>
+        <button class="share-btn" id="share-referral-btn">${T("share_friend")}</button>
       `;
 
       document.getElementById("share-referral-btn").onclick = () => {
         if (tg?.openTelegramLink) {
-          tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(shareLink)}&text=${encodeURIComponent("Присоединяйся к Bazilik Catering!")}`);
+          tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(shareLink)}&text=${encodeURIComponent(T("join_text"))}`);
         } else {
           navigator.clipboard?.writeText(shareLink);
-          showToast("Ссылка скопирована!");
+          showToast(T("link_copied"));
         }
       };
     } catch (e) {
-      el.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Не удалось загрузить данные</div></div>';
+      el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">${T("referral_not_loaded")}</div></div>`;
     }
   }
 
   // ─── SETTINGS PAGE ──────────────────────────────────────────────────────────
 
   const DAYS_RU = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"];
+  const DAYS_UZ = ["Dushanba", "Seshanba", "Chorshanba", "Payshanba", "Juma", "Shanba", "Yakshanba"];
+  function getDays() { return CURRENT_LANG === "uz" ? DAYS_UZ : DAYS_RU; }
 
   async function loadSettings() {
     const el = document.getElementById("settings-content");
-    el.innerHTML = '<div class="loading">Загружаем настройки…</div>';
+    el.innerHTML = `<div class="loading">${T("loading_settings")}</div>`;
     try {
       const data = await apiCall("/api/full-settings");
       if (data.error) {
@@ -1385,50 +1597,51 @@
         return;
       }
 
-      const langLabel = data.lang === "uz" ? "O'zbekcha" : "Русский";
+      const isUzLang = data.lang && data.lang.startsWith("uz");
+      const langLabel = isUzLang ? "O'zbekcha" : "Русский";
       const birthdayLabel = data.birthday
-        ? new Date(data.birthday).toLocaleDateString("ru-RU", { day: "numeric", month: "long" })
-        : "Не указан";
+        ? new Date(data.birthday).toLocaleDateString(CURRENT_LANG === "uz" ? "uz-UZ" : "ru-RU", { day: "numeric", month: "long" })
+        : T("not_selected");
 
       let html = `
-        <button class="back-link" id="settings-back-to-more">← Назад</button>
+        <button class="back-link" id="settings-back-to-more">${T("back")}</button>
         <div class="profile-card" style="padding: 4px;">
           <button class="more-link" id="settings-profile-btn" style="display:flex; justify-content:space-between; align-items:center;">
-            <span>👤 Профиль<br><span style="font-size:11px; color:var(--ink-soft); font-weight:400;">${data.full_name || "—"}</span></span>
+            <span>👤 ${T("profile")}<br><span style="font-size:11px; color:var(--ink-soft); font-weight:400;">${data.full_name || "—"}</span></span>
             <span style="color:var(--ink-soft);">›</span>
           </button>
           <button class="more-link" id="settings-birthday-btn" style="display:flex; justify-content:space-between; align-items:center;">
-            <span>🎂 День рождения<br><span style="font-size:11px; color:var(--ink-soft); font-weight:400;">${birthdayLabel}</span></span>
+            <span>🎂 ${T("birthday_label")}<br><span style="font-size:11px; color:var(--ink-soft); font-weight:400;">${birthdayLabel}</span></span>
             <span style="color:var(--ink-soft);">›</span>
           </button>
           <button class="more-link" id="settings-lang-btn" style="display:flex; justify-content:space-between; align-items:center;">
-            <span>🌐 Язык<br><span style="font-size:11px; color:var(--ink-soft); font-weight:400;">${langLabel}</span></span>
+            <span>🌐 ${CURRENT_LANG === "uz" ? "Til" : "Язык"}<br><span style="font-size:11px; color:var(--ink-soft); font-weight:400;">${langLabel}</span></span>
             <span style="color:var(--ink-soft);">›</span>
           </button>
           ${data.company_name ? `
           <button class="more-link" id="settings-address-btn" style="display:flex; justify-content:space-between; align-items:center;">
-            <span>🏢 Локация компании<br><span style="font-size:11px; color:var(--ink-soft); font-weight:400;">${data.company_address && data.company_address.includes("maps.google.com") ? "📍 Указана" : "Не указана"}</span></span>
+            <span>🏢 ${T("company_location_title")}<br><span style="font-size:11px; color:var(--ink-soft); font-weight:400;">${data.company_address && data.company_address.includes("maps.google.com") ? "📍 ✓" : T("location_not_set")}</span></span>
             <span style="color:var(--ink-soft);">›</span>
           </button>` : ""}
         </div>
 
         <div class="profile-card">
-          <div style="font-size: 13px; font-weight: 700; margin-bottom: 8px;">🔔 Уведомления</div>
+          <div style="font-size: 13px; font-weight: 700; margin-bottom: 8px;">${T("notifications_title")}</div>
           <div class="setting-row">
-            <div class="setting-label">Напоминание о заказе</div>
+            <div class="setting-label">${T("notify_reminder")}</div>
             <button class="toggle-switch ${data.notify_reminder ? "on" : "off"}" id="notify-reminder-toggle"><div class="toggle-knob"></div></button>
           </div>
           <div class="setting-row">
-            <div class="setting-label">Статус доставки</div>
+            <div class="setting-label">${T("notify_delivery")}</div>
             <button class="toggle-switch ${data.notify_delivery ? "on" : "off"}" id="notify-delivery-toggle"><div class="toggle-knob"></div></button>
           </div>
           <div class="setting-row">
-            <div class="setting-label">Акции и новости</div>
+            <div class="setting-label">${T("notify_marketing")}</div>
             <button class="toggle-switch ${data.notify_marketing ? "on" : "off"}" id="notify-marketing-toggle"><div class="toggle-knob"></div></button>
           </div>
         </div>
 
-        <button class="btn-primary" id="go-to-autoorder-btn" style="background: var(--cream-dark); color: var(--ink);">🔁 Открыть автозаказ</button>
+        <button class="btn-primary" id="go-to-autoorder-btn" style="background: var(--cream-dark); color: var(--ink);">${T("open_autoorder")}</button>
       `;
       el.innerHTML = html;
 
@@ -1444,32 +1657,32 @@
         document.getElementById(`notify-${type}-toggle`).onclick = async () => {
           const result = await apiCall("/api/toggle-notification", { notify_type: `notify_${type}` });
           if (result.success) {
-            showToast(result.value ? "✅ Включено" : "Выключено");
+            showToast(result.value ? T("enabled") : T("disabled"));
             loadSettings();
           }
         };
       });
     } catch (e) {
-      el.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Не удалось загрузить настройки</div></div>';
+      el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">${T("settings_not_loaded")}</div></div>`;
     }
   }
 
   function showProfileEditor(data) {
     const el = document.getElementById("settings-content");
     el.innerHTML = `
-      <button class="back-link" id="profile-editor-back">← Назад</button>
+      <button class="back-link" id="profile-editor-back">${T("back")}</button>
       <div class="profile-card">
-        <div style="font-size: 13px; font-weight: 600; margin-bottom: 6px;">Имя</div>
+        <div style="font-size: 13px; font-weight: 600; margin-bottom: 6px;">${T("name_label")}</div>
         <input type="text" id="edit-name-input" value="${data.full_name || ""}"
           style="width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line);
                  background: var(--cream-dark); color: var(--ink); font-size: 14px; margin-bottom: 14px;">
 
-        <div style="font-size: 13px; font-weight: 600; margin-bottom: 6px;">Телефон</div>
+        <div style="font-size: 13px; font-weight: 600; margin-bottom: 6px;">${T("phone_label")}</div>
         <input type="tel" id="edit-phone-input" value="${data.phone || ""}" placeholder="998901234567"
           style="width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line);
                  background: var(--cream-dark); color: var(--ink); font-size: 14px;">
 
-        <button class="btn-primary" id="save-profile-btn">Сохранить</button>
+        <button class="btn-primary" id="save-profile-btn">${T("save")}</button>
       </div>
     `;
     document.getElementById("profile-editor-back").onclick = loadSettings;
@@ -1483,7 +1696,7 @@
       const r2 = await apiCall("/api/update-profile", { field: "phone", value: phone });
       if (!r2.success) { showToast(r2.error); return; }
 
-      showToast("✅ Профиль обновлён");
+      showToast(T("profile_updated"));
       loadSettings();
     };
   }
@@ -1491,51 +1704,55 @@
   function showBirthdayPicker(data) {
     const el = document.getElementById("settings-content");
     el.innerHTML = `
-      <button class="back-link" id="birthday-editor-back">← Назад</button>
+      <button class="back-link" id="birthday-editor-back">${T("back")}</button>
       <div class="profile-card">
-        <div style="font-size: 13px; font-weight: 600; margin-bottom: 6px;">Дата рождения</div>
+        <div style="font-size: 13px; font-weight: 600; margin-bottom: 6px;">${T("birthday_label")}</div>
         <input type="date" id="edit-birthday-input" value="${data.birthday || ""}"
           style="width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line);
                  background: var(--cream-dark); color: var(--ink); font-size: 14px;">
         <div style="font-size: 12px; color: var(--ink-soft); margin-top: 8px;">
-          🎁 В день рождения мы начислим вам +50 баллов!
+          ${T("birthday_gift_hint")}
         </div>
-        <button class="btn-primary" id="save-birthday-btn">Сохранить</button>
+        <button class="btn-primary" id="save-birthday-btn">${T("save")}</button>
       </div>
     `;
     document.getElementById("birthday-editor-back").onclick = loadSettings;
     document.getElementById("save-birthday-btn").onclick = async () => {
       const birthday = document.getElementById("edit-birthday-input").value;
-      if (!birthday) { showToast("Выберите дату"); return; }
+      if (!birthday) { showToast(T("choose_date")); return; }
       const result = await apiCall("/api/update-birthday", { birthday });
       if (result.success) {
-        showToast("✅ Сохранено");
+        showToast(T("saved"));
         loadSettings();
       } else {
-        showToast(result.error || "Ошибка");
+        showToast(result.error || T("load_error"));
       }
     };
   }
 
   function showLangPicker(data) {
     const el = document.getElementById("settings-content");
+    const isUz = data.lang && data.lang.startsWith("uz");
     el.innerHTML = `
-      <button class="back-link" id="lang-editor-back">← Назад</button>
+      <button class="back-link" id="lang-editor-back">${T("back")}</button>
       <div class="profile-card" style="padding: 4px;">
         <button class="more-link lang-pick-btn" data-lang="ru" style="display:flex; justify-content:space-between;">
-          <span>🇷🇺 Русский</span> ${data.lang === "ru" ? "<span style='color:var(--green-600);'>✓</span>" : ""}
+          <span>🇷🇺 Русский</span> ${!isUz ? "<span style='color:var(--green-600);'>✓</span>" : ""}
         </button>
-        <button class="more-link lang-pick-btn" data-lang="uz" style="display:flex; justify-content:space-between;">
-          <span>🇺🇿 O'zbekcha</span> ${data.lang === "uz" ? "<span style='color:var(--green-600);'>✓</span>" : ""}
+        <button class="more-link lang-pick-btn" data-lang="uz_latin" style="display:flex; justify-content:space-between;">
+          <span>🇺🇿 O'zbekcha</span> ${isUz ? "<span style='color:var(--green-600);'>✓</span>" : ""}
         </button>
       </div>
     `;
     document.getElementById("lang-editor-back").onclick = loadSettings;
     document.querySelectorAll(".lang-pick-btn").forEach(btn => {
       btn.onclick = async () => {
-        const result = await apiCall("/api/update-lang", { lang: btn.dataset.lang });
+        const newLang = btn.dataset.lang;
+        const result = await apiCall("/api/update-lang", { lang: newLang });
         if (result.success) {
-          showToast("✅ Язык изменён");
+          CURRENT_LANG = newLang.startsWith("uz") ? "uz" : "ru";
+          updateStaticLabels();
+          showToast(T("lang_changed"));
           loadSettings();
         }
       };
@@ -1547,22 +1764,22 @@
     const hasLocation = data.company_address && data.company_address.includes("maps.google.com");
 
     el.innerHTML = `
-      <button class="back-link" id="address-editor-back">← Назад</button>
+      <button class="back-link" id="address-editor-back">${T("back")}</button>
       <div class="profile-card">
-        <div style="font-size: 13px; font-weight: 600; margin-bottom: 6px;">Локация компании «${data.company_name}»</div>
+        <div style="font-size: 13px; font-weight: 600; margin-bottom: 6px;">${T("company_location_title")} «${data.company_name}»</div>
         <div style="font-size: 12px; color: var(--ink-soft); margin-bottom: 14px;">
-          Курьеры используют точную геолокацию для построения маршрута — это надёжнее текстового адреса.
+          ${T("location_courier_hint")}
         </div>
 
         <div id="current-location-display" style="margin-bottom: 14px;">
           ${hasLocation
-            ? `<a href="${data.company_address}" target="_blank" style="color: var(--green-600); font-size: 13px; font-weight: 600;">📍 Текущая локация (открыть на карте)</a>`
-            : `<div style="font-size: 13px; color: var(--ink-soft);">📍 Локация пока не указана</div>`}
+            ? `<a href="${data.company_address}" target="_blank" style="color: var(--green-600); font-size: 13px; font-weight: 600;">${T("location_set_link")}</a>`
+            : `<div style="font-size: 13px; color: var(--ink-soft);">${T("location_not_set")}</div>`}
         </div>
 
-        <button class="btn-primary" id="share-location-btn">📍 Отправить текущую локацию</button>
+        <button class="btn-primary" id="share-location-btn">${T("share_location")}</button>
         <div style="font-size: 11px; color: var(--ink-soft); margin-top: 8px; text-align: center;">
-          Откроется запрос доступа к геолокации устройства
+          ${T("location_request_hint")}
         </div>
       </div>
     `;
@@ -1581,7 +1798,7 @@
           if (data && data.latitude && data.longitude) {
             saveCompanyLocation(data.latitude, data.longitude);
           } else {
-            showToast("Не удалось получить геолокацию");
+            showToast(T("location_failed"));
           }
         });
       });
@@ -1590,14 +1807,14 @@
 
     // Фоллбэк на стандартный browser geolocation API (работает в большинстве клиентов)
     if (navigator.geolocation) {
-      showToast("Запрашиваем доступ к геолокации…");
+      showToast(T("determining_location"));
       navigator.geolocation.getCurrentPosition(
         (pos) => saveCompanyLocation(pos.coords.latitude, pos.coords.longitude),
-        () => showToast("Доступ к геолокации не предоставлен"),
+        () => showToast(T("location_no_access")),
         { enableHighAccuracy: true, timeout: 10000 }
       );
     } else {
-      showToast("Геолокация не поддерживается на этом устройстве");
+      showToast(T("location_not_supported"));
     }
   }
 
@@ -1605,20 +1822,22 @@
     const mapsLink = `https://maps.google.com/?q=${lat},${lon}`;
     const result = await apiCall("/api/update-company-address", { address: mapsLink });
     if (result.success) {
-      showToast("✅ Локация сохранена");
+      showToast(T("location_saved"));
       loadSettings();
     } else {
-      showToast(result.error || "Ошибка сохранения");
+      showToast(result.error || T("location_save_error"));
     }
   }
 
   // ─── DASHBOARD PAGE (admin only) ──────────────────────────────────────────
 
   const DAY_SHORT_RU = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
+  const DAY_SHORT_UZ = ["Ya", "Du", "Se", "Cho", "Pa", "Ju", "Sha"];
+  function getDayShort(idx) { return CURRENT_LANG === "uz" ? DAY_SHORT_UZ[idx] : DAY_SHORT_RU[idx]; }
 
   async function loadDashboard() {
     const el = document.getElementById("dashboard-content");
-    el.innerHTML = '<div class="loading">Загружаем статистику…</div>';
+    el.innerHTML = `<div class="loading">${T("loading_stats")}</div>`;
     try {
       const data = await apiCall("/api/dashboard");
       if (data.error) {
@@ -1628,34 +1847,34 @@
 
       let html = `
         <div class="dash-stats-grid">
-          <div class="dash-stat-box"><div class="dash-stat-value">${data.total_all_orders}</div><div class="dash-stat-label">Всего заказов</div></div>
-          <div class="dash-stat-box"><div class="dash-stat-value">${data.total_users}</div><div class="dash-stat-label">Клиентов</div></div>
-          <div class="dash-stat-box"><div class="dash-stat-value">${data.total_companies}</div><div class="dash-stat-label">Компаний</div></div>
-          <div class="dash-stat-box"><div class="dash-stat-value">${data.avg_rating ?? "—"}${data.avg_rating ? " ⭐" : ""}</div><div class="dash-stat-label">Средний рейтинг</div></div>
+          <div class="dash-stat-box"><div class="dash-stat-value">${data.total_all_orders}</div><div class="dash-stat-label">${T("total_orders")}</div></div>
+          <div class="dash-stat-box"><div class="dash-stat-value">${data.total_users}</div><div class="dash-stat-label">${T("total_clients")}</div></div>
+          <div class="dash-stat-box"><div class="dash-stat-value">${data.total_companies}</div><div class="dash-stat-label">${T("total_companies")}</div></div>
+          <div class="dash-stat-box"><div class="dash-stat-value">${data.avg_rating ?? "—"}${data.avg_rating ? " ⭐" : ""}</div><div class="dash-stat-label">${T("avg_rating")}</div></div>
         </div>
 
         <div class="chart-container">
-          <div style="font-size: 13px; font-weight: 700;">Заказы за 7 дней</div>
+          <div style="font-size: 13px; font-weight: 700;">${T("orders_week")}</div>
           <div style="font-size: 12px; color: var(--ink-soft); margin-top: 2px;">
-            Всего: ${data.total_orders_week} | Выручка: ${fmt(data.total_revenue_week)}
+            ${T("total_label")}: ${data.total_orders_week} | ${T("revenue_label")}: ${fmt(data.total_revenue_week)}
           </div>
           <div class="chart-bars" id="orders-chart"></div>
         </div>
 
         <div class="profile-card">
-          <div style="font-size: 13px; font-weight: 700; margin-bottom: 4px;">🔥 Топ-5 блюд (30 дней)</div>
+          <div style="font-size: 13px; font-weight: 700; margin-bottom: 4px;">${T("top_dishes")}</div>
       `;
 
       if (data.top_dishes.length === 0) {
-        html += `<div style="font-size: 13px; color: var(--ink-soft); padding: 8px 0;">Пока нет данных</div>`;
+        html += `<div style="font-size: 13px; color: var(--ink-soft); padding: 8px 0;">${T("no_data")}</div>`;
       } else {
         data.top_dishes.forEach((d, i) => {
-          const icon = CATEGORY_META[d.category]?.icon || "🍽";
+          const icon = getCategoryMeta()[d.category]?.icon || "🍽";
           html += `
             <div class="top-dish-row">
               <div class="top-dish-rank">${i + 1}</div>
               <div class="top-dish-name">${icon} ${d.name}</div>
-              <div class="top-dish-count">${d.cnt} раз</div>
+              <div class="top-dish-count">${d.cnt} ${T("times_word")}</div>
             </div>
           `;
         });
@@ -1663,20 +1882,20 @@
       html += `</div>`;
 
       html += `<div class="profile-card">
-        <div style="font-size: 13px; font-weight: 700; margin-bottom: 4px;">🚚 Курьеры</div>`;
+        <div style="font-size: 13px; font-weight: 700; margin-bottom: 4px;">${T("couriers_title")}</div>`;
 
       const couriers = data.couriers_stats || [];
       if (couriers.length === 0) {
-        html += `<div style="font-size: 13px; color: var(--ink-soft); padding: 8px 0;">Нет данных о курьерах</div>`;
+        html += `<div style="font-size: 13px; color: var(--ink-soft); padding: 8px 0;">${T("no_courier_data")}</div>`;
       } else {
         couriers.forEach(c => {
-          const ratingText = c.avg_rating ? `${c.avg_rating} ⭐ (${c.review_count})` : "— нет оценок";
-          const timeText = c.avg_minutes ? `~${c.avg_minutes} мин/маршрут` : "—";
+          const ratingText = c.avg_rating ? `${c.avg_rating} ⭐ (${c.review_count})` : `— ${T("no_ratings")}`;
+          const timeText = c.avg_minutes ? `~${c.avg_minutes} ${T("min_per_route")}` : "—";
           html += `
             <div class="courier-stat-row">
               <div style="flex: 1;">
                 <div class="courier-stat-name">${c.full_name}</div>
-                <div class="courier-stat-detail">${c.routes_finished} маршрутов · ${c.stops_delivered} точек · ${timeText}</div>
+                <div class="courier-stat-detail">${c.routes_finished} ${T("routes_word")} · ${c.stops_delivered} ${T("points_word_label")} · ${timeText}</div>
               </div>
               <div class="courier-stat-rating">${ratingText}</div>
             </div>
@@ -1698,12 +1917,12 @@
         col.innerHTML = `
           <div class="chart-bar-value">${d.count || ""}</div>
           <div class="chart-bar" style="height: ${heightPct}%;"></div>
-          <div class="chart-bar-label">${DAY_SHORT_RU[dayNum]}</div>
+          <div class="chart-bar-label">${getDayShort(dayNum)}</div>
         `;
         chartEl.appendChild(col);
       });
     } catch (e) {
-      el.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Не удалось загрузить статистику</div></div>';
+      el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">${T("dashboard_not_loaded")}</div></div>`;
     }
   }
 
@@ -1713,7 +1932,7 @@
 
   async function loadAutoorder() {
     const el = document.getElementById("autoorder-content");
-    el.innerHTML = '<div class="loading">Загружаем автозаказ…</div>';
+    el.innerHTML = `<div class="loading">${T("loading_autoorder")}</div>`;
     try {
       const data = await apiCall("/api/autoorder");
       if (data.error) {
@@ -1727,8 +1946,8 @@
       let html = `
         <div class="autoorder-header">
           <div>
-            <div class="autoorder-title">🔁 Автозаказ</div>
-            <div class="autoorder-subtitle">Заказывает автоматически по расписанию</div>
+            <div class="autoorder-title">${T("autoorder_title")}</div>
+            <div class="autoorder-subtitle">${T("autoorder_subtitle")}</div>
           </div>
           <button class="toggle-switch ${data.auto_order ? "on" : "off"}" id="autoorder-toggle">
             <div class="toggle-knob"></div>
@@ -1738,11 +1957,11 @@
         <div class="profile-card" style="padding: 4px;">
       `;
 
-      DAYS_RU.forEach((dayName, i) => {
+      getDays().forEach((dayName, i) => {
         const dayItems = autoorderDaysCache[i] || [];
         if (dayItems.length > 0) {
           const namesLine = dayItems.map(it => {
-            const icon = CATEGORY_META[it.category]?.icon || "🍽";
+            const icon = getCategoryMeta()[it.category]?.icon || "🍽";
             return `${icon} ${it.name}`;
           }).join(" · ");
           const totalPrice = dayItems.reduce((s, it) => s + it.price, 0);
@@ -1761,8 +1980,8 @@
             <div class="day-row" data-day="${i}">
               <div class="day-badge empty">${dayName.slice(0, 2)}</div>
               <div class="day-row-info">
-                <div class="day-row-name empty">Не выбрано</div>
-                <div class="day-row-sub">Нажмите, чтобы добавить</div>
+                <div class="day-row-name empty">${T("not_selected")}</div>
+                <div class="day-row-sub">${T("tap_to_add")}</div>
               </div>
               <div class="day-row-arrow">+</div>
             </div>
@@ -1776,8 +1995,7 @@
         <div class="autoorder-hint">
           <div class="autoorder-hint-icon">💡</div>
           <div class="autoorder-hint-text">
-            Настроено ${filledCount} из 7 дней. Автозаказ создаст заказ автоматически в 10:00,
-            если у вас ещё нет заказа на этот день.
+            ${T("autoorder_configured")} ${filledCount} ${T("autoorder_of")}
           </div>
         </div>
       `;
@@ -1787,7 +2005,7 @@
       document.getElementById("autoorder-toggle").onclick = async () => {
         const result = await apiCall("/api/settings/toggle-auto");
         if (result.success) {
-          showToast(result.auto_order ? "✅ Автозаказ включён" : "Автозаказ выключен");
+          showToast(result.auto_order ? T("enabled") : T("disabled"));
           loadAutoorder();
         }
       };
@@ -1796,13 +2014,13 @@
         row.onclick = () => showAutoorderDayPicker(parseInt(row.dataset.day));
       });
     } catch (e) {
-      el.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Не удалось загрузить автозаказ</div></div>';
+      el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">${T("autoorder_not_loaded")}</div></div>`;
     }
   }
 
   async function showAutoorderDayPicker(dayOfWeek) {
     const el = document.getElementById("autoorder-content");
-    el.innerHTML = '<div class="loading">Загружаем меню…</div>';
+    el.innerHTML = `<div class="loading">${T("loading_menu")}</div>`;
     try {
       const data = await apiCall("/api/settings/weekly-menu", { day_of_week: dayOfWeek });
       const items = data.items || [];
@@ -1813,12 +2031,12 @@
         currentSelections[it.category] = it.item_number;
       });
 
-      let html = `<button class="back-link" id="autoorder-day-back">← Назад</button>`;
-      html += `<div class="profile-card"><div style="font-size: 15px; font-weight: 700; margin-bottom: 4px;">${DAYS_RU[dayOfWeek]}</div>`;
-      html += `<div style="font-size: 12px; color: var(--ink-soft); margin-bottom: 10px;">Выберите по одному блюду в каждой категории</div>`;
+      let html = `<button class="back-link" id="autoorder-day-back">${T("back")}</button>`;
+      html += `<div class="profile-card"><div style="font-size: 15px; font-weight: 700; margin-bottom: 4px;">${getDays()[dayOfWeek]}</div>`;
+      html += `<div style="font-size: 12px; color: var(--ink-soft); margin-bottom: 10px;">${T("choose_per_category")}</div>`;
 
       if (items.length === 0) {
-        html += `<div style="font-size: 13px; color: var(--ink-soft);">Меню на этот день не добавлено в постоянном меню</div>`;
+        html += `<div style="font-size: 13px; color: var(--ink-soft);">${T("menu_not_set_day")}</div>`;
       } else {
         const grouped = {};
         items.forEach(item => {
@@ -1826,7 +2044,7 @@
           (grouped[cat] = grouped[cat] || []).push(item);
         });
         for (const [cat, catItems] of Object.entries(grouped)) {
-          const meta = CATEGORY_META[cat] || { label: cat, icon: "🍽" };
+          const meta = getCategoryMeta()[cat] || { label: cat, icon: "🍽" };
           const selectedItem = currentSelections[cat];
           html += `<div class="order-cat-label">${meta.icon} ${meta.label}</div>`;
           catItems.forEach(item => {
@@ -1838,12 +2056,12 @@
               </button>`;
           });
           if (selectedItem) {
-            html += `<button class="more-link autoorder-remove-btn" data-category="${cat}" style="color: var(--red); font-size: 12px;">🗑 Убрать ${meta.label.toLowerCase()}</button>`;
+            html += `<button class="more-link autoorder-remove-btn" data-category="${cat}" style="color: var(--red); font-size: 12px;">${T("remove_category")} ${meta.label.toLowerCase()}</button>`;
           }
         }
       }
       html += `</div>`;
-      html += `<button class="btn-primary" id="autoorder-done-btn">Готово</button>`;
+      html += `<button class="btn-primary" id="autoorder-done-btn">${T("save")}</button>`;
       el.innerHTML = html;
 
       document.getElementById("autoorder-day-back").onclick = loadAutoorder;
@@ -1854,7 +2072,7 @@
           const itemNumber = parseInt(btn.dataset.item);
           const category = btn.dataset.category;
           await apiCall("/api/settings/set-weekly", { day_of_week: dayOfWeek, item_number: itemNumber, category });
-          showToast("✅ Сохранено");
+          showToast(T("saved"));
           // Обновляем кэш и перерисовываем экран этого же дня без выхода
           const autoorderData = await apiCall("/api/autoorder");
           autoorderDaysCache = autoorderData.week_days || {};
@@ -1866,18 +2084,18 @@
         btn.onclick = async () => {
           const category = btn.dataset.category;
           await apiCall("/api/settings/set-weekly", { day_of_week: dayOfWeek, item_number: null, category });
-          showToast("Убрано");
+          showToast(T("cancelled_refund"));
           const autoorderData = await apiCall("/api/autoorder");
           autoorderDaysCache = autoorderData.week_days || {};
           showAutoorderDayPicker(dayOfWeek);
         };
       });
     } catch (e) {
-      el.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Ошибка загрузки</div></div>';
+      el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">${T("load_error")}</div></div>`;
     }
   }
 
-  loadMenu();
+  applyUserLang().then(() => loadMenu());
 </script>
 
 </body>
