@@ -95,11 +95,35 @@ async def handle_health(request):
     return web.Response(text="OK")
 
 
+async def parse_click_request_data(request) -> dict:
+    """
+    Click Shop API отправляет данные как application/x-www-form-urlencoded,
+    НЕ как JSON (несмотря на то, что в документации указан Content-Type: application/json
+    для других продуктов Click — для классического Prepare/Complete вебхука это form-data).
+    Эта функция надёжно читает оба варианта.
+    """
+    content_type = request.headers.get("Content-Type", "")
+    if "application/json" in content_type:
+        try:
+            return await request.json()
+        except Exception:
+            pass
+    # Пытаемся прочитать как form-urlencoded (или multipart) — основной формат Click
+    post_data = await request.post()
+    if post_data:
+        return dict(post_data)
+    # Последний шанс — может быть JSON без правильного Content-Type заголовка
+    try:
+        return await request.json()
+    except Exception:
+        return {}
+
+
 async def handle_click_prepare(request):
     if request.method == "GET":
         return web.Response(text="Click Prepare endpoint OK")
     try:
-        data = await request.json()
+        data = await parse_click_request_data(request)
         logger.info(f"[PREPARE] Received: {data}")
         click_trans_id = data.get("click_trans_id")
         service_id = data.get("service_id")
@@ -135,7 +159,7 @@ async def handle_click_complete(request):
     if request.method == "GET":
         return web.Response(text="Click Complete endpoint OK")
     try:
-        data = await request.json()
+        data = await parse_click_request_data(request)
         logger.info(f"[COMPLETE] Received: {data}")
         click_trans_id = str(data.get("click_trans_id"))
         service_id = data.get("service_id")
