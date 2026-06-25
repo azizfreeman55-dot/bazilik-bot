@@ -156,10 +156,16 @@ async def handle_click_prepare(request):
         if len(parts) < 3 or parts[0] != "balance":
             return web.json_response({"error": -5, "error_note": "User does not exist"})
 
+        # merchant_prepare_id должен быть ЧИСЛОМ (уникальный ID этой подготовки
+        # платежа в нашей системе), а не строкой merchant_trans_id.
+        # Используем сам click_trans_id — он уникален для каждой попытки оплаты
+        # и уже числовой, поэтому отдельная таблица/счётчик не нужны.
+        merchant_prepare_id = int(click_trans_id)
+
         return web.json_response({
             "click_trans_id": int(click_trans_id),
             "merchant_trans_id": merchant_trans_id,
-            "merchant_prepare_id": merchant_trans_id,
+            "merchant_prepare_id": merchant_prepare_id,
             "error": 0,
             "error_note": "Success"
         })
