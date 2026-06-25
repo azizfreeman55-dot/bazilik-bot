@@ -812,13 +812,87 @@
         if (method === "click") {
           startClickTopupForOrder(items, total);
         } else {
-          finalizeOrder(items, method);
+          showLocationPromptThenFinalize(items, method);
         }
       };
     });
     document.getElementById("payment-cancel-btn").onclick = () => {
       document.body.removeChild(modal);
     };
+  }
+
+  function showLocationPromptThenFinalize(items, paymentMethod) {
+    const modal = document.createElement("div");
+    modal.id = "location-modal";
+    modal.style.cssText = `
+      position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 300;
+      display: flex; align-items: flex-end; justify-content: center;
+    `;
+    modal.innerHTML = `
+      <div style="background: var(--cream-dark); border-radius: 20px 20px 0 0; padding: 24px 18px;
+                  width: 100%; max-width: 420px;">
+        <div style="font-size: 36px; text-align: center; margin-bottom: 8px;">📍</div>
+        <div style="font-size: 16px; font-weight: 700; text-align: center; margin-bottom: 6px;">
+          Где вы сейчас находитесь?
+        </div>
+        <div style="font-size: 13px; color: var(--ink-soft); text-align: center; margin-bottom: 18px; line-height: 1.4;">
+          Это поможет курьеру точно найти вас при доставке.
+          Локация обновит адрес доставки для всей компании.
+        </div>
+        <button class="btn-primary" id="share-location-now-btn">📍 Отправить мою локацию</button>
+        <button class="btn-danger" id="skip-location-btn" style="margin-top: 8px;">Пропустить, использовать прошлую локацию</button>
+      </div>
+    `;
+    document.body.appendChild(modal);
+
+    document.getElementById("share-location-now-btn").onclick = () => {
+      requestOrderLocation(items, paymentMethod, modal);
+    };
+    document.getElementById("skip-location-btn").onclick = () => {
+      document.body.removeChild(modal);
+      finalizeOrder(items, paymentMethod);
+    };
+  }
+
+  function requestOrderLocation(items, paymentMethod, modal) {
+    const btn = document.getElementById("share-location-now-btn");
+    btn.textContent = "Определяем локацию…";
+
+    const onSuccess = async (lat, lon) => {
+      document.body.removeChild(modal);
+      showToast("📍 Локация обновлена");
+      await apiCall("/api/update-order-location", { latitude: lat, longitude: lon });
+      finalizeOrder(items, paymentMethod);
+    };
+
+    const onFail = () => {
+      document.body.removeChild(modal);
+      showToast("Не удалось определить локацию — используем прошлую");
+      finalizeOrder(items, paymentMethod);
+    };
+
+    if (tg?.LocationManager) {
+      tg.LocationManager.init(() => {
+        tg.LocationManager.getLocation((data) => {
+          if (data && data.latitude && data.longitude) {
+            onSuccess(data.latitude, data.longitude);
+          } else {
+            onFail();
+          }
+        });
+      });
+      return;
+    }
+
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => onSuccess(pos.coords.latitude, pos.coords.longitude),
+        onFail,
+        { enableHighAccuracy: true, timeout: 10000 }
+      );
+    } else {
+      onFail();
+    }
   }
 
   async function finalizeOrder(items, paymentMethod) {
@@ -1034,7 +1108,7 @@
           <div class="balance-hero-label">Ваш баланс</div>
           <div class="balance-hero-value">${fmt(data.balance)}</div>
         </div>
-        <button class="btn-primary" id="topup-btn">+ Пополнить баланс</button>
+        <button class="btn-primary" id="topup-btn">🔵 Пополнить через Click</button>
         <div class="profile-card" style="margin-top: 12px;">
           <div style="font-size: 13px; font-weight: 600; margin-bottom: 8px;">История операций</div>
       `;
