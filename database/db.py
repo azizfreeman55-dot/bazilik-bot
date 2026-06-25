@@ -997,10 +997,90 @@ async def get_company_order_details(company_id: int, order_date: str) -> list:
         return [dict(r) for r in rows]
 
 
+def _parse_coords_from_maps_link(maps_link: str | None) -> tuple[float, float] | None:
+    """Извлекает (lat, lon) из ссылки вида https://maps.google.com/?q=41.123,69.456"""
+    if not maps_link or "q=" not in maps_link:
+        return None
+    try:
+        coords_part = maps_link.split("q=")[1].split("&")[0]
+        lat_str, lon_str = coords_part.split(",")
+        return (float(lat_str), float(lon_str))
+    except (IndexError, ValueError):
+        return None
+
+
+def _haversine_distance(p1: tuple[float, float], p2: tuple[float, float]) -> float:
+    """Расстояние между двумя точками (lat, lon) в километрах по формуле гаверсинуса."""
+    import math
+    lat1, lon1 = p1
+    lat2, lon2 = p2
+    R = 6371.0
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    return 2 * R * math.asin(math.sqrt(a))
+
+
+async def optimize_route_order(company_ids: list, start_point: tuple[float, float] | None = None) -> list:
+    """
+    Пересортировывает company_ids в порядке, минимизирующем общий путь курьера,
+    используя простой и быстрый алгоритм "ближайший соседт" (nearest neighbor).
+    Компании без сохранённых координат остаются в конце списка в исходном порядке.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        rows = await db.fetch(
+            "SELECT id, maps_link FROM companies WHERE id = ANY($1::int[])",
+            company_ids
+        )
+
+    coords_map = {}
+    no_coords_ids = []
+    for row in rows:
+        coords = _parse_coords_from_maps_link(row["maps_link"])
+        if coords:
+            coords_map[row["id"]] = coords
+        else:
+            no_coords_ids.append(row["id"])
+
+    if len(coords_map) <= 1:
+        # Недостаточно точек с координатами для оптимизации — оставляем как есть
+        return company_ids
+
+    remaining = dict(coords_map)
+    ordered = []
+
+    # Начинаем с точки ближайшей к start_point (если передан), иначе с первой в списке
+    if start_point:
+        current_id = min(remaining, key=lambda cid: _haversine_distance(start_point, remaining[cid]))
+    else:
+        current_id = next(iter(remaining))
+
+    ordered.append(current_id)
+    current_pos = remaining.pop(current_id)
+
+    while remaining:
+        next_id = min(remaining, key=lambda cid: _haversine_distance(current_pos, remaining[cid]))
+        ordered.append(next_id)
+        current_pos = remaining.pop(next_id)
+
+    # Компании без координат добавляем в конец, в исходном относительном порядке
+    for cid in company_ids:
+        if cid in no_coords_ids and cid not in ordered:
+            ordered.append(cid)
+
+    return ordered
+
+
 async def create_delivery_route(courier_id: int, delivery_date: str,
-                                 company_ids: list) -> int:
+                                 company_ids: list, optimize: bool = True) -> int:
     pool = await get_pool()
     delivery_date = str(delivery_date)
+
+    if optimize and len(company_ids) > 1:
+        company_ids = await optimize_route_order(company_ids)
+
     async with pool.acquire() as db:
         old = await db.fetchrow(
             "SELECT id FROM delivery_routes WHERE courier_id=$1 AND delivery_date=$2::text",
