@@ -1100,8 +1100,8 @@
     document.getElementById("custom-amount-btn").onclick = () => {
       const input = document.getElementById("custom-amount-input");
       const value = parseInt(input.value);
-      if (!value || value < 1000) {
-        showToast("Минимальная сумма — 1 000 сум");
+      if (!value || value < 100) {
+        showToast("Минимальная сумма — 100 сум");
         return;
       }
       requestTopupLink(value);
