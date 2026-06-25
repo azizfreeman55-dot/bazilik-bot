@@ -63,11 +63,15 @@ async def add_balance(user_db_id: int, amount: int, description: str, click_tran
 async def notify_user(telegram_id: int, amount: int, lang: str = "ru"):
     try:
         bot = Bot(token=BOT_TOKEN)
-        if lang == "uz":
+        # В системе используются lang='uz_latin' / 'uz_cyrillic' (см. langs.py),
+        # а не просто 'uz'. Проверяем по префиксу, чтобы не дублировать рассинхрон
+        # с функцией t() в langs.py, где простое 'uz' не существует как ключ
+        # и поэтому случайно скатывается на русский текст по умолчанию.
+        if lang and lang.startswith("uz"):
             text = (
-                f"✅ *Hisob toʻldirildi!*\n\n"
+                f"✅ *Hisob to'ldirildi!*\n\n"
                 f"💰 *+{amount:,} so'm*\n\n"
-                f"Click orqali toʻlov uchun rahmat! 🎉"
+                f"Click orqali to'lov uchun rahmat! 🎉"
             )
         else:
             text = (
