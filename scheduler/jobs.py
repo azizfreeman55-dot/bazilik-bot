@@ -242,7 +242,7 @@ async def auto_assign_couriers(bot: Bot, delivery_date: str):
                     text += f"{i}. {c['company_name']} — {client_count} кл., {c['order_count']} поз.\n"
                     if c.get("address"):
                         text += f"   📍 {c['address']}\n"
-                text += "\nОткройте '🗺 Мой маршрут' для начала работы."
+                text += "\n📍 Порядок точек оптимизирован по расстоянию.\nОткройте '🗺 Мой маршрут' для начала работы."
 
                 await courier_bot.send_message(
                     courier["telegram_id"], text, parse_mode="Markdown"
