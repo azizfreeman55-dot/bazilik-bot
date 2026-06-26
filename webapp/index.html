@@ -562,6 +562,7 @@
       add: "+ Добавить", checkout: "Оформить заказ", sending: "Отправляем…",
       positions_count: ["позиция", "позиции", "позиций"],
       order_total: "Итого", change_order: "Изменить заказ", cancel_order: "Отменить весь заказ",
+      add_more_items: "➕ Добавить ещё блюда",
       no_order_yet: "У вас пока нет заказа на", confirm_cancel: "Точно отменить весь заказ?",
       cancelled_refund: "Отменено", payment_method_title: "Способ оплаты", to_pay: "К оплате",
       pay_balance: "С баланса", pay_cash: "Наличными при получении", pay_click: "Click",
@@ -639,6 +640,7 @@
       add: "+ Qo'shish", checkout: "Buyurtma berish", sending: "Yuborilmoqda…",
       positions_count: ["pozitsiya", "pozitsiya", "pozitsiya"],
       order_total: "Jami", change_order: "Buyurtmani o'zgartirish", cancel_order: "Hammasini bekor qilish",
+      add_more_items: "➕ Yana taom qo'shish",
       no_order_yet: "Sizda hali buyurtma yo'q", confirm_cancel: "Haqiqatan hammasini bekor qilmoqchimisiz?",
       cancelled_refund: "Bekor qilindi", payment_method_title: "To'lov usuli", to_pay: "To'lov uchun",
       pay_balance: "Hisobdan", pay_cash: "Yetkazib berishda naqd", pay_click: "Click",
@@ -1315,18 +1317,50 @@
         const meta = getCategoryMeta()[cat] || { label: cat, icon: "🍽" };
         html += `<div class="order-cat-label">${meta.icon} ${meta.label}</div>`;
         items.forEach(item => {
-          html += `<div class="order-item-row"><span>${item.meal_name}</span><span>${fmt(item.price)}</span></div>`;
+          const lineTotal = item.price * item.qty;
+          if (bestStatus === "pending") {
+            html += `
+              <div class="order-item-row" style="align-items: center;">
+                <span>${item.meal_name}</span>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <button class="order-qty-btn" data-menu-id="${item.menu_id}" data-direction="dec"
+                    style="width: 26px; height: 26px; border-radius: 8px; border: none; background: var(--cream-dark); color: var(--ink); font-size: 15px; font-weight: 700; cursor: pointer;">−</button>
+                  <span style="min-width: 18px; text-align: center; font-weight: 700;">${item.qty}</span>
+                  <button class="order-qty-btn" data-menu-id="${item.menu_id}" data-direction="inc"
+                    style="width: 26px; height: 26px; border-radius: 8px; border: none; background: var(--green-600); color: var(--on-accent); font-size: 15px; font-weight: 700; cursor: pointer;">+</button>
+                  <span style="min-width: 70px; text-align: right;">${fmt(lineTotal)}</span>
+                </div>
+              </div>`;
+          } else {
+            html += `<div class="order-item-row"><span>${item.meal_name} ${item.qty > 1 ? `x${item.qty}` : ""}</span><span>${fmt(lineTotal)}</span></div>`;
+          }
         });
       }
       html += `<div class="order-total-row"><span>${T("order_total")}</span><span>${fmt(data.total)}</span></div>`;
       html += `</div>`;
 
       if (bestStatus === "pending") {
-        html += `<button class="btn-primary" id="edit-order-btn">${T("change_order")}</button>`;
+        html += `<button class="btn-primary" id="edit-order-btn">${T("add_more_items")}</button>`;
         html += `<button class="btn-danger" id="cancel-order-btn">${T("cancel_order")}</button>`;
       }
 
       el.innerHTML = html;
+
+      document.querySelectorAll(".order-qty-btn").forEach(btn => {
+        btn.onclick = async () => {
+          btn.disabled = true;
+          const result = await apiCall("/api/update-order-qty", {
+            menu_id: parseInt(btn.dataset.menuId),
+            direction: btn.dataset.direction
+          });
+          if (result.success) {
+            loadMyOrder();
+          } else {
+            showToast(result.error || T("load_error"));
+            btn.disabled = false;
+          }
+        };
+      });
 
       const editBtn = document.getElementById("edit-order-btn");
       if (editBtn) editBtn.onclick = () => switchPage("menu");
