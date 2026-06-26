@@ -1058,11 +1058,52 @@
         if (method === "click") {
           startClickTopupForOrder(items, total);
         } else {
-          showLocationPromptThenFinalize(items, method);
+          showDeliverySlotPicker(items, method);
         }
       };
     });
     document.getElementById("payment-cancel-btn").onclick = () => {
+      document.body.removeChild(modal);
+    };
+  }
+
+  const DELIVERY_SLOTS = ["11:00-12:00", "12:00-13:00", "13:00-14:00", "14:00-15:00"];
+
+  function showDeliverySlotPicker(items, paymentMethod) {
+    const modal = document.createElement("div");
+    modal.id = "slot-modal";
+    modal.style.cssText = `
+      position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 300;
+      display: flex; align-items: flex-end; justify-content: center;
+    `;
+    const title = CURRENT_LANG === "uz" ? "Yetkazib berish vaqtini tanlang" : "Выберите время доставки";
+    modal.innerHTML = `
+      <div style="background: var(--cream-dark); border-radius: 20px 20px 0 0; padding: 20px 18px;
+                  width: 100%; max-width: 420px;">
+        <div style="font-size: 16px; font-weight: 700; margin-bottom: 14px;">${title}</div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px;">
+          ${DELIVERY_SLOTS.map(slot => `
+            <button class="slot-pick-btn" data-slot="${slot}"
+              style="padding: 14px; border-radius: 12px; border: 1px solid var(--line);
+                     background: var(--white); color: var(--ink); font-size: 14px; font-weight: 700; cursor: pointer;">
+              🕐 ${slot}
+            </button>
+          `).join("")}
+        </div>
+        <button class="btn-danger" id="slot-cancel-btn">${T("cancel")}</button>
+      </div>
+    `;
+    document.body.appendChild(modal);
+
+    modal.querySelectorAll(".slot-pick-btn").forEach(btn => {
+      btn.onclick = async () => {
+        const slot = btn.dataset.slot;
+        await apiCall("/api/set-delivery-slot", { slot });
+        document.body.removeChild(modal);
+        showLocationPromptThenFinalize(items, paymentMethod);
+      };
+    });
+    document.getElementById("slot-cancel-btn").onclick = () => {
       document.body.removeChild(modal);
     };
   }
@@ -1262,6 +1303,17 @@
       });
 
       let html = renderDeliveryStepper(bestStatus);
+
+      if (data.delivery_slot) {
+        const slotLabel = CURRENT_LANG === "uz" ? "Yetkazib berish vaqti" : "Время доставки";
+        html += `<div class="profile-card" style="display:flex; align-items:center; gap:10px; margin-bottom: 12px;">
+          <span style="font-size: 20px;">🕐</span>
+          <div>
+            <div style="font-size: 12px; color: var(--ink-soft);">${slotLabel}</div>
+            <div style="font-size: 14px; font-weight: 700;">${data.delivery_slot}</div>
+          </div>
+        </div>`;
+      }
 
       html += `<div class="order-card">`;
       for (const [cat, items] of Object.entries(byCategory)) {
