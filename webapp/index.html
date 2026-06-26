@@ -1749,17 +1749,12 @@
     document.querySelectorAll(".lang-pick-btn").forEach(btn => {
       btn.onclick = async () => {
         const newLang = btn.dataset.lang;
-        try {
-          const result = await apiCall("/api/update-lang", { lang: newLang });
-          alert("DEBUG: newLang=" + newLang + " result=" + JSON.stringify(result));
-          if (result.success) {
-            CURRENT_LANG = newLang.startsWith("uz") ? "uz" : "ru";
-            updateStaticLabels();
-            showToast(T("lang_changed"));
-            loadSettings();
-          }
-        } catch (e) {
-          alert("DEBUG ERROR: " + e.message);
+        const result = await apiCall("/api/update-lang", { lang: newLang });
+        if (result.success) {
+          CURRENT_LANG = newLang.startsWith("uz") ? "uz" : "ru";
+          updateStaticLabels();
+          showToast(T("lang_changed"));
+          loadSettings();
         }
       };
     });
