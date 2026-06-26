@@ -159,7 +159,7 @@ async def menu_day_edit_category(callback: CallbackQuery, state: FSMContext):
     )
 
 
-@router.callback_query(F.data.startswith("menyclear_"))
+@router.callback_query(F.data.startswith("menyclear_") & ~F.data.startswith("menyclear_confirm_"))
 async def menu_day_clear_confirm(callback: CallbackQuery):
     day_num = int(callback.data.replace("menyclear_", ""))
     day_name = DAYS_RU[day_num]
