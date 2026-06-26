@@ -1192,7 +1192,7 @@ async def handle_webapp_update_lang(request):
         body = await request.json()
         lang = body.get("lang")
 
-        if lang not in ("ru", "uz"):
+        if lang not in ("ru", "uz", "uz_latin", "uz_cyrillic"):
             return web.json_response({"success": False, "error": "Недопустимый язык"}, headers=cors_headers())
 
         pool = await get_pool()
