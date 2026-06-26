@@ -2326,11 +2326,16 @@
           html += `<div class="order-cat-label">${meta.icon} ${meta.label}</div>`;
           catItems.forEach(item => {
             const isSelected = selectedItem === item.item_number;
+            const thumbHtml = item.photo_url
+              ? `<img src="${item.photo_url}" class="photo-clickable" data-full-photo="${item.photo_url}" data-photo-name="${item.name.replace(/"/g, '&quot;')}"
+                   style="width: 44px; height: 44px; border-radius: 8px; object-fit: cover; flex-shrink: 0;">`
+              : `<div style="width: 44px; height: 44px; border-radius: 8px; background: var(--cream-dark); flex-shrink: 0; display:flex; align-items:center; justify-content:center; font-size:18px;">${meta.icon}</div>`;
             html += `
-              <button class="more-link autoorder-pick-btn" data-item="${item.item_number}" data-category="${cat}"
-                style="display:flex; justify-content:space-between; align-items:center; ${isSelected ? "color: var(--green-600); font-weight:700;" : ""}">
-                <span>${isSelected ? "✓ " : ""}${item.name} — ${fmt(item.price)}</span>
-              </button>`;
+              <div class="more-link autoorder-pick-row" data-item="${item.item_number}" data-category="${cat}"
+                style="display:flex; align-items:center; gap:10px; padding: 10px 8px; border-bottom: 1px solid var(--line); cursor: pointer;">
+                ${thumbHtml}
+                <span style="flex:1; ${isSelected ? "color: var(--green-600); font-weight:700;" : ""}">${isSelected ? "✓ " : ""}${item.name} — ${fmt(item.price)}</span>
+              </div>`;
           });
           if (selectedItem) {
             html += `<button class="more-link autoorder-remove-btn" data-category="${cat}" style="color: var(--red); font-size: 12px;">${T("remove_category")} ${meta.label.toLowerCase()}</button>`;
@@ -2344,10 +2349,10 @@
       document.getElementById("autoorder-day-back").onclick = loadAutoorder;
       document.getElementById("autoorder-done-btn").onclick = loadAutoorder;
 
-      document.querySelectorAll(".autoorder-pick-btn").forEach(btn => {
-        btn.onclick = async () => {
-          const itemNumber = parseInt(btn.dataset.item);
-          const category = btn.dataset.category;
+      document.querySelectorAll(".autoorder-pick-row").forEach(row => {
+        row.onclick = async () => {
+          const itemNumber = parseInt(row.dataset.item);
+          const category = row.dataset.category;
           await apiCall("/api/settings/set-weekly", { day_of_week: dayOfWeek, item_number: itemNumber, category });
           showToast(T("saved"));
           // Обновляем кэш и перерисовываем экран этого же дня без выхода
@@ -2355,6 +2360,13 @@
           autoorderDaysCache = autoorderData.week_days || {};
           showAutoorderDayPicker(dayOfWeek);
         };
+        const photoEl = row.querySelector(".photo-clickable");
+        if (photoEl) {
+          photoEl.onclick = (e) => {
+            e.stopPropagation();
+            showPhotoLightbox(photoEl.dataset.fullPhoto, photoEl.dataset.photoName);
+          };
+        }
       });
 
       document.querySelectorAll(".autoorder-remove-btn").forEach(btn => {
