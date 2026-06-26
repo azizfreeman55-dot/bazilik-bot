@@ -388,6 +388,7 @@
     margin-bottom: 18px;
   }
   .stepper-line.active { background: var(--green-600); }
+  .lang-check { color: var(--green-600); }
 
   .courier-stat-row {
     display: flex; align-items: center; gap: 10px; padding: 10px 0;
@@ -1737,10 +1738,10 @@
       <button class="back-link" id="lang-editor-back">${T("back")}</button>
       <div class="profile-card" style="padding: 4px;">
         <button class="more-link lang-pick-btn" data-lang="ru" style="display:flex; justify-content:space-between;">
-          <span>🇷🇺 Русский</span> ${!isUz ? "<span style='color:var(--green-600);'>✓</span>" : ""}
+          <span>🇷🇺 Русский</span> ${!isUz ? "<span class='lang-check'>✓</span>" : ""}
         </button>
         <button class="more-link lang-pick-btn" data-lang="uz_latin" style="display:flex; justify-content:space-between;">
-          <span>🇺🇿 O'zbekcha</span> ${isUz ? "<span style='color:var(--green-600);'>✓</span>" : ""}
+          <span>🇺🇿 O&apos;zbekcha</span> ${isUz ? "<span class='lang-check'>✓</span>" : ""}
         </button>
       </div>
     `;
