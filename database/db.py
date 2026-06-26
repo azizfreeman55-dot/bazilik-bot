@@ -94,6 +94,16 @@ async def init_db():
             )
         """)
         await db.execute("""
+            CREATE TABLE IF NOT EXISTS delivery_slots (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id),
+                order_date TEXT NOT NULL,
+                slot TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, order_date)
+            )
+        """)
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS weekly_orders (
                 id SERIAL PRIMARY KEY,
                 user_id INTEGER REFERENCES users(id),
@@ -1554,3 +1564,52 @@ async def toggle_notification(telegram_id: int, notify_type: str) -> bool | None
             new_value, telegram_id
         )
         return bool(new_value)
+
+
+# ─── Интервалы доставки ─────────────────────────────────────────────────────────
+
+DELIVERY_SLOTS = ["11:00-12:00", "12:00-13:00", "13:00-14:00", "14:00-15:00"]
+
+
+async def set_delivery_slot(telegram_id: int, order_date: str, slot: str) -> bool:
+    """Сохраняет выбранный клиентом интервал доставки на дату заказа"""
+    if slot not in DELIVERY_SLOTS:
+        return False
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        user = await db.fetchrow("SELECT id FROM users WHERE telegram_id = $1", telegram_id)
+        if not user:
+            return False
+        await db.execute(
+            """INSERT INTO delivery_slots (user_id, order_date, slot)
+               VALUES ($1, $2, $3)
+               ON CONFLICT (user_id, order_date) DO UPDATE SET slot = $3""",
+            user["id"], str(order_date), slot
+        )
+    return True
+
+
+async def get_delivery_slot(telegram_id: int, order_date: str) -> str | None:
+    """Возвращает выбранный интервал доставки, если он был установлен"""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        row = await db.fetchrow(
+            """SELECT ds.slot FROM delivery_slots ds
+               JOIN users u ON u.id = ds.user_id
+               WHERE u.telegram_id = $1 AND ds.order_date = $2::text""",
+            telegram_id, str(order_date)
+        )
+        return row["slot"] if row else None
+
+
+async def get_delivery_slots_for_company(company_id: int, order_date: str) -> dict:
+    """Возвращает {telegram_id: slot} для всех клиентов компании на дату — для курьера"""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        rows = await db.fetch(
+            """SELECT u.telegram_id, ds.slot FROM delivery_slots ds
+               JOIN users u ON u.id = ds.user_id
+               WHERE u.company_id = $1 AND ds.order_date = $2::text""",
+            company_id, str(order_date)
+        )
+        return {r["telegram_id"]: r["slot"] for r in rows}
