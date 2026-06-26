@@ -304,6 +304,26 @@ async def init_db():
             $$;
         """)
 
+        # Разделение категории "main" на "first" (первые блюда) и "second" (вторые блюда).
+        # Существующие позиции под "main" автоматически становятся "second" — это
+        # одноразовая миграция данных, выполняется один раз благодаря маркеру ниже.
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS migration_flags (
+                flag_name TEXT PRIMARY KEY,
+                applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        already_migrated = await db.fetchval(
+            "SELECT 1 FROM migration_flags WHERE flag_name = 'split_main_to_first_second'"
+        )
+        if not already_migrated:
+            await db.execute("UPDATE menus SET category = 'second' WHERE category = 'main'")
+            await db.execute("UPDATE weekly_menu SET category = 'second' WHERE category = 'main'")
+            await db.execute(
+                "INSERT INTO migration_flags (flag_name) VALUES ('split_main_to_first_second')"
+            )
+            logger.info("✅ Миграция: категория 'main' переименована в 'second' (вторые блюда)")
+
     logger.info("✅ Таблицы созданы / обновлены")
 
 
@@ -433,7 +453,7 @@ async def get_company_ranking(city: str = "Ташкент") -> list:
 
 # ─── Меню ─────────────────────────────────────────────────────────────────────
 
-async def get_menu(menu_date: str, category: str = "main") -> list:
+async def get_menu(menu_date: str, category: str = "second") -> list:
     pool = await get_pool()
     async with pool.acquire() as db:
         rows = await db.fetch(
@@ -498,7 +518,7 @@ async def get_menu_categories(menu_date: str) -> list:
         return [row["category"] for row in rows]
 
 
-async def set_menu(menu_date: str, items: list, category: str = "main"):
+async def set_menu(menu_date: str, items: list, category: str = "second"):
     pool = await get_pool()
     async with pool.acquire() as db:
         old_items = await db.fetch(
@@ -529,7 +549,7 @@ async def set_menu(menu_date: str, items: list, category: str = "main"):
             )
 
 
-async def set_weekly_menu(day_of_week: int, items: list, category: str = "main"):
+async def set_weekly_menu(day_of_week: int, items: list, category: str = "second"):
     pool = await get_pool()
     async with pool.acquire() as db:
         await db.execute(
@@ -547,7 +567,7 @@ async def set_weekly_menu(day_of_week: int, items: list, category: str = "main")
             )
 
 
-async def get_weekly_menu(day_of_week: int, category: str = "main") -> list:
+async def get_weekly_menu(day_of_week: int, category: str = "second") -> list:
     pool = await get_pool()
     async with pool.acquire() as db:
         rows = await db.fetch(
