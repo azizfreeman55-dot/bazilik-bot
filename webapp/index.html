@@ -526,13 +526,15 @@
 <script>
   const CATEGORY_META_BY_LANG = {
     ru: {
-      main:    { label: "Основные",  icon: "🍱" },
+      first:   { label: "Первые",    icon: "🍲" },
+      second:  { label: "Вторые",    icon: "🍱" },
       salad:   { label: "Салаты",    icon: "🥗" },
       dessert: { label: "Десерты",   icon: "🍰" },
       drink:   { label: "Напитки",   icon: "🥤" },
     },
     uz: {
-      main:    { label: "Asosiy",    icon: "🍱" },
+      first:   { label: "Birinchi",  icon: "🍲" },
+      second:  { label: "Ikkinchi",  icon: "🍱" },
       salad:   { label: "Salatlar",  icon: "🥗" },
       dessert: { label: "Desertlar", icon: "🍰" },
       drink:   { label: "Ichimliklar", icon: "🥤" },
@@ -767,7 +769,7 @@
   const API_BASE = "https://bazilik-webhook.onrender.com";
 
   let MENU = {};
-  let currentCat = "main";
+  let currentCat = "second";
   let cart = {};
   let userBalance = 0;
   let currentPage = "menu";
@@ -860,7 +862,7 @@
         return;
       }
 
-      currentCat = availableCats.includes("main") ? "main" : availableCats[0];
+      currentCat = availableCats.includes("second") ? "second" : availableCats[0];
       renderTabs(availableCats);
       renderMenuList();
     } catch (e) {
@@ -1173,7 +1175,7 @@
 
       const byCategory = {};
       data.items.forEach(item => {
-        const cat = item.category || "main";
+        const cat = item.category || "second";
         (byCategory[cat] = byCategory[cat] || []).push(item);
       });
 
@@ -2041,7 +2043,7 @@
       } else {
         const grouped = {};
         items.forEach(item => {
-          const cat = item.category || "main";
+          const cat = item.category || "second";
           (grouped[cat] = grouped[cat] || []).push(item);
         });
         for (const [cat, catItems] of Object.entries(grouped)) {
