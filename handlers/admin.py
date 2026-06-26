@@ -120,7 +120,7 @@ async def menu_day_detail(callback: CallbackQuery):
         cnt = filled_cats.get(key)
         if cnt:
             text += f"✅ {names['ru']}: {cnt} позиций\n"
-            builder.button(text=f"✏️ {names['ru']}", callback_data=f"menyedit_{day_num}_{key}")
+            builder.button(text=f"📋 {names['ru']}", callback_data=f"menylist_{day_num}_{key}")
         else:
             text += f"⚠️ {names['ru']}: пусто\n"
             builder.button(text=f"➕ {names['ru']}", callback_data=f"menyedit_{day_num}_{key}")
@@ -133,6 +133,234 @@ async def menu_day_detail(callback: CallbackQuery):
 
     await callback.answer()
     await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data.startswith("menylist_"))
+async def menu_category_list(callback: CallbackQuery):
+    """Показывает список отдельных позиций категории — можно отредактировать каждую точечно"""
+    parts = callback.data.replace("menylist_", "").split("_")
+    day_num = int(parts[0])
+    category = parts[1]
+    day_name = DAYS_RU[day_num]
+    cat_name = CATEGORIES[category]["ru"]
+
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        items = await db.fetch(
+            """SELECT id, item_number, name, price FROM weekly_menu
+               WHERE day_of_week = $1 AND category = $2 AND is_active = 1
+               ORDER BY item_number""",
+            day_num, category
+        )
+
+    text = f"📅 *{day_name} — {cat_name}*\n\nНажмите на позицию чтобы изменить:\n\n"
+    builder = InlineKeyboardBuilder()
+    for item in items:
+        text += f"{item['item_number']}. {item['name']} — {item['price']:,} сум\n"
+        builder.button(
+            text=f"✏️ {item['item_number']}. {item['name']}",
+            callback_data=f"itemedit_{item['id']}_{day_num}_{category}"
+        )
+    builder.adjust(1)
+
+    builder.button(text="➕ Добавить новую позицию", callback_data=f"menyaddone_{day_num}_{category}")
+    builder.button(text="🔄 Переписать всю категорию", callback_data=f"menyedit_{day_num}_{category}")
+    builder.button(text="◀️ Назад", callback_data=f"menuday_{day_num}")
+    builder.adjust(1, 1, 1, 1)
+
+    await callback.answer()
+    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=builder.as_markup())
+
+
+class EditItem(StatesGroup):
+    waiting_field = State()
+    waiting_new_name = State()
+    waiting_new_price = State()
+    waiting_new_photo = State()
+
+
+@router.callback_query(F.data.startswith("itemedit_"))
+async def item_edit_menu(callback: CallbackQuery, state: FSMContext):
+    """Меню редактирования одной позиции — выбор что менять"""
+    parts = callback.data.replace("itemedit_", "").split("_")
+    item_id = int(parts[0])
+    day_num = int(parts[1])
+    category = parts[2]
+
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        item = await db.fetchrow("SELECT * FROM weekly_menu WHERE id = $1", item_id)
+
+    if not item:
+        await callback.answer("❌ Позиция не найдена", show_alert=True)
+        return
+
+    await state.update_data(edit_item_id=item_id, edit_day=day_num, edit_category=category)
+
+    text = (
+        f"✏️ *Редактирование позиции*\n\n"
+        f"№{item['item_number']}. {item['name']}\n"
+        f"💰 {item['price']:,} сум\n"
+        f"📸 {'Фото есть' if item['photo_id'] else 'Без фото'}\n\n"
+        f"Что изменить?"
+    )
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📝 Название", callback_data="itemfield_name")
+    builder.button(text="💰 Цену", callback_data="itemfield_price")
+    builder.button(text="📸 Фото", callback_data="itemfield_photo")
+    builder.button(text="🗑 Удалить позицию", callback_data="itemfield_delete")
+    builder.button(text="◀️ Назад", callback_data=f"menylist_{day_num}_{category}")
+    builder.adjust(1)
+
+    await callback.answer()
+    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data == "itemfield_name")
+async def item_edit_name_start(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(EditItem.waiting_new_name)
+    await callback.answer()
+    await callback.message.answer("📝 Введите новое *название* позиции:", parse_mode="Markdown")
+
+
+@router.message(EditItem.waiting_new_name)
+async def item_edit_name_save(message: Message, state: FSMContext):
+    if message.text and message.text.startswith("/"):
+        await state.clear()
+        await message.answer("❌ Редактирование отменено.")
+        return
+
+    new_name = message.text.strip() if message.text else ""
+    if not new_name:
+        await message.answer("❌ Отправьте текстовое название")
+        return
+
+    data = await state.get_data()
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            "UPDATE weekly_menu SET name = $1 WHERE id = $2",
+            new_name, data["edit_item_id"]
+        )
+    await state.clear()
+    await message.answer(f"✅ Название изменено на: *{new_name}*", parse_mode="Markdown", reply_markup=admin_keyboard())
+
+
+@router.callback_query(F.data == "itemfield_price")
+async def item_edit_price_start(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(EditItem.waiting_new_price)
+    await callback.answer()
+    await callback.message.answer("💰 Введите новую *цену* (сум):", parse_mode="Markdown")
+
+
+@router.message(EditItem.waiting_new_price)
+async def item_edit_price_save(message: Message, state: FSMContext):
+    if message.text and message.text.startswith("/"):
+        await state.clear()
+        await message.answer("❌ Редактирование отменено.")
+        return
+
+    text = message.text.strip().replace(" ", "").replace(",", "")
+    try:
+        price = int(text)
+    except ValueError:
+        await message.answer("❌ Введите число. Например: 25000")
+        return
+
+    data = await state.get_data()
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            "UPDATE weekly_menu SET price = $1 WHERE id = $2",
+            price, data["edit_item_id"]
+        )
+    await state.clear()
+    await message.answer(f"✅ Цена изменена на: *{price:,} сум*", parse_mode="Markdown", reply_markup=admin_keyboard())
+
+
+@router.callback_query(F.data == "itemfield_photo")
+async def item_edit_photo_start(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(EditItem.waiting_new_photo)
+    await callback.answer()
+    await callback.message.answer("📸 Отправьте новое фото для этой позиции:")
+
+
+@router.message(EditItem.waiting_new_photo, F.photo)
+async def item_edit_photo_save(message: Message, state: FSMContext):
+    photo_id = message.photo[-1].file_id
+    data = await state.get_data()
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute(
+            "UPDATE weekly_menu SET photo_id = $1 WHERE id = $2",
+            photo_id, data["edit_item_id"]
+        )
+    await state.clear()
+    await message.answer("✅ Фото обновлено", reply_markup=admin_keyboard())
+
+
+@router.message(EditItem.waiting_new_photo)
+async def item_edit_photo_invalid(message: Message):
+    if message.text and message.text.startswith("/"):
+        return
+    await message.answer("❌ Отправьте именно фото (изображение)")
+
+
+@router.callback_query(F.data == "itemfield_delete")
+async def item_delete_confirm(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Да, удалить", callback_data="itemfield_delete_confirm")
+    builder.button(text="◀️ Отмена", callback_data=f"itemedit_{data['edit_item_id']}_{data['edit_day']}_{data['edit_category']}")
+    builder.adjust(2)
+    await callback.answer()
+    await callback.message.edit_text("❓ Удалить эту позицию из меню?", reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data == "itemfield_delete_confirm")
+async def item_delete_execute(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await db.execute("DELETE FROM weekly_menu WHERE id = $1", data["edit_item_id"])
+    day_num = data["edit_day"]
+    category = data["edit_category"]
+    await state.clear()
+    await callback.answer("✅ Позиция удалена")
+
+    # Возвращаемся к списку позиций категории
+    callback.data = f"menylist_{day_num}_{category}"
+    await menu_category_list(callback)
+
+
+@router.callback_query(F.data.startswith("menyaddone_"))
+async def menu_add_one_item(callback: CallbackQuery, state: FSMContext):
+    """Добавить одну новую позицию в категорию без переписывания остальных"""
+    parts = callback.data.replace("menyaddone_", "").split("_")
+    day_num = int(parts[0])
+    category = parts[1]
+
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        max_num = await db.fetchval(
+            "SELECT MAX(item_number) FROM weekly_menu WHERE day_of_week = $1 AND category = $2",
+            day_num, category
+        )
+    next_num = (max_num or 0) + 1
+
+    await state.update_data(
+        mode="weekly_single", weekly_day=day_num, category=category,
+        item_number=next_num
+    )
+    await state.set_state(AddMenu.waiting_photo)
+
+    cat_name = CATEGORIES[category]["ru"]
+    await callback.answer()
+    await callback.message.answer(
+        f"➕ *Новая позиция {next_num} в категории {cat_name}*\n\n"
+        f"📸 Отправьте фото или напишите *нет*:",
+        parse_mode="Markdown"
+    )
 
 
 @router.callback_query(F.data.startswith("menyedit_"))
@@ -303,7 +531,22 @@ async def menu_save(callback: CallbackQuery, state: FSMContext):
     cat_name = CATEGORIES.get(category, {}).get("ru", category)
     mode = data.get("mode", "weekly")
 
-    if mode == "weekly":
+    if mode == "weekly_single":
+        # Добавление ОДНОЙ позиции к существующим, без удаления остальных
+        day = data["weekly_day"]
+        pool = await get_pool()
+        async with pool.acquire() as db:
+            for item in items:
+                await db.execute(
+                    """INSERT INTO weekly_menu
+                       (day_of_week, item_number, name, description, price, photo_id, category)
+                       VALUES ($1, $2, $3, '', $4, $5, $6)""",
+                    day, item["item_number"], item["name"],
+                    item["price"], item.get("photo_id"), category
+                )
+        day_name = DAYS_RU[day]
+        header = f"✅ *Позиция добавлена в {cat_name} на {day_name}!*\n\n"
+    elif mode == "weekly":
         day = data["weekly_day"]
         await set_weekly_menu(day, items, category)
         day_name = DAYS_RU[day]
