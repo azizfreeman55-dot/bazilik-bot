@@ -949,6 +949,8 @@
     renderCart();
   }
 
+  const MIN_ORDER_AMOUNT = 40000;
+
   function renderCart() {
     let count = 0, total = 0;
     Object.values(cart).forEach(c => { count += c.qty; total += c.qty * c.item.price; });
@@ -957,12 +959,37 @@
     bar.classList.add("visible");
     document.getElementById("cart-count").textContent = `${count} ${pluralWord(count, "positions_count")}`;
     document.getElementById("cart-total").textContent = fmt(total);
-    document.getElementById("cart-action").innerHTML = `${T("checkout")} <span>→</span>`;
+
+    if (total < MIN_ORDER_AMOUNT) {
+      const remaining = MIN_ORDER_AMOUNT - total;
+      document.getElementById("cart-action").innerHTML = CURRENT_LANG === "uz"
+        ? `Yana ${fmt(remaining)}`
+        : `Ещё ${fmt(remaining)}`;
+      document.getElementById("cart-action").style.opacity = "0.6";
+    } else {
+      document.getElementById("cart-action").innerHTML = `${T("checkout")} <span>→</span>`;
+      document.getElementById("cart-action").style.opacity = "1";
+    }
   }
 
   function submitOrder() {
     const items = Object.values(cart).map(c => ({ menu_id: c.item.id, qty: c.qty, category: c.category }));
     if (items.length === 0) return;
+
+    const total = Object.values(cart).reduce((s, c) => s + c.qty * c.item.price, 0);
+    if (total < MIN_ORDER_AMOUNT) {
+      const remaining = MIN_ORDER_AMOUNT - total;
+      const msg = CURRENT_LANG === "uz"
+        ? `Bepul yetkazib berish uchun minimal buyurtma — ${fmt(MIN_ORDER_AMOUNT)}. Yana ${fmt(remaining)} qo'shing.`
+        : `Минимальная сумма заказа для бесплатной доставки — ${fmt(MIN_ORDER_AMOUNT)}. Добавьте ещё ${fmt(remaining)}.`;
+      if (tg?.showAlert) {
+        tg.showAlert(msg);
+      } else {
+        showToast(msg);
+      }
+      return;
+    }
+
     showPaymentChoice(items);
   }
 
