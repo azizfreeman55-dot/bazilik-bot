@@ -414,6 +414,31 @@ async def handle_webapp_order(request):
             total_amount = 0
             orders_created = 0
 
+            # Предварительный подсчёт суммы заказа (без побочных эффектов в БД),
+            # чтобы проверить минимальную сумму ДО создания реальных позиций заказа.
+            MIN_ORDER_AMOUNT = 40000
+            precheck_total = 0
+            for entry in items:
+                menu_id = entry.get("menu_id")
+                qty = entry.get("qty", 1)
+                if isinstance(menu_id, str) and menu_id.startswith("weekly_"):
+                    _, day_num, item_number, cat = menu_id.split("_")
+                    price_row = await db.fetchrow(
+                        "SELECT price FROM weekly_menu WHERE day_of_week = $1 AND item_number = $2 AND category = $3",
+                        int(day_num), int(item_number), cat
+                    )
+                else:
+                    price_row = await db.fetchrow("SELECT price FROM menus WHERE id = $1", int(menu_id))
+                if price_row:
+                    precheck_total += price_row["price"] * qty
+
+            if precheck_total < MIN_ORDER_AMOUNT:
+                remaining_needed = MIN_ORDER_AMOUNT - precheck_total
+                return web.json_response({
+                    "success": False,
+                    "error": f"Минимальная сумма заказа — {MIN_ORDER_AMOUNT:,} сум. Добавьте ещё {remaining_needed:,} сум."
+                }, headers=cors_headers())
+
             for entry in items:
                 menu_id = entry.get("menu_id")
                 qty = entry.get("qty", 1)
