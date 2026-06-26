@@ -1532,7 +1532,7 @@ async def handle_webapp_weekly_menu_for_day(request):
         pool = await get_pool()
         async with pool.acquire() as db:
             rows = await db.fetch(
-                """SELECT id, item_number, name, price, category FROM menus
+                """SELECT id, item_number, name, price, category, photo_id FROM menus
                    WHERE menu_date = $1::text AND is_active = 1
                    ORDER BY category, item_number""",
                 target_date
@@ -1540,13 +1540,17 @@ async def handle_webapp_weekly_menu_for_day(request):
             if not rows:
                 day_num = date_cls.fromisoformat(target_date).weekday()
                 rows = await db.fetch(
-                    """SELECT item_number, name, price, category FROM weekly_menu
+                    """SELECT item_number, name, price, category, photo_id FROM weekly_menu
                        WHERE day_of_week = $1 AND is_active = 1
                        ORDER BY category, item_number""",
                     day_num
                 )
 
         items = [dict(r) for r in rows]
+        for item in items:
+            photo_id = item.pop("photo_id", None)
+            item["photo_url"] = build_photo_url(photo_id)
+
         return web.json_response({
             "items": items,
             "target_date": target_date
