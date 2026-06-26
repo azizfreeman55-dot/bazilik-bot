@@ -565,10 +565,21 @@ async def handle_webapp_order(request):
                     f"\n\n🔥 *Серия {streak_bonus_info['milestone']} дней подряд!*\n"
                     f"🎁 Бонус: +{streak_bonus_info['points']} баллов"
                 )
+
+            slot_row = None
+            async with pool.acquire() as slot_db:
+                slot_row = await slot_db.fetchrow(
+                    """SELECT ds.slot FROM delivery_slots ds
+                       JOIN users u ON u.id = ds.user_id
+                       WHERE u.telegram_id = $1 AND ds.order_date = $2::text""",
+                    telegram_id, tomorrow
+                )
+            time_text = f"\n🕐 Время доставки: {slot_row['slot']}" if slot_row else ""
+
             await bot.send_message(
                 telegram_id,
                 f"✅ *Заказ оформлен через Mini App!*\n\n{items_text}{balance_text}{streak_text}\n\n"
-                f"📅 Доставка завтра, {tomorrow}",
+                f"📅 Доставка завтра, {tomorrow}{time_text}",
                 parse_mode="Markdown"
             )
             await bot.session.close()
@@ -604,6 +615,12 @@ async def handle_webapp_my_order(request):
                    ORDER BY m.category, m.item_number""",
                 telegram_id, tomorrow
             )
+            slot_row = await db.fetchrow(
+                """SELECT ds.slot FROM delivery_slots ds
+                   JOIN users u ON u.id = ds.user_id
+                   WHERE u.telegram_id = $1 AND ds.order_date = $2::text""",
+                telegram_id, tomorrow
+            )
 
         items = [dict(r) for r in rows]
         total = sum(i["price"] for i in items)
@@ -611,7 +628,8 @@ async def handle_webapp_my_order(request):
         return web.json_response({
             "items": items,
             "total": total,
-            "date_label": tomorrow
+            "date_label": tomorrow,
+            "delivery_slot": slot_row["slot"] if slot_row else None
         }, headers=cors_headers())
     except Exception as e:
         logger.error(f"webapp_my_order error: {e}")
@@ -1112,6 +1130,43 @@ async def handle_webapp_update_profile(request):
         return web.json_response({"success": True}, headers=cors_headers())
     except Exception as e:
         logger.error(f"webapp_update_profile error: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500, headers=cors_headers())
+
+
+DELIVERY_SLOTS = ["11:00-12:00", "12:00-13:00", "13:00-14:00", "14:00-15:00"]
+
+
+async def handle_webapp_set_delivery_slot(request):
+    """POST /api/set-delivery-slot — сохраняет выбранный интервал доставки на завтра"""
+    try:
+        init_data = await get_init_data_from_request(request)
+        user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
+        if not user_data:
+            return web.json_response({"success": False, "error": "Invalid auth"}, status=401, headers=cors_headers())
+
+        telegram_id = user_data.get("id")
+        body = await request.json()
+        slot = body.get("slot")
+
+        if slot not in DELIVERY_SLOTS:
+            return web.json_response({"success": False, "error": "Недопустимый интервал"}, headers=cors_headers())
+
+        tomorrow = str(date.today() + timedelta(days=1))
+        pool = await get_pool()
+        async with pool.acquire() as db:
+            user = await db.fetchrow("SELECT id FROM users WHERE telegram_id = $1", telegram_id)
+            if not user:
+                return web.json_response({"success": False, "error": "User not found"}, status=404, headers=cors_headers())
+            await db.execute(
+                """INSERT INTO delivery_slots (user_id, order_date, slot)
+                   VALUES ($1, $2, $3)
+                   ON CONFLICT (user_id, order_date) DO UPDATE SET slot = $3""",
+                user["id"], tomorrow, slot
+            )
+
+        return web.json_response({"success": True, "slots": DELIVERY_SLOTS}, headers=cors_headers())
+    except Exception as e:
+        logger.error(f"webapp_set_delivery_slot error: {e}")
         return web.json_response({"success": False, "error": str(e)}, status=500, headers=cors_headers())
 
 
@@ -1658,6 +1713,7 @@ async def create_app():
     app.router.add_post("/api/update-lang", handle_webapp_update_lang)
     app.router.add_post("/api/toggle-notification", handle_webapp_toggle_notification)
     app.router.add_post("/api/update-order-location", handle_webapp_update_order_location)
+    app.router.add_post("/api/set-delivery-slot", handle_webapp_set_delivery_slot)
 
     for path in ["/api/menu", "/api/order", "/api/my-order", "/api/cancel-order",
                  "/api/profile", "/api/rating", "/api/balance-history", "/api/topup",
@@ -1665,7 +1721,7 @@ async def create_app():
                  "/api/settings/toggle-auto", "/api/settings/weekly-menu", "/api/settings/set-weekly",
                  "/api/dashboard", "/api/autoorder", "/api/full-settings", "/api/update-profile",
                  "/api/update-company-address", "/api/update-birthday", "/api/update-lang",
-                 "/api/toggle-notification", "/api/update-order-location"]:
+                 "/api/toggle-notification", "/api/update-order-location", "/api/set-delivery-slot"]:
         app.router.add_route("OPTIONS", path, handle_options)
 
     app.router.add_get("/api/photo/{photo_id}", handle_photo_proxy)
