@@ -606,7 +606,7 @@ async def handle_webapp_my_order(request):
         pool = await get_pool()
         async with pool.acquire() as db:
             rows = await db.fetch(
-                """SELECT o.id, o.status, m.name as meal_name, m.category, m.price
+                """SELECT o.id, o.menu_id, o.status, m.name as meal_name, m.category, m.price
                    FROM orders o
                    JOIN users u ON o.user_id = u.id
                    JOIN menus m ON o.menu_id = m.id
@@ -622,8 +622,26 @@ async def handle_webapp_my_order(request):
                 telegram_id, tomorrow
             )
 
-        items = [dict(r) for r in rows]
-        total = sum(i["price"] for i in items)
+        # Группируем по menu_id — несколько строк orders с одинаковым menu_id
+        # означают "несколько штук этого блюда", показываем как qty, а не дублируем.
+        grouped = {}
+        for r in rows:
+            key = r["menu_id"]
+            if key not in grouped:
+                grouped[key] = {
+                    "menu_id": r["menu_id"],
+                    "meal_name": r["meal_name"],
+                    "category": r["category"],
+                    "price": r["price"],
+                    "status": r["status"],
+                    "qty": 0,
+                    "order_ids": []
+                }
+            grouped[key]["qty"] += 1
+            grouped[key]["order_ids"].append(r["id"])
+
+        items = list(grouped.values())
+        total = sum(i["price"] * i["qty"] for i in items)
 
         return web.json_response({
             "items": items,
@@ -634,6 +652,70 @@ async def handle_webapp_my_order(request):
     except Exception as e:
         logger.error(f"webapp_my_order error: {e}")
         return web.json_response({"error": str(e)}, status=500, headers=cors_headers())
+
+
+async def handle_webapp_update_order_qty(request):
+    """
+    POST /api/update-order-qty — изменяет количество одной позиции в заказе на завтра.
+    direction: "inc" (добавить одну единицу) или "dec" (убрать одну единицу).
+    Если после уменьшения остаётся 0 — позиция удаляется полностью (отменяется).
+    """
+    try:
+        init_data = await get_init_data_from_request(request)
+        user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
+        if not user_data:
+            return web.json_response({"success": False, "error": "Invalid auth"}, status=401, headers=cors_headers())
+
+        telegram_id = user_data.get("id")
+        body = await request.json()
+        menu_id = body.get("menu_id")
+        direction = body.get("direction")  # "inc" | "dec"
+
+        if direction not in ("inc", "dec") or not menu_id:
+            return web.json_response({"success": False, "error": "Неверные параметры"}, headers=cors_headers())
+
+        tomorrow = str(date.today() + timedelta(days=1))
+        pool = await get_pool()
+        async with pool.acquire() as db:
+            user = await db.fetchrow("SELECT id FROM users WHERE telegram_id = $1", telegram_id)
+            if not user:
+                return web.json_response({"success": False, "error": "User not found"}, status=404, headers=cors_headers())
+            user_db_id = user["id"]
+
+            # Заказ можно менять только пока он pending (до закрытия в 20:00)
+            existing = await db.fetch(
+                """SELECT id, status, payment_method FROM orders
+                   WHERE user_id = $1 AND menu_id = $2 AND order_date = $3::text AND status != 'cancelled'
+                   ORDER BY id""",
+                user_db_id, int(menu_id), tomorrow
+            )
+            if existing and existing[0]["status"] != "pending":
+                return web.json_response({"success": False, "error": "Заказ уже подтверждён, изменение недоступно"}, headers=cors_headers())
+
+            if direction == "inc":
+                payment_method = existing[0]["payment_method"] if existing else "balance"
+                await db.execute(
+                    """INSERT INTO orders (user_id, menu_id, order_date, status, payment_method)
+                       VALUES ($1, $2, $3::text, 'pending', $4)""",
+                    user_db_id, int(menu_id), tomorrow, payment_method
+                )
+                await db.execute(
+                    "UPDATE users SET total_orders = total_orders + 1, points = points + 5 WHERE id = $1",
+                    user_db_id
+                )
+            else:
+                if not existing:
+                    return web.json_response({"success": False, "error": "Позиция не найдена"}, headers=cors_headers())
+                await db.execute("UPDATE orders SET status = 'cancelled' WHERE id = $1", existing[0]["id"])
+                await db.execute(
+                    "UPDATE users SET total_orders = total_orders - 1, points = points - 5 WHERE id = $1",
+                    user_db_id
+                )
+
+        return web.json_response({"success": True}, headers=cors_headers())
+    except Exception as e:
+        logger.error(f"webapp_update_order_qty error: {e}")
+        return web.json_response({"success": False, "error": str(e)}, status=500, headers=cors_headers())
 
 
 async def handle_webapp_cancel_order(request):
@@ -1714,6 +1796,7 @@ async def create_app():
     app.router.add_post("/api/toggle-notification", handle_webapp_toggle_notification)
     app.router.add_post("/api/update-order-location", handle_webapp_update_order_location)
     app.router.add_post("/api/set-delivery-slot", handle_webapp_set_delivery_slot)
+    app.router.add_post("/api/update-order-qty", handle_webapp_update_order_qty)
 
     for path in ["/api/menu", "/api/order", "/api/my-order", "/api/cancel-order",
                  "/api/profile", "/api/rating", "/api/balance-history", "/api/topup",
@@ -1721,7 +1804,8 @@ async def create_app():
                  "/api/settings/toggle-auto", "/api/settings/weekly-menu", "/api/settings/set-weekly",
                  "/api/dashboard", "/api/autoorder", "/api/full-settings", "/api/update-profile",
                  "/api/update-company-address", "/api/update-birthday", "/api/update-lang",
-                 "/api/toggle-notification", "/api/update-order-location", "/api/set-delivery-slot"]:
+                 "/api/toggle-notification", "/api/update-order-location", "/api/set-delivery-slot",
+                 "/api/update-order-qty"]:
         app.router.add_route("OPTIONS", path, handle_options)
 
     app.router.add_get("/api/photo/{photo_id}", handle_photo_proxy)
