@@ -777,6 +777,7 @@
   const API_BASE = "https://bazilik-webhook.onrender.com";
 
   let MENU = {};
+  let ordersOpen = true;
   let currentCat = "second";
   let cart = {};
   let userBalance = 0;
@@ -857,11 +858,28 @@
 
       MENU = data.categories || {};
       userBalance = data.balance || 0;
+      ordersOpen = data.orders_open !== false;
       document.getElementById("balance-pill").textContent = fmt(userBalance);
 
       const dateLabel = data.date_label || (CURRENT_LANG === "uz" ? "ertaga" : "завтра");
       document.getElementById("header-extra").innerHTML =
         `<div class="header-sub-label">${T("menu_for")}</div><div class="header-sub-value">${dateLabel}</div>`;
+
+      if (!ordersOpen) {
+        const closedMsg = CURRENT_LANG === "uz"
+          ? `Buyurtmalar qabul qilinmaydi (${data.order_close_time || "20:00"} gacha qabul qilinadi). Ertaga 10:00 da yangi menyu keladi.`
+          : `Приём заказов закрыт (принимаются до ${data.order_close_time || "20:00"}). Завтра в 10:00 придёт новое меню.`;
+        const bannerEl = document.createElement("div");
+        bannerEl.style.cssText = "background: var(--red); color: white; padding: 10px 14px; border-radius: 12px; font-size: 12px; margin: 0 18px 8px; text-align: center; font-weight: 600;";
+        bannerEl.textContent = closedMsg;
+        bannerEl.id = "orders-closed-banner";
+        const existing = document.getElementById("orders-closed-banner");
+        if (existing) existing.remove();
+        document.querySelector(".header").after(bannerEl);
+      } else {
+        const existing = document.getElementById("orders-closed-banner");
+        if (existing) existing.remove();
+      }
 
       const availableCats = Object.keys(MENU).filter(c => MENU[c].length > 0);
       if (availableCats.length === 0) {
@@ -979,6 +997,18 @@
   function submitOrder() {
     const items = Object.values(cart).map(c => ({ menu_id: c.item.id, qty: c.qty, category: c.category }));
     if (items.length === 0) return;
+
+    if (!ordersOpen) {
+      const msg = CURRENT_LANG === "uz"
+        ? "Buyurtmalar qabul qilinmaydi. Ertaga 10:00 da yangi menyu keladi."
+        : "Приём заказов закрыт. Завтра в 10:00 придёт новое меню.";
+      if (tg?.showAlert) {
+        tg.showAlert(msg);
+      } else {
+        showToast(msg);
+      }
+      return;
+    }
 
     const total = Object.values(cart).reduce((s, c) => s + c.qty * c.item.price, 0);
     if (total < MIN_ORDER_AMOUNT) {
