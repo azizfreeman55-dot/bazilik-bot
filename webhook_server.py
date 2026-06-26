@@ -318,33 +318,49 @@ async def handle_webapp_menu(request):
             balance = balance_row["balance"] if balance_row else 0
 
             tomorrow = str(date.today() + timedelta(days=1))
+            day_num = date.fromisoformat(tomorrow).weekday()
+
+            # Разовые позиции, которые уже реально существуют в menus на эту дату
+            # (например, потому что кто-то уже сделал заказ — позиция автоматически
+            # копируется из weekly_menu в menus в момент создания заказа).
             menu_rows = await db.fetch(
                 """SELECT id, item_number, name, price, photo_id, category
                    FROM menus WHERE menu_date = $1::text AND is_active = 1
                    ORDER BY category, item_number""",
                 tomorrow
             )
+            existing_by_key = {(r["item_number"], r["category"]): r for r in menu_rows}
 
-            if not menu_rows:
-                day_num = date.fromisoformat(tomorrow).weekday()
-                weekly_rows = await db.fetch(
-                    """SELECT item_number, name, price, photo_id, category
-                       FROM weekly_menu WHERE day_of_week = $1 AND is_active = 1
-                       ORDER BY category, item_number""",
-                    day_num
-                )
-                categories = {"first": [], "second": [], "salad": [], "dessert": [], "drink": []}
+            # Полное постоянное меню на этот день недели — показываем ВСЕГДА,
+            # независимо от того, сколько позиций уже скопировано в menus.
+            # Раньше тут была ошибка: если в menus была хотя бы одна позиция
+            # (потому что кто-то уже заказал), весь остальной weekly_menu пропадал
+            # из каталога — и при попытке изменить заказ клиент видел только то,
+            # что уже заказано.
+            weekly_rows = await db.fetch(
+                """SELECT item_number, name, price, photo_id, category
+                   FROM weekly_menu WHERE day_of_week = $1 AND is_active = 1
+                   ORDER BY category, item_number""",
+                day_num
+            )
+
+            categories = {"first": [], "second": [], "salad": [], "dessert": [], "drink": []}
+
+            if weekly_rows:
                 for row in weekly_rows:
                     cat = row["category"] or "second"
+                    key = (row["item_number"], cat)
+                    existing = existing_by_key.get(key)
                     categories.setdefault(cat, []).append({
-                        "id": f"weekly_{day_num}_{row['item_number']}_{cat}",
+                        "id": existing["id"] if existing else f"weekly_{day_num}_{row['item_number']}_{cat}",
                         "item_number": row["item_number"],
-                        "name": row["name"],
-                        "price": row["price"],
-                        "photo_url": build_photo_url(row["photo_id"])
+                        "name": existing["name"] if existing else row["name"],
+                        "price": existing["price"] if existing else row["price"],
+                        "photo_url": build_photo_url(existing["photo_id"] if existing else row["photo_id"])
                     })
             else:
-                categories = {"first": [], "second": [], "salad": [], "dessert": [], "drink": []}
+                # Нет постоянного меню на этот день недели вообще — показываем
+                # только то, что реально есть в разовом menus (старое поведение).
                 for row in menu_rows:
                     cat = row["category"] or "second"
                     categories.setdefault(cat, []).append({
