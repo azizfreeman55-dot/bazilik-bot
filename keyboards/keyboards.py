@@ -8,7 +8,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 CATEGORY_NAMES = {
     "first":   {"ru": "🍲 Первые блюда",   "uz": "🍲 Birinchi taomlar"},
-    "second":  {"ru": "🍱 Вторые блюда",   "uz": "🍱 Ikkinchi taomlar"},
+    "second":  {"ru": "🍱 Сеты",   "uz": "🍱 Setlar"},
     "salad":   {"ru": "🥗 Салаты",           "uz": "🥗 Salatlar"},
     "dessert": {"ru": "🍰 Десерты",          "uz": "🍰 Desertlar"},
     "drink":   {"ru": "🥤 Напитки",          "uz": "🥤 Ichimliklar"},
