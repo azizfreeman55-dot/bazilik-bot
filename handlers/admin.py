@@ -18,7 +18,8 @@ from config import ADMIN_IDS
 router = Router()
 
 CATEGORIES = {
-    "main":    {"ru": "🍱 Основные блюда",  "uz": "🍱 Asosiy taomlar"},
+    "first":   {"ru": "🍲 Первые блюда",   "uz": "🍲 Birinchi taomlar"},
+    "second":  {"ru": "🍱 Вторые блюда",   "uz": "🍱 Ikkinchi taomlar"},
     "salad":   {"ru": "🥗 Салаты",           "uz": "🥗 Salatlar"},
     "dessert": {"ru": "🍰 Десерты",          "uz": "🍰 Desertlar"},
     "drink":   {"ru": "🥤 Напитки",          "uz": "🥤 Ichimliklar"},
@@ -68,7 +69,8 @@ async def admin_menu_home(callback: CallbackQuery):
         cats = info["categories"]
         if cats:
             icons = ""
-            if "main" in cats: icons += "🍱"
+            if "first" in cats: icons += "🍲"
+            if "second" in cats: icons += "🍱"
             if "salad" in cats: icons += "🥗"
             if "dessert" in cats: icons += "🍰"
             if "drink" in cats: icons += "🥤"
@@ -455,8 +457,8 @@ async def process_menu_name(message: Message, state: FSMContext):
     await state.update_data(current_name=name)
     await state.set_state(AddMenu.waiting_price)
     data = await state.get_data()
-    cat = data.get("category", "main")
-    hints = {"main": "35 000", "salad": "15 000", "dessert": "12 000", "drink": "8 000"}
+    cat = data.get("category", "second")
+    hints = {"first": "20 000", "second": "35 000", "salad": "15 000", "dessert": "12 000", "drink": "8 000"}
     hint = hints.get(cat, "35 000")
     await message.answer(
         f"💰 Введите *цену* (сум):\n_(стандарт = {hint} сум — напишите 'стандарт')_",
@@ -473,8 +475,8 @@ async def process_menu_price(message: Message, state: FSMContext):
 
     text = message.text.strip().lower()
     data = await state.get_data()
-    cat = data.get("category", "main")
-    default_prices = {"main": 35000, "salad": 15000, "dessert": 12000, "drink": 8000}
+    cat = data.get("category", "second")
+    default_prices = {"first": 20000, "second": 35000, "salad": 15000, "dessert": 12000, "drink": 8000}
 
     if text == "стандарт":
         price = default_prices.get(cat, 35000)
@@ -527,7 +529,7 @@ async def menu_add_more(callback: CallbackQuery, state: FSMContext):
 async def menu_save(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     items = data["items"]
-    category = data.get("category", "main")
+    category = data.get("category", "second")
     cat_name = CATEGORIES.get(category, {}).get("ru", category)
     mode = data.get("mode", "weekly")
 
@@ -647,7 +649,7 @@ async def admin_summary(callback: CallbackQuery):
     text = f"📊 *Сводка заказов на {tomorrow}:*\n\n"
     by_category = {}
     for item in summary["items"]:
-        cat = item.get("category", "main")
+        cat = item.get("category", "second")
         by_category.setdefault(cat, []).append(item)
 
     for cat, items in by_category.items():
