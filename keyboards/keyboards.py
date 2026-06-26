@@ -7,7 +7,8 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 
 CATEGORY_NAMES = {
-    "main":    {"ru": "🍱 Основные блюда",  "uz": "🍱 Asosiy taomlar"},
+    "first":   {"ru": "🍲 Первые блюда",   "uz": "🍲 Birinchi taomlar"},
+    "second":  {"ru": "🍱 Вторые блюда",   "uz": "🍱 Ikkinchi taomlar"},
     "salad":   {"ru": "🥗 Салаты",           "uz": "🥗 Salatlar"},
     "dessert": {"ru": "🍰 Десерты",          "uz": "🍰 Desertlar"},
     "drink":   {"ru": "🥤 Напитки",          "uz": "🥤 Ichimliklar"},
@@ -49,7 +50,7 @@ def category_keyboard(available_categories: list, lang: str = "ru") -> InlineKey
     return builder.as_markup()
 
 
-def menu_keyboard(menu_items: list, category: str = "main", lang: str = "ru") -> InlineKeyboardMarkup:
+def menu_keyboard(menu_items: list, category: str = "second", lang: str = "ru") -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for item in menu_items:
         builder.button(
