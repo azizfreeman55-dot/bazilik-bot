@@ -333,9 +333,9 @@ async def handle_webapp_menu(request):
                        ORDER BY category, item_number""",
                     day_num
                 )
-                categories = {"main": [], "salad": [], "dessert": [], "drink": []}
+                categories = {"first": [], "second": [], "salad": [], "dessert": [], "drink": []}
                 for row in weekly_rows:
-                    cat = row["category"] or "main"
+                    cat = row["category"] or "second"
                     categories.setdefault(cat, []).append({
                         "id": f"weekly_{day_num}_{row['item_number']}_{cat}",
                         "item_number": row["item_number"],
@@ -344,9 +344,9 @@ async def handle_webapp_menu(request):
                         "photo_url": build_photo_url(row["photo_id"])
                     })
             else:
-                categories = {"main": [], "salad": [], "dessert": [], "drink": []}
+                categories = {"first": [], "second": [], "salad": [], "dessert": [], "drink": []}
                 for row in menu_rows:
-                    cat = row["category"] or "main"
+                    cat = row["category"] or "second"
                     categories.setdefault(cat, []).append({
                         "id": row["id"],
                         "item_number": row["item_number"],
@@ -1365,7 +1365,7 @@ async def handle_webapp_settings_set_weekly(request):
         body = await request.json()
         day_of_week = body.get("day_of_week")
         item_number = body.get("item_number")
-        category = body.get("category", "main")
+        category = body.get("category", "second")
 
         pool = await get_pool()
         async with pool.acquire() as db:
