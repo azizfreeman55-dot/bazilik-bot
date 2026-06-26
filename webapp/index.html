@@ -116,6 +116,7 @@
     width: 100%; aspect-ratio: 1.3; background: var(--cream-dark);
     object-fit: cover; display: block;
   }
+  .photo-clickable { cursor: pointer; }
   .item-info { padding: 10px 12px 4px; flex: 1; }
   .item-name { font-size: 13.5px; font-weight: 600; line-height: 1.3; min-height: 35px; }
   .item-price { font-size: 13px; color: var(--ink-soft); margin-top: 2px; font-weight: 500; }
@@ -926,7 +927,7 @@
       card.className = "item-card";
 
       const thumbHtml = item.photo_url
-        ? `<img class="item-thumb-img" src="${item.photo_url}" alt="${item.name}" loading="lazy">`
+        ? `<img class="item-thumb-img photo-clickable" src="${item.photo_url}" alt="${item.name}" loading="lazy" data-full-photo="${item.photo_url}" data-photo-name="${item.name.replace(/"/g, '&quot;')}">`
         : `<div class="item-thumb">${getCategoryMeta()[currentCat]?.icon || "🍽"}</div>`;
 
       card.innerHTML = `
@@ -939,6 +940,37 @@
       `;
       listEl.appendChild(card);
       renderStepper(item, qty);
+
+      const photoEl = card.querySelector(".photo-clickable");
+      if (photoEl) {
+        photoEl.onclick = (e) => {
+          e.stopPropagation();
+          showPhotoLightbox(photoEl.dataset.fullPhoto, photoEl.dataset.photoName);
+        };
+      }
+    });
+  }
+
+  function showPhotoLightbox(photoUrl, name) {
+    const lightbox = document.createElement("div");
+    lightbox.id = "photo-lightbox";
+    lightbox.style.cssText = `
+      position: fixed; inset: 0; background: rgba(0,0,0,0.92); z-index: 400;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+    `;
+    lightbox.innerHTML = `
+      <button id="lightbox-close-btn" style="position: absolute; top: 16px; right: 16px; z-index: 401;
+        width: 40px; height: 40px; border-radius: 50%; background: rgba(255,255,255,0.15); border: none;
+        color: #fff; font-size: 20px; cursor: pointer;">✕</button>
+      <img src="${photoUrl}" alt="${name}" style="max-width: 92%; max-height: 75%; object-fit: contain; border-radius: 12px;">
+      <div style="color: #fff; font-size: 15px; font-weight: 600; margin-top: 16px; text-align: center; padding: 0 20px;">${name}</div>
+    `;
+    document.body.appendChild(lightbox);
+
+    const close = () => { if (document.body.contains(lightbox)) document.body.removeChild(lightbox); };
+    document.getElementById("lightbox-close-btn").onclick = close;
+    lightbox.addEventListener("click", (e) => {
+      if (e.target === lightbox) close();
     });
   }
 
