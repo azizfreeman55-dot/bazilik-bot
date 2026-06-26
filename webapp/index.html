@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Bazilik Catering</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
   :root {
     --green-50: #2A2A2A;
@@ -567,7 +569,7 @@
       pay_cash_desc: "Оплатите курьеру наличными", pay_click_desc: "Пополнить баланс и оплатить сразу",
       cancel: "Отмена", where_are_you: "Где вы сейчас находитесь?",
       location_hint: "Это поможет курьеру точно найти вас при доставке. Локация обновит адрес доставки для всей компании.",
-      share_location: "📍 Отправить мою локацию", skip_location: "Пропустить, использовать прошлую локацию",
+      share_location: "📍 Указать на карте", skip_location: "Пропустить, использовать прошлую локацию",
       determining_location: "Определяем локацию…", location_updated: "📍 Локация обновлена",
       location_failed: "Не удалось определить локацию — заказ оформлен с прошлой локацией",
       location_permission_denied: "Доступ к геолокации запрещён в настройках Telegram. Заказ оформлен с прошлой локацией компании.",
@@ -644,7 +646,7 @@
       pay_cash_desc: "Kuryerga naqd to'lang", pay_click_desc: "Hisobni to'ldirib darhol to'lash",
       cancel: "Bekor qilish", where_are_you: "Hozir qayerdasiz?",
       location_hint: "Bu kuryerga sizni topishda yordam beradi. Joylashuv kompaniyaning yetkazib berish manzilini yangilaydi.",
-      share_location: "📍 Joylashuvimni yuborish", skip_location: "O'tkazib yuborish, oldingi joylashuvdan foydalanish",
+      share_location: "📍 Xaritada belgilash", skip_location: "O'tkazib yuborish, oldingi joylashuvdan foydalanish",
       determining_location: "Joylashuv aniqlanmoqda…", location_updated: "📍 Joylashuv yangilandi",
       location_failed: "Joylashuvni aniqlab bo'lmadi — buyurtma avvalgi joylashuv bilan rasmiylashtirildi",
       location_permission_denied: "Telegram sozlamalarida geolokatsiyaga ruxsat berilmagan. Buyurtma avvalgi kompaniya joylashuvi bilan rasmiylashtirildi.",
@@ -1112,115 +1114,108 @@
     const modal = document.createElement("div");
     modal.id = "location-modal";
     modal.style.cssText = `
-      position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 300;
-      display: flex; align-items: flex-end; justify-content: center;
+      position: fixed; inset: 0; background: var(--page-bg); z-index: 300;
+      display: flex; flex-direction: column;
     `;
+    const title = CURRENT_LANG === "uz" ? "Manzilingizni xaritada belgilang" : "Отметьте адрес на карте";
+    const hint = CURRENT_LANG === "uz"
+      ? "Xaritani siljiting va markazdagi belgi orqali aniq joyni tanlang"
+      : "Подвигайте карту так, чтобы метка в центре указывала на нужное место";
+    const confirmText = CURRENT_LANG === "uz" ? "Shu manzilni tasdiqlash" : "Подтвердить этот адрес";
+
     modal.innerHTML = `
-      <div style="background: var(--cream-dark); border-radius: 20px 20px 0 0; padding: 24px 18px;
-                  width: 100%; max-width: 420px;">
-        <div style="font-size: 36px; text-align: center; margin-bottom: 8px;">📍</div>
-        <div style="font-size: 16px; font-weight: 700; text-align: center; margin-bottom: 6px;">
-          ${T("where_are_you")}
-        </div>
-        <div style="font-size: 13px; color: var(--ink-soft); text-align: center; margin-bottom: 18px; line-height: 1.4;">
-          ${T("location_hint")}
-        </div>
-        <button class="btn-primary" id="share-location-now-btn">${T("share_location")}</button>
+      <div style="padding: 16px 18px 10px; background: var(--cream-dark); flex-shrink: 0;">
+        <div style="font-size: 16px; font-weight: 700;">${title}</div>
+        <div style="font-size: 12px; color: var(--ink-soft); margin-top: 4px;">${hint}</div>
+      </div>
+      <div id="order-map-container" style="flex: 1; position: relative;">
+        <div id="order-map" style="width: 100%; height: 100%;"></div>
+        <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -100%);
+                    font-size: 36px; pointer-events: none; z-index: 1000; filter: drop-shadow(0 4px 6px rgba(0,0,0,0.4));">📍</div>
+        <button id="locate-me-btn" style="position: absolute; bottom: 16px; right: 16px; z-index: 1000;
+                    width: 44px; height: 44px; border-radius: 50%; background: var(--white); border: none;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.3); font-size: 20px; cursor: pointer;
+                    display: flex; align-items: center; justify-content: center;">🎯</button>
+      </div>
+      <div style="padding: 14px 18px; background: var(--cream-dark); flex-shrink: 0;">
+        <button class="btn-primary" id="confirm-map-location-btn">${confirmText}</button>
         <button class="btn-danger" id="skip-location-btn" style="margin-top: 8px;">${T("skip_location")}</button>
       </div>
     `;
     document.body.appendChild(modal);
 
-    document.getElementById("share-location-now-btn").onclick = () => {
-      requestOrderLocation(items, paymentMethod, modal);
+    // Центр по умолчанию — Ташкент. Если есть последняя известная позиция
+    // (например пользователь уже открывал карту ранее в этой сессии), используем её.
+    const defaultCenter = window._lastMapCenter || [41.311081, 69.240562];
+
+    const map = L.map("order-map", {
+      center: defaultCenter,
+      zoom: 15,
+      zoomControl: true,
+      attributionControl: false,
+    });
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+    }).addTo(map);
+
+    // Метка всегда в центре экрана — карта сама "под" ней двигается
+    let currentLatLng = { lat: defaultCenter[0], lng: defaultCenter[1] };
+    map.on("move", () => {
+      const center = map.getCenter();
+      currentLatLng = { lat: center.lat, lng: center.lng };
+    });
+
+    // Если возможно — сразу пытаемся центрировать карту на реальной позиции пользователя.
+    // Если браузер/устройство не даст геолокацию — карта просто останется в Ташкенте,
+    // и человек сам найдёт нужную точку вручную. Никаких таймаутов и зависаний здесь
+    // нет, так как это не блокирует основной интерфейс — карта сразу отображается.
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          map.setView([pos.coords.latitude, pos.coords.longitude], 16);
+        },
+        () => { /* тихо игнорируем — карта остаётся в Ташкенте, не критично */ },
+        { enableHighAccuracy: true, timeout: 5000 }
+      );
+    }
+
+    document.getElementById("confirm-map-location-btn").onclick = async () => {
+      window._lastMapCenter = [currentLatLng.lat, currentLatLng.lng];
+      document.body.removeChild(modal);
+      showToast(T("location_updated"));
+      await apiCall("/api/update-order-location", { latitude: currentLatLng.lat, longitude: currentLatLng.lng });
+      finalizeOrder(items, paymentMethod);
     };
     document.getElementById("skip-location-btn").onclick = () => {
       document.body.removeChild(modal);
       finalizeOrder(items, paymentMethod);
     };
-  }
 
-  function requestOrderLocation(items, paymentMethod, modal) {
-    const btn = document.getElementById("share-location-now-btn");
-    btn.textContent = T("determining_location");
-
-    let settled = false;
-
-    const onSuccess = async (lat, lon) => {
-      if (settled) return;
-      settled = true;
-      document.body.removeChild(modal);
-      showToast(T("location_updated"));
-      await apiCall("/api/update-order-location", { latitude: lat, longitude: lon });
-      finalizeOrder(items, paymentMethod);
-    };
-
-    const onFail = (reason) => {
-      if (settled) return;
-      settled = true;
-      document.body.removeChild(modal);
-      const msg = reason === "denied"
-        ? T("location_permission_denied")
-        : reason === "disabled"
-        ? T("location_gps_off")
-        : T("location_failed");
-      if (tg?.showPopup) {
-        tg.showPopup({
-          message: msg,
-          buttons: reason === "denied" && tg?.LocationManager
-            ? [{ id: "open_settings", type: "default", text: CURRENT_LANG === "uz" ? "Sozlamalarni ochish" : "Открыть настройки" }, { id: "ok", type: "close" }]
-            : [{ id: "ok", type: "close" }]
-        }, (buttonId) => {
-          if (buttonId === "open_settings" && tg?.LocationManager?.openSettings) {
-            tg.LocationManager.openSettings();
-          }
-        });
-      } else if (tg?.showAlert) {
-        tg.showAlert(msg);
-      } else {
-        showToast(msg);
+    document.getElementById("locate-me-btn").onclick = () => {
+      const btn = document.getElementById("locate-me-btn");
+      if (!navigator.geolocation) {
+        showToast(T("location_not_supported"));
+        return;
       }
-      finalizeOrder(items, paymentMethod);
-    };
-
-    // Защита от зависания: если Telegram LocationManager не ответит за 8 секунд
-    // (бывает на некоторых клиентах/устройствах), не оставляем пользователя
-    // смотреть на "Определяем локацию..." навечно — продолжаем оформление заказа.
-    const timeoutId = setTimeout(() => onFail("timeout"), 8000);
-    const wrappedSuccess = (lat, lon) => { clearTimeout(timeoutId); onSuccess(lat, lon); };
-    const wrappedFail = (reason) => { clearTimeout(timeoutId); onFail(reason); };
-
-    if (tg?.LocationManager) {
-      tg.LocationManager.init(() => {
-        if (tg.LocationManager.isLocationAvailable === false) {
-          wrappedFail("disabled");
-          return;
-        }
-        tg.LocationManager.getLocation((data) => {
-          if (data && data.latitude && data.longitude) {
-            wrappedSuccess(data.latitude, data.longitude);
-          } else {
-            wrappedFail("disabled");
-          }
-        });
-      });
-      return;
-    }
-
-    if (navigator.geolocation) {
+      btn.textContent = "⏳";
       navigator.geolocation.getCurrentPosition(
-        (pos) => wrappedSuccess(pos.coords.latitude, pos.coords.longitude),
+        (pos) => {
+          btn.textContent = "🎯";
+          map.setView([pos.coords.latitude, pos.coords.longitude], 16);
+        },
         (err) => {
-          // err.code: 1 = PERMISSION_DENIED, 2 = POSITION_UNAVAILABLE (часто = GPS выключен), 3 = TIMEOUT
-          if (err.code === 1) wrappedFail("denied");
-          else if (err.code === 2) wrappedFail("disabled");
-          else wrappedFail("timeout");
+          btn.textContent = "🎯";
+          if (err.code === 1) showToast(T("location_permission_denied"));
+          else if (err.code === 2) showToast(T("location_gps_off"));
+          else showToast(T("location_no_access"));
         },
         { enableHighAccuracy: true, timeout: 8000 }
       );
-    } else {
-      wrappedFail();
-    }
+    };
+
+    // Leaflet иногда некорректно считает размер контейнера, если он появился
+    // в DOM только что — принудительно пересчитываем после небольшой паузы.
+    setTimeout(() => map.invalidateSize(), 100);
   }
 
   async function finalizeOrder(items, paymentMethod) {
@@ -1919,49 +1914,89 @@
   }
 
   function requestLocationAndSave() {
-    let settled = false;
-    const btn = document.getElementById("share-location-btn");
-    if (btn) btn.textContent = T("determining_location");
+    const modal = document.createElement("div");
+    modal.id = "settings-location-modal";
+    modal.style.cssText = `
+      position: fixed; inset: 0; background: var(--page-bg); z-index: 300;
+      display: flex; flex-direction: column;
+    `;
+    const title = CURRENT_LANG === "uz" ? "Manzilingizni xaritada belgilang" : "Отметьте адрес на карте";
+    const hint = CURRENT_LANG === "uz"
+      ? "Xaritani siljiting va markazdagi belgi orqali aniq joyni tanlang"
+      : "Подвигайте карту так, чтобы метка в центре указывала на нужное место";
+    const confirmText = CURRENT_LANG === "uz" ? "Shu manzilni tasdiqlash" : "Подтвердить этот адрес";
 
-    const finish = (fn) => { if (!settled) { settled = true; fn(); } };
-    const timeoutId = setTimeout(() => finish(() => showToast(T("location_failed"))), 8000);
+    modal.innerHTML = `
+      <div style="padding: 16px 18px 10px; background: var(--cream-dark); flex-shrink: 0;">
+        <div style="font-size: 16px; font-weight: 700;">${title}</div>
+        <div style="font-size: 12px; color: var(--ink-soft); margin-top: 4px;">${hint}</div>
+      </div>
+      <div id="settings-map-container" style="flex: 1; position: relative;">
+        <div id="settings-map" style="width: 100%; height: 100%;"></div>
+        <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -100%);
+                    font-size: 36px; pointer-events: none; z-index: 1000; filter: drop-shadow(0 4px 6px rgba(0,0,0,0.4));">📍</div>
+        <button id="locate-me-settings-btn" style="position: absolute; bottom: 16px; right: 16px; z-index: 1000;
+                    width: 44px; height: 44px; border-radius: 50%; background: var(--white); border: none;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.3); font-size: 20px; cursor: pointer;
+                    display: flex; align-items: center; justify-content: center;">🎯</button>
+      </div>
+      <div style="padding: 14px 18px; background: var(--cream-dark); flex-shrink: 0;">
+        <button class="btn-primary" id="confirm-settings-map-btn">${confirmText}</button>
+        <button class="btn-danger" id="cancel-settings-map-btn" style="margin-top: 8px;">${T("cancel")}</button>
+      </div>
+    `;
+    document.body.appendChild(modal);
 
-    // Telegram WebApp LocationManager (если доступен в этой версии клиента)
-    if (tg?.LocationManager) {
-      tg.LocationManager.init(() => {
-        if (tg.LocationManager.isLocationAvailable === false) {
-          finish(() => { clearTimeout(timeoutId); showToast(T("location_gps_off")); });
-          return;
-        }
-        tg.LocationManager.getLocation((data) => {
-          if (data && data.latitude && data.longitude) {
-            finish(() => { clearTimeout(timeoutId); saveCompanyLocation(data.latitude, data.longitude); });
-          } else {
-            finish(() => { clearTimeout(timeoutId); showToast(T("location_gps_off")); });
-          }
-        });
-      });
-      return;
+    const defaultCenter = window._lastMapCenter || [41.311081, 69.240562];
+    const map = L.map("settings-map", { center: defaultCenter, zoom: 15, attributionControl: false });
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(map);
+
+    let currentLatLng = { lat: defaultCenter[0], lng: defaultCenter[1] };
+    map.on("move", () => {
+      const c = map.getCenter();
+      currentLatLng = { lat: c.lat, lng: c.lng };
+    });
+
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => map.setView([pos.coords.latitude, pos.coords.longitude], 16),
+        () => {},
+        { enableHighAccuracy: true, timeout: 5000 }
+      );
     }
 
-    // Фоллбэк на стандартный browser geolocation API (работает в большинстве клиентов)
-    if (navigator.geolocation) {
-      showToast(T("determining_location"));
+    document.getElementById("confirm-settings-map-btn").onclick = () => {
+      window._lastMapCenter = [currentLatLng.lat, currentLatLng.lng];
+      document.body.removeChild(modal);
+      saveCompanyLocation(currentLatLng.lat, currentLatLng.lng);
+    };
+    document.getElementById("cancel-settings-map-btn").onclick = () => {
+      document.body.removeChild(modal);
+    };
+
+    document.getElementById("locate-me-settings-btn").onclick = () => {
+      const btn = document.getElementById("locate-me-settings-btn");
+      if (!navigator.geolocation) {
+        showToast(T("location_not_supported"));
+        return;
+      }
+      btn.textContent = "⏳";
       navigator.geolocation.getCurrentPosition(
-        (pos) => finish(() => { clearTimeout(timeoutId); saveCompanyLocation(pos.coords.latitude, pos.coords.longitude); }),
+        (pos) => {
+          btn.textContent = "🎯";
+          map.setView([pos.coords.latitude, pos.coords.longitude], 16);
+        },
         (err) => {
-          finish(() => {
-            clearTimeout(timeoutId);
-            if (err.code === 1) showToast(T("location_permission_denied"));
-            else if (err.code === 2) showToast(T("location_gps_off"));
-            else showToast(T("location_no_access"));
-          });
+          btn.textContent = "🎯";
+          if (err.code === 1) showToast(T("location_permission_denied"));
+          else if (err.code === 2) showToast(T("location_gps_off"));
+          else showToast(T("location_no_access"));
         },
         { enableHighAccuracy: true, timeout: 8000 }
       );
-    } else {
-      showToast(T("location_not_supported"));
-    }
+    };
+
+    setTimeout(() => map.invalidateSize(), 100);
   }
 
   async function saveCompanyLocation(lat, lon) {
