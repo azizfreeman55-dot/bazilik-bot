@@ -1076,7 +1076,11 @@
     const btn = document.getElementById("share-location-now-btn");
     btn.textContent = T("determining_location");
 
+    let settled = false;
+
     const onSuccess = async (lat, lon) => {
+      if (settled) return;
+      settled = true;
       document.body.removeChild(modal);
       showToast(T("location_updated"));
       await apiCall("/api/update-order-location", { latitude: lat, longitude: lon });
@@ -1084,6 +1088,8 @@
     };
 
     const onFail = (reason) => {
+      if (settled) return;
+      settled = true;
       document.body.removeChild(modal);
       const msg = reason === "denied"
         ? T("location_permission_denied")
@@ -1109,17 +1115,24 @@
       finalizeOrder(items, paymentMethod);
     };
 
+    // Защита от зависания: если Telegram LocationManager не ответит за 8 секунд
+    // (бывает на некоторых клиентах/устройствах), не оставляем пользователя
+    // смотреть на "Определяем локацию..." навечно — продолжаем оформление заказа.
+    const timeoutId = setTimeout(() => onFail("timeout"), 8000);
+    const wrappedSuccess = (lat, lon) => { clearTimeout(timeoutId); onSuccess(lat, lon); };
+    const wrappedFail = (reason) => { clearTimeout(timeoutId); onFail(reason); };
+
     if (tg?.LocationManager) {
       tg.LocationManager.init(() => {
         if (tg.LocationManager.isLocationAvailable === false) {
-          onFail("disabled");
+          wrappedFail("disabled");
           return;
         }
         tg.LocationManager.getLocation((data) => {
           if (data && data.latitude && data.longitude) {
-            onSuccess(data.latitude, data.longitude);
+            wrappedSuccess(data.latitude, data.longitude);
           } else {
-            onFail("disabled");
+            wrappedFail("disabled");
           }
         });
       });
@@ -1128,17 +1141,17 @@
 
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
-        (pos) => onSuccess(pos.coords.latitude, pos.coords.longitude),
+        (pos) => wrappedSuccess(pos.coords.latitude, pos.coords.longitude),
         (err) => {
           // err.code: 1 = PERMISSION_DENIED, 2 = POSITION_UNAVAILABLE (часто = GPS выключен), 3 = TIMEOUT
-          if (err.code === 1) onFail("denied");
-          else if (err.code === 2) onFail("disabled");
-          else onFail("timeout");
+          if (err.code === 1) wrappedFail("denied");
+          else if (err.code === 2) wrappedFail("disabled");
+          else wrappedFail("timeout");
         },
-        { enableHighAccuracy: true, timeout: 10000 }
+        { enableHighAccuracy: true, timeout: 8000 }
       );
     } else {
-      onFail();
+      wrappedFail();
     }
   }
 
@@ -1827,18 +1840,25 @@
   }
 
   function requestLocationAndSave() {
+    let settled = false;
+    const btn = document.getElementById("share-location-btn");
+    if (btn) btn.textContent = T("determining_location");
+
+    const finish = (fn) => { if (!settled) { settled = true; fn(); } };
+    const timeoutId = setTimeout(() => finish(() => showToast(T("location_failed"))), 8000);
+
     // Telegram WebApp LocationManager (если доступен в этой версии клиента)
     if (tg?.LocationManager) {
       tg.LocationManager.init(() => {
         if (tg.LocationManager.isLocationAvailable === false) {
-          showToast(T("location_gps_off"));
+          finish(() => { clearTimeout(timeoutId); showToast(T("location_gps_off")); });
           return;
         }
         tg.LocationManager.getLocation((data) => {
           if (data && data.latitude && data.longitude) {
-            saveCompanyLocation(data.latitude, data.longitude);
+            finish(() => { clearTimeout(timeoutId); saveCompanyLocation(data.latitude, data.longitude); });
           } else {
-            showToast(T("location_gps_off"));
+            finish(() => { clearTimeout(timeoutId); showToast(T("location_gps_off")); });
           }
         });
       });
@@ -1849,13 +1869,16 @@
     if (navigator.geolocation) {
       showToast(T("determining_location"));
       navigator.geolocation.getCurrentPosition(
-        (pos) => saveCompanyLocation(pos.coords.latitude, pos.coords.longitude),
+        (pos) => finish(() => { clearTimeout(timeoutId); saveCompanyLocation(pos.coords.latitude, pos.coords.longitude); }),
         (err) => {
-          if (err.code === 1) showToast(T("location_permission_denied"));
-          else if (err.code === 2) showToast(T("location_gps_off"));
-          else showToast(T("location_no_access"));
+          finish(() => {
+            clearTimeout(timeoutId);
+            if (err.code === 1) showToast(T("location_permission_denied"));
+            else if (err.code === 2) showToast(T("location_gps_off"));
+            else showToast(T("location_no_access"));
+          });
         },
-        { enableHighAccuracy: true, timeout: 10000 }
+        { enableHighAccuracy: true, timeout: 8000 }
       );
     } else {
       showToast(T("location_not_supported"));
