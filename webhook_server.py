@@ -19,6 +19,17 @@ CLICK_SERVICE_ID = os.getenv("CLICK_SERVICE_ID")
 CLICK_MERCHANT_ID = os.getenv("CLICK_MERCHANT_ID")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+# Время закрытия приёма заказов на завтра. Совпадает с ORDER_CLOSE_TIME в config.py
+# обычного бота (handlers/orders.py) — там это тоже "20:00". Mini App до этого момента
+# не проверял время вообще, и заказ можно было оформить в любое время суток.
+ORDER_CLOSE_TIME = "20:00"
+
+
+def is_orders_open() -> bool:
+    from datetime import datetime
+    now = datetime.now().strftime("%H:%M")
+    return now < ORDER_CLOSE_TIME
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -374,7 +385,9 @@ async def handle_webapp_menu(request):
         return web.json_response({
             "categories": categories,
             "balance": balance,
-            "date_label": tomorrow
+            "date_label": tomorrow,
+            "orders_open": is_orders_open(),
+            "order_close_time": ORDER_CLOSE_TIME
         }, headers=cors_headers())
     except Exception as e:
         logger.error(f"webapp_menu error: {e}")
@@ -391,6 +404,12 @@ async def handle_webapp_order(request):
         user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
         if not user_data:
             return web.json_response({"success": False, "error": "Invalid auth"}, status=401, headers=cors_headers())
+
+        if not is_orders_open():
+            return web.json_response({
+                "success": False,
+                "error": f"Приём заказов закрыт. Заказы принимаются до {ORDER_CLOSE_TIME}, новое меню придёт завтра в 10:00."
+            }, headers=cors_headers())
 
         telegram_id = user_data.get("id")
         if not items:
@@ -670,6 +689,12 @@ async def handle_webapp_update_order_qty(request):
         body = await request.json()
         menu_id = body.get("menu_id")
         direction = body.get("direction")  # "inc" | "dec"
+
+        if direction == "inc" and not is_orders_open():
+            return web.json_response({
+                "success": False,
+                "error": f"Приём заказов закрыт. Изменение количества доступно до {ORDER_CLOSE_TIME}."
+            }, headers=cors_headers())
 
         if direction not in ("inc", "dec") or not menu_id:
             return web.json_response({"success": False, "error": "Неверные параметры"}, headers=cors_headers())
