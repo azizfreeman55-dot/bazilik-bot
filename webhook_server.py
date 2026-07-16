@@ -355,7 +355,7 @@ async def handle_webapp_menu(request):
                 day_num
             )
 
-            categories = {"first": [], "second": [], "salad": [], "dessert": [], "drink": []}
+            categories = {"first": [], "main": [], "second": [], "salad": [], "dessert": [], "drink": []}
 
             if weekly_rows:
                 for row in weekly_rows:
