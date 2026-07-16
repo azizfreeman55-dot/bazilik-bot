@@ -19,7 +19,8 @@ router = Router()
 
 CATEGORIES = {
     "first":   {"ru": "🍲 Первые блюда",   "uz": "🍲 Birinchi taomlar"},
-    "second":  {"ru": "🍱 Сеты",   "uz": "🍱 Setlar"},
+    "main":    {"ru": "🍛 Вторые блюда",   "uz": "🍛 Ikkinchi taomlar"},
+    "second":  {"ru": "🍱 Сеты",            "uz": "🍱 Setlar"},
     "salad":   {"ru": "🥗 Салаты",           "uz": "🥗 Salatlar"},
     "dessert": {"ru": "🍰 Десерты",          "uz": "🍰 Desertlar"},
     "drink":   {"ru": "🥤 Напитки",          "uz": "🥤 Ichimliklar"},
@@ -70,6 +71,7 @@ async def admin_menu_home(callback: CallbackQuery):
         if cats:
             icons = ""
             if "first" in cats: icons += "🍲"
+            if "main" in cats: icons += "🍛"
             if "second" in cats: icons += "🍱"
             if "salad" in cats: icons += "🥗"
             if "dessert" in cats: icons += "🍰"
