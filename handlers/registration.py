@@ -44,6 +44,14 @@ def open_app_keyboard(lang: str = "ru") -> object:
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
+    # ── ФИКС: сбрасываем любое зависшее FSM-состояние (например,
+    # Registration.waiting_location), чтобы /start всегда гарантированно
+    # возвращал пользователя в чистое состояние независимо от того,
+    # где он "застрял" ранее. Без этого reply-клавиатура с запросом
+    # геолокации могла оставаться активной даже для уже
+    # зарегистрированных пользователей.
+    await state.clear()
+
     user = await get_user(message.from_user.id)
 
     if user:
@@ -74,6 +82,9 @@ async def cmd_start(message: Message, state: FSMContext):
                 f"Нажмите кнопку ниже, чтобы заказать обед 👇"
             )
 
+        # ── ФИКС: явно убираем reply-клавиатуру (например, если на ней
+        # ещё висела кнопка "📍 Отправить локацию" от незавершённой
+        # предыдущей попытки регистрации).
         await message.answer(
             text,
             parse_mode="Markdown",
@@ -261,4 +272,32 @@ async def process_location(message: Message, state: FSMContext):
         f"{t(lang, 'daily_info')}",
         parse_mode="Markdown",
         reply_markup=open_app_keyboard(lang)
+    )
+
+
+# ── ФИКС: предохранитель на случай если пользователь застрял в состоянии
+# waiting_location (например, отменил отправку геолокации, закрыл клавиатуру
+# или прислал текст вместо локации). Без этого хендлера любое НЕ-локационное
+# сообщение в этом состоянии просто "проваливалось" бы в другие роутеры и
+# либо игнорировалось, либо (что хуже) обрабатывалось не тем хендлером,
+# из-за чего процесс регистрации зависал, а reply-клавиатура с кнопкой
+# "Отправить локацию" оставалась висеть на экране бесконечно.
+# ВАЖНО: регистрируется ПОСЛЕ process_location (с F.location), поэтому
+# реальные геолокации сюда не попадают — только всё остальное.
+@router.message(Registration.waiting_location)
+async def process_location_invalid(message: Message, state: FSMContext):
+    if message.text and message.text.startswith("/"):
+        await state.clear()
+        await message.answer(
+            "❌ Регистрация отменена. Отправьте /start чтобы начать заново.",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        return
+
+    data = await state.get_data()
+    lang = data.get("lang", "ru")
+    await message.answer(
+        "📍 Нажмите кнопку ниже, чтобы отправить локацию вашей компании 👇"
+        if lang == "ru" else
+        "📍 Kompaniya joylashuvini yuborish uchun quyidagi tugmani bosing 👇"
     )
