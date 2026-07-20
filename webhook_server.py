@@ -1674,8 +1674,10 @@ async def handle_webapp_dashboard(request):
             total_revenue_week = sum(d["revenue"] for d in daily_stats)
 
             # Топ-5 блюд за последние 30 дней
+            # COUNT(DISTINCT user_id) — уникальные клиенты заказавшие блюдо,
+            # не количество строк в orders
             top_dishes = await db.fetch(
-                """SELECT m.name, m.category, COUNT(*) as cnt
+                """SELECT m.name, m.category, COUNT(DISTINCT o.user_id) as cnt
                    FROM orders o
                    JOIN menus m ON o.menu_id = m.id
                    WHERE o.order_date >= $1::text
@@ -1686,13 +1688,66 @@ async def handle_webapp_dashboard(request):
                 str(today - td_cls(days=30))
             )
 
-            # Общая статистика
+            # Общая статистика — считаем уникальные заказы (user_id + order_date),
+            # а не строки positions
             total_users = await db.fetchval("SELECT COUNT(*) FROM users")
             total_companies = await db.fetchval("SELECT COUNT(*) FROM companies")
             total_all_orders = await db.fetchval(
-                "SELECT COUNT(*) FROM orders WHERE status != 'cancelled'"
+                """SELECT COUNT(DISTINCT (user_id, order_date))
+                   FROM orders WHERE status != 'cancelled'"""
             )
             avg_rating = await db.fetchval("SELECT AVG(rating) FROM reviews")
+
+            # ── Статистика "прямо сейчас" ──────────────────────────────────
+            tomorrow = str(today + td_cls(days=1))
+
+            # Заказов на завтра (уникальных клиентов)
+            orders_tomorrow = await db.fetchval(
+                """SELECT COUNT(DISTINCT user_id) FROM orders
+                   WHERE order_date = $1::text AND status != 'cancelled'""",
+                tomorrow
+            )
+            # Позиций на завтра (отдельных блюд)
+            positions_tomorrow = await db.fetchval(
+                """SELECT COUNT(*) FROM orders
+                   WHERE order_date = $1::text AND status != 'cancelled'""",
+                tomorrow
+            )
+            # Выручка на завтра
+            revenue_tomorrow = await db.fetchval(
+                """SELECT COALESCE(SUM(m.price), 0) FROM orders o
+                   JOIN menus m ON o.menu_id = m.id
+                   WHERE o.order_date = $1::text AND o.status != 'cancelled'""",
+                tomorrow
+            )
+            # Заказов на сегодня (уже доставляются или доставлены)
+            orders_today = await db.fetchval(
+                """SELECT COUNT(DISTINCT user_id) FROM orders
+                   WHERE order_date = $1::text AND status != 'cancelled'""",
+                str(today)
+            )
+            # Статус доставки сегодня
+            delivered_today = await db.fetchval(
+                """SELECT COUNT(DISTINCT user_id) FROM orders
+                   WHERE order_date = $1::text AND status = 'delivered'""",
+                str(today)
+            )
+            in_transit_today = await db.fetchval(
+                """SELECT COUNT(DISTINCT user_id) FROM orders
+                   WHERE order_date = $1::text AND status = 'in_transit'""",
+                str(today)
+            )
+
+            now_stats = {
+                "orders_tomorrow": orders_tomorrow or 0,
+                "positions_tomorrow": positions_tomorrow or 0,
+                "revenue_tomorrow": revenue_tomorrow or 0,
+                "orders_today": orders_today or 0,
+                "delivered_today": delivered_today or 0,
+                "in_transit_today": in_transit_today or 0,
+                "date_today": str(today),
+                "date_tomorrow": tomorrow,
+            }
 
             # Статистика курьеров
             courier_rows = await db.fetch(
@@ -1731,7 +1786,8 @@ async def handle_webapp_dashboard(request):
             "total_companies": total_companies,
             "total_all_orders": total_all_orders,
             "avg_rating": round(float(avg_rating), 1) if avg_rating else None,
-            "couriers_stats": couriers_stats
+            "couriers_stats": couriers_stats,
+            "now_stats": now_stats
         }, headers=cors_headers())
     except Exception as e:
         logger.error(f"webapp_dashboard error: {e}")
