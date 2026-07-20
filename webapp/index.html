@@ -2124,7 +2124,51 @@
         return;
       }
 
+      const now = data.now_stats || {};
+      const todayLabel = now.date_today || "";
+      const tomorrowLabel = now.date_tomorrow || "";
+
       let html = `
+        <div class="profile-card" style="margin-bottom: 12px;">
+          <div style="font-size: 13px; font-weight: 700; margin-bottom: 10px;">⚡ Сейчас</div>
+
+          <div style="font-size: 12px; color: var(--ink-soft); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">
+            На завтра (${tomorrowLabel})
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 14px;">
+            <div style="background: var(--green-600); border-radius: 10px; padding: 10px 8px; text-align: center;">
+              <div style="font-size: 24px; font-weight: 800; color: var(--on-accent);">${now.orders_tomorrow || 0}</div>
+              <div style="font-size: 10px; color: var(--on-accent); opacity: 0.85; margin-top: 2px;">клиентов</div>
+            </div>
+            <div style="background: var(--cream-dark); border-radius: 10px; padding: 10px 8px; text-align: center;">
+              <div style="font-size: 24px; font-weight: 800; color: var(--ink);">${now.positions_tomorrow || 0}</div>
+              <div style="font-size: 10px; color: var(--ink-soft); margin-top: 2px;">позиций</div>
+            </div>
+            <div style="background: var(--cream-dark); border-radius: 10px; padding: 10px 8px; text-align: center;">
+              <div style="font-size: 16px; font-weight: 800; color: var(--ink);">${fmt(now.revenue_tomorrow || 0)}</div>
+              <div style="font-size: 10px; color: var(--ink-soft); margin-top: 2px;">выручка</div>
+            </div>
+          </div>
+
+          <div style="font-size: 12px; color: var(--ink-soft); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">
+            Доставка сегодня (${todayLabel})
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;">
+            <div style="background: var(--cream-dark); border-radius: 10px; padding: 10px 8px; text-align: center;">
+              <div style="font-size: 24px; font-weight: 800; color: var(--ink);">${now.orders_today || 0}</div>
+              <div style="font-size: 10px; color: var(--ink-soft); margin-top: 2px;">всего</div>
+            </div>
+            <div style="background: var(--cream-dark); border-radius: 10px; padding: 10px 8px; text-align: center;">
+              <div style="font-size: 24px; font-weight: 800; color: #F59E0B;">${now.in_transit_today || 0}</div>
+              <div style="font-size: 10px; color: var(--ink-soft); margin-top: 2px;">в пути 🚚</div>
+            </div>
+            <div style="background: var(--cream-dark); border-radius: 10px; padding: 10px 8px; text-align: center;">
+              <div style="font-size: 24px; font-weight: 800; color: var(--green-600);">${now.delivered_today || 0}</div>
+              <div style="font-size: 10px; color: var(--ink-soft); margin-top: 2px;">доставлено ✅</div>
+            </div>
+          </div>
+        </div>
+
         <div class="dash-stats-grid">
           <div class="dash-stat-box"><div class="dash-stat-value">${data.total_all_orders}</div><div class="dash-stat-label">${T("total_orders")}</div></div>
           <div class="dash-stat-box"><div class="dash-stat-value">${data.total_users}</div><div class="dash-stat-label">${T("total_clients")}</div></div>
