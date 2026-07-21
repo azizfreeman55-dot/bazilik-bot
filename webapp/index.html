@@ -1166,7 +1166,7 @@
         const slot = btn.dataset.slot;
         await apiCall("/api/set-delivery-slot", { slot });
         document.body.removeChild(modal);
-        showLocationPromptThenFinalize(items, paymentMethod);
+        finalizeOrder(items, paymentMethod);
       };
     });
     document.getElementById("slot-cancel-btn").onclick = () => {
