@@ -5,8 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Bazilik Catering</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
   :root {
     --green-50: #2A2A2A;
@@ -1180,108 +1178,113 @@
     const modal = document.createElement("div");
     modal.id = "location-modal";
     modal.style.cssText = `
-      position: fixed; inset: 0; background: var(--page-bg); z-index: 300;
-      display: flex; flex-direction: column;
+      position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 300;
+      display: flex; align-items: flex-end; justify-content: center;
     `;
-    const title = CURRENT_LANG === "uz" ? "Manzilingizni xaritada belgilang" : "Отметьте адрес на карте";
+
+    const title = CURRENT_LANG === "uz" ? "Joylashuvingizni tasdiqlang" : "Подтвердите вашу локацию";
     const hint = CURRENT_LANG === "uz"
-      ? "Xaritani siljiting va markazdagi belgi orqali aniq joyni tanlang"
-      : "Подвигайте карту так, чтобы метка в центре указывала на нужное место";
-    const confirmText = CURRENT_LANG === "uz" ? "Shu manzilni tasdiqlash" : "Подтвердить этот адрес";
+      ? "Xaritada o'z manzilingizni toping, so'ng «📍 GPS orqali saqlash» tugmasini bosing"
+      : "Откройте карту, найдите себя, затем нажмите «📍 Сохранить через GPS»";
+    const gpsBtn = CURRENT_LANG === "uz" ? "📍 GPS orqali saqlash" : "📍 Сохранить через GPS";
+    const skipBtn = CURRENT_LANG === "uz" ? "O'tkazib yuborish" : "Пропустить";
+    const openMap = CURRENT_LANG === "uz" ? "Xaritada ochish:" : "Открыть на карте:";
 
     modal.innerHTML = `
-      <div style="padding: 16px 18px 10px; background: var(--cream-dark); flex-shrink: 0;">
-        <div style="font-size: 16px; font-weight: 700;">${title}</div>
-        <div style="font-size: 12px; color: var(--ink-soft); margin-top: 4px;">${hint}</div>
-      </div>
-      <div id="order-map-container" style="flex: 1; position: relative;">
-        <div id="order-map" style="width: 100%; height: 100%;"></div>
-        <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -100%);
-                    font-size: 36px; pointer-events: none; z-index: 1000; filter: drop-shadow(0 4px 6px rgba(0,0,0,0.4));">📍</div>
-        <button id="locate-me-btn" style="position: absolute; bottom: 16px; right: 16px; z-index: 1000;
-                    width: 44px; height: 44px; border-radius: 50%; background: var(--white); border: none;
-                    box-shadow: 0 2px 8px rgba(0,0,0,0.3); font-size: 20px; cursor: pointer;
-                    display: flex; align-items: center; justify-content: center;">🎯</button>
-      </div>
-      <div style="padding: 14px 18px; background: var(--cream-dark); flex-shrink: 0;">
-        <button class="btn-primary" id="confirm-map-location-btn">${confirmText}</button>
-        <button class="btn-danger" id="skip-location-btn" style="margin-top: 8px;">${T("skip_location")}</button>
+      <div style="background: var(--cream-dark); border-radius: 20px 20px 0 0; padding: 22px 18px;
+                  width: 100%; max-width: 420px;">
+        <div style="font-size: 16px; font-weight: 700; margin-bottom: 6px;">${title}</div>
+        <div style="font-size: 13px; color: var(--ink-soft); margin-bottom: 18px; line-height: 1.5;">${hint}</div>
+
+        <div style="font-size: 12px; color: var(--ink-soft); font-weight: 600; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;">${openMap}</div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 16px;">
+          <button class="map-open-btn" id="open-yandex-btn"
+            style="padding: 12px 6px; border-radius: 12px; border: 1px solid var(--line);
+                   background: var(--white); color: var(--ink); font-size: 12px; font-weight: 700;
+                   cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 4px;">
+            <span style="font-size: 24px;">🗺️</span>Яндекс
+          </button>
+          <button class="map-open-btn" id="open-2gis-btn"
+            style="padding: 12px 6px; border-radius: 12px; border: 1px solid var(--line);
+                   background: var(--white); color: var(--ink); font-size: 12px; font-weight: 700;
+                   cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 4px;">
+            <span style="font-size: 24px;">📍</span>2GIS
+          </button>
+          <button class="map-open-btn" id="open-google-btn"
+            style="padding: 12px 6px; border-radius: 12px; border: 1px solid var(--line);
+                   background: var(--white); color: var(--ink); font-size: 12px; font-weight: 700;
+                   cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 4px;">
+            <span style="font-size: 24px;">🌐</span>Google
+          </button>
+        </div>
+
+        <button class="btn-primary" id="gps-save-location-btn">${gpsBtn}</button>
+        <button class="btn-danger" id="skip-location-btn" style="margin-top: 8px;">${skipBtn}</button>
       </div>
     `;
     document.body.appendChild(modal);
 
-    // Центр по умолчанию — Ташкент. Если есть последняя известная позиция
-    // (например пользователь уже открывал карту ранее в этой сессии), используем её.
-    const defaultCenter = window._lastMapCenter || [41.311081, 69.240562];
+    // Дефолтные координаты (Ташкент) для открытия карт
+    const defaultLat = window._lastLat || 41.311081;
+    const defaultLon = window._lastLon || 69.240562;
 
-    const map = L.map("order-map", {
-      center: defaultCenter,
-      zoom: 15,
-      zoomControl: true,
-      attributionControl: false,
-    });
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      maxZoom: 19,
-    }).addTo(map);
-
-    // Метка всегда в центре экрана — карта сама "под" ней двигается
-    let currentLatLng = { lat: defaultCenter[0], lng: defaultCenter[1] };
-    map.on("move", () => {
-      const center = map.getCenter();
-      currentLatLng = { lat: center.lat, lng: center.lng };
-    });
-
-    // Если возможно — сразу пытаемся центрировать карту на реальной позиции пользователя.
-    // Если браузер/устройство не даст геолокацию — карта просто останется в Ташкенте,
-    // и человек сам найдёт нужную точку вручную. Никаких таймаутов и зависаний здесь
-    // нет, так как это не блокирует основной интерфейс — карта сразу отображается.
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          map.setView([pos.coords.latitude, pos.coords.longitude], 16);
-        },
-        () => { /* тихо игнорируем — карта остаётся в Ташкенте, не критично */ },
-        { enableHighAccuracy: true, timeout: 5000 }
-      );
-    }
-
-    document.getElementById("confirm-map-location-btn").onclick = async () => {
-      window._lastMapCenter = [currentLatLng.lat, currentLatLng.lng];
-      document.body.removeChild(modal);
-      showToast(T("location_updated"));
-      await apiCall("/api/update-order-location", { latitude: currentLatLng.lat, longitude: currentLatLng.lng });
-      finalizeOrder(items, paymentMethod);
+    document.getElementById("open-yandex-btn").onclick = () => {
+      const url = `https://yandex.uz/maps/?ll=${defaultLon},${defaultLat}&z=15&pt=${defaultLon},${defaultLat}`;
+      if (tg?.openLink) tg.openLink(url); else window.open(url, "_blank");
     };
+    document.getElementById("open-2gis-btn").onclick = () => {
+      const url = `https://2gis.uz/tashkent?m=${defaultLon}%2C${defaultLat}%2F15`;
+      if (tg?.openLink) tg.openLink(url); else window.open(url, "_blank");
+    };
+    document.getElementById("open-google-btn").onclick = () => {
+      const url = `https://www.google.com/maps/@${defaultLat},${defaultLon},15z`;
+      if (tg?.openLink) tg.openLink(url); else window.open(url, "_blank");
+    };
+
+    document.getElementById("gps-save-location-btn").onclick = () => {
+      const btn = document.getElementById("gps-save-location-btn");
+      if (!navigator.geolocation) {
+        showToast(T("location_not_supported"));
+        document.body.removeChild(modal);
+        finalizeOrder(items, paymentMethod);
+        return;
+      }
+      btn.textContent = T("determining_location");
+      btn.disabled = true;
+      const timeoutId = setTimeout(() => {
+        document.body.removeChild(modal);
+        showToast(T("location_failed"));
+        finalizeOrder(items, paymentMethod);
+      }, 10000);
+
+      navigator.geolocation.getCurrentPosition(
+        async (pos) => {
+          clearTimeout(timeoutId);
+          window._lastLat = pos.coords.latitude;
+          window._lastLon = pos.coords.longitude;
+          document.body.removeChild(modal);
+          showToast(T("location_updated"));
+          await apiCall("/api/update-order-location", {
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude
+          });
+          finalizeOrder(items, paymentMethod);
+        },
+        (err) => {
+          clearTimeout(timeoutId);
+          document.body.removeChild(modal);
+          if (err.code === 1) showToast(T("location_permission_denied"));
+          else showToast(T("location_failed"));
+          finalizeOrder(items, paymentMethod);
+        },
+        { enableHighAccuracy: true, timeout: 9000 }
+      );
+    };
+
     document.getElementById("skip-location-btn").onclick = () => {
       document.body.removeChild(modal);
       finalizeOrder(items, paymentMethod);
     };
-
-    document.getElementById("locate-me-btn").onclick = () => {
-      const btn = document.getElementById("locate-me-btn");
-      if (!navigator.geolocation) {
-        showToast(T("location_not_supported"));
-        return;
-      }
-      btn.textContent = "⏳";
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          btn.textContent = "🎯";
-          map.setView([pos.coords.latitude, pos.coords.longitude], 16);
-        },
-        (err) => {
-          btn.textContent = "🎯";
-          if (err.code === 1) showToast(T("location_permission_denied"));
-          else if (err.code === 2) showToast(T("location_gps_off"));
-          else showToast(T("location_no_access"));
-        },
-        { enableHighAccuracy: true, timeout: 8000 }
-      );
-    };
-
-    // Leaflet иногда некорректно считает размер контейнера, если он появился
-    // в DOM только что — принудительно пересчитываем после небольшой паузы.
-    setTimeout(() => map.invalidateSize(), 100);
   }
 
   async function finalizeOrder(items, paymentMethod) {
@@ -2015,86 +2018,94 @@
     const modal = document.createElement("div");
     modal.id = "settings-location-modal";
     modal.style.cssText = `
-      position: fixed; inset: 0; background: var(--page-bg); z-index: 300;
-      display: flex; flex-direction: column;
+      position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 300;
+      display: flex; align-items: flex-end; justify-content: center;
     `;
-    const title = CURRENT_LANG === "uz" ? "Manzilingizni xaritada belgilang" : "Отметьте адрес на карте";
+    const title = CURRENT_LANG === "uz" ? "Kompaniya joylashuvini yangilash" : "Обновить локацию компании";
     const hint = CURRENT_LANG === "uz"
-      ? "Xaritani siljiting va markazdagi belgi orqali aniq joyni tanlang"
-      : "Подвигайте карту так, чтобы метка в центре указывала на нужное место";
-    const confirmText = CURRENT_LANG === "uz" ? "Shu manzilni tasdiqlash" : "Подтвердить этот адрес";
+      ? "Xaritada manzilingizni toping, so'ng «📍 GPS orqali saqlash» tugmasini bosing"
+      : "Откройте карту, найдите ваш офис, затем нажмите «📍 Сохранить через GPS»";
+    const gpsBtn = CURRENT_LANG === "uz" ? "📍 GPS orqali saqlash" : "📍 Сохранить через GPS";
+    const openMap = CURRENT_LANG === "uz" ? "Xaritada ochish:" : "Открыть на карте:";
+
+    const defaultLat = window._lastLat || 41.311081;
+    const defaultLon = window._lastLon || 69.240562;
 
     modal.innerHTML = `
-      <div style="padding: 16px 18px 10px; background: var(--cream-dark); flex-shrink: 0;">
-        <div style="font-size: 16px; font-weight: 700;">${title}</div>
-        <div style="font-size: 12px; color: var(--ink-soft); margin-top: 4px;">${hint}</div>
-      </div>
-      <div id="settings-map-container" style="flex: 1; position: relative;">
-        <div id="settings-map" style="width: 100%; height: 100%;"></div>
-        <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -100%);
-                    font-size: 36px; pointer-events: none; z-index: 1000; filter: drop-shadow(0 4px 6px rgba(0,0,0,0.4));">📍</div>
-        <button id="locate-me-settings-btn" style="position: absolute; bottom: 16px; right: 16px; z-index: 1000;
-                    width: 44px; height: 44px; border-radius: 50%; background: var(--white); border: none;
-                    box-shadow: 0 2px 8px rgba(0,0,0,0.3); font-size: 20px; cursor: pointer;
-                    display: flex; align-items: center; justify-content: center;">🎯</button>
-      </div>
-      <div style="padding: 14px 18px; background: var(--cream-dark); flex-shrink: 0;">
-        <button class="btn-primary" id="confirm-settings-map-btn">${confirmText}</button>
-        <button class="btn-danger" id="cancel-settings-map-btn" style="margin-top: 8px;">${T("cancel")}</button>
+      <div style="background: var(--cream-dark); border-radius: 20px 20px 0 0; padding: 22px 18px;
+                  width: 100%; max-width: 420px;">
+        <div style="font-size: 16px; font-weight: 700; margin-bottom: 6px;">${title}</div>
+        <div style="font-size: 13px; color: var(--ink-soft); margin-bottom: 18px; line-height: 1.5;">${hint}</div>
+
+        <div style="font-size: 12px; color: var(--ink-soft); font-weight: 600; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;">${openMap}</div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 16px;">
+          <button id="s-open-yandex"
+            style="padding: 12px 6px; border-radius: 12px; border: 1px solid var(--line);
+                   background: var(--white); color: var(--ink); font-size: 12px; font-weight: 700;
+                   cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 4px;">
+            <span style="font-size: 24px;">🗺️</span>Яндекс
+          </button>
+          <button id="s-open-2gis"
+            style="padding: 12px 6px; border-radius: 12px; border: 1px solid var(--line);
+                   background: var(--white); color: var(--ink); font-size: 12px; font-weight: 700;
+                   cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 4px;">
+            <span style="font-size: 24px;">📍</span>2GIS
+          </button>
+          <button id="s-open-google"
+            style="padding: 12px 6px; border-radius: 12px; border: 1px solid var(--line);
+                   background: var(--white); color: var(--ink); font-size: 12px; font-weight: 700;
+                   cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 4px;">
+            <span style="font-size: 24px;">🌐</span>Google
+          </button>
+        </div>
+
+        <button class="btn-primary" id="s-gps-save-btn">${gpsBtn}</button>
+        <button class="btn-danger" id="s-cancel-btn" style="margin-top: 8px;">${T("cancel")}</button>
       </div>
     `;
     document.body.appendChild(modal);
 
-    const defaultCenter = window._lastMapCenter || [41.311081, 69.240562];
-    const map = L.map("settings-map", { center: defaultCenter, zoom: 15, attributionControl: false });
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(map);
-
-    let currentLatLng = { lat: defaultCenter[0], lng: defaultCenter[1] };
-    map.on("move", () => {
-      const c = map.getCenter();
-      currentLatLng = { lat: c.lat, lng: c.lng };
-    });
-
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => map.setView([pos.coords.latitude, pos.coords.longitude], 16),
-        () => {},
-        { enableHighAccuracy: true, timeout: 5000 }
-      );
-    }
-
-    document.getElementById("confirm-settings-map-btn").onclick = () => {
-      window._lastMapCenter = [currentLatLng.lat, currentLatLng.lng];
-      document.body.removeChild(modal);
-      saveCompanyLocation(currentLatLng.lat, currentLatLng.lng);
+    document.getElementById("s-open-yandex").onclick = () => {
+      const url = `https://yandex.uz/maps/?ll=${defaultLon},${defaultLat}&z=15`;
+      if (tg?.openLink) tg.openLink(url); else window.open(url, "_blank");
     };
-    document.getElementById("cancel-settings-map-btn").onclick = () => {
-      document.body.removeChild(modal);
+    document.getElementById("s-open-2gis").onclick = () => {
+      const url = `https://2gis.uz/tashkent?m=${defaultLon}%2C${defaultLat}%2F15`;
+      if (tg?.openLink) tg.openLink(url); else window.open(url, "_blank");
+    };
+    document.getElementById("s-open-google").onclick = () => {
+      const url = `https://www.google.com/maps/@${defaultLat},${defaultLon},15z`;
+      if (tg?.openLink) tg.openLink(url); else window.open(url, "_blank");
     };
 
-    document.getElementById("locate-me-settings-btn").onclick = () => {
-      const btn = document.getElementById("locate-me-settings-btn");
+    document.getElementById("s-gps-save-btn").onclick = () => {
+      const btn = document.getElementById("s-gps-save-btn");
       if (!navigator.geolocation) {
         showToast(T("location_not_supported"));
+        document.body.removeChild(modal);
         return;
       }
-      btn.textContent = "⏳";
+      btn.textContent = T("determining_location");
+      btn.disabled = true;
       navigator.geolocation.getCurrentPosition(
         (pos) => {
-          btn.textContent = "🎯";
-          map.setView([pos.coords.latitude, pos.coords.longitude], 16);
+          window._lastLat = pos.coords.latitude;
+          window._lastLon = pos.coords.longitude;
+          document.body.removeChild(modal);
+          saveCompanyLocation(pos.coords.latitude, pos.coords.longitude);
         },
         (err) => {
-          btn.textContent = "🎯";
+          document.body.removeChild(modal);
           if (err.code === 1) showToast(T("location_permission_denied"));
-          else if (err.code === 2) showToast(T("location_gps_off"));
-          else showToast(T("location_no_access"));
+          else showToast(T("location_failed"));
         },
-        { enableHighAccuracy: true, timeout: 8000 }
+        { enableHighAccuracy: true, timeout: 9000 }
       );
     };
 
-    setTimeout(() => map.invalidateSize(), 100);
+    document.getElementById("s-cancel-btn").onclick = () => {
+      document.body.removeChild(modal);
+    };
   }
 
   async function saveCompanyLocation(lat, lon) {
