@@ -131,12 +131,95 @@ async def menu_day_detail(callback: CallbackQuery):
     builder.adjust(1)
 
     if filled_cats:
+        builder.button(text="📋 Скопировать на все дни", callback_data=f"menycopyall_{day_num}")
         builder.button(text="🗑 Очистить весь день", callback_data=f"menyclear_{day_num}")
     builder.button(text="◀️ Назад к дням", callback_data="admin_add_menu")
     builder.adjust(1, 1, 1, 1, 1, 1)
 
     await callback.answer()
     await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data.startswith("menycopyall_"))
+async def menu_copy_to_all_days(callback: CallbackQuery):
+    """Копирует меню одного дня на все остальные 6 дней недели"""
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+
+    src_day = int(callback.data.replace("menycopyall_", ""))
+    src_day_name = DAYS_RU[src_day]
+
+    # Подтверждение — чтобы не скопировать случайно
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Да, скопировать на все 7 дней", callback_data=f"menycopyconfirm_{src_day}")
+    builder.button(text="◀️ Отмена", callback_data=f"menuday_{src_day}")
+    builder.adjust(1)
+
+    await callback.answer()
+    await callback.message.edit_text(
+        f"📋 Скопировать меню *{src_day_name}* на все остальные дни недели?\n\n"
+        f"⚠️ Существующее меню в других днях будет *заменено*.",
+        parse_mode="Markdown",
+        reply_markup=builder.as_markup()
+    )
+
+
+@router.callback_query(F.data.startswith("menycopyconfirm_"))
+async def menu_copy_confirm(callback: CallbackQuery):
+    """Выполняет копирование меню на все дни"""
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+
+    src_day = int(callback.data.replace("menycopyconfirm_", ""))
+
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        # Берём все позиции исходного дня
+        src_items = await db.fetch(
+            """SELECT item_number, name, description, price, photo_id, category
+               FROM weekly_menu WHERE day_of_week = $1 AND is_active = 1
+               ORDER BY category, item_number""",
+            src_day
+        )
+
+        if not src_items:
+            await callback.answer("⚠️ Исходный день пустой!", show_alert=True)
+            return
+
+        copied_days = 0
+        for target_day in range(7):
+            if target_day == src_day:
+                continue
+            # Удаляем старое меню целевого дня
+            await db.execute(
+                "DELETE FROM weekly_menu WHERE day_of_week = $1", target_day
+            )
+            # Копируем позиции
+            for item in src_items:
+                await db.execute(
+                    """INSERT INTO weekly_menu
+                       (day_of_week, item_number, name, description, price, photo_id, category)
+                       VALUES ($1, $2, $3, $4, $5, $6, $7)""",
+                    target_day, item["item_number"], item["name"],
+                    item["description"] or "", item["price"],
+                    item["photo_id"], item["category"]
+                )
+            copied_days += 1
+
+    src_day_name = DAYS_RU[src_day]
+    await callback.answer(f"✅ Скопировано на {copied_days} дней!", show_alert=True)
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text="◀️ К управлению меню", callback_data="admin_add_menu")
+    await callback.message.edit_text(
+        f"✅ *Готово!*\n\n"
+        f"Меню *{src_day_name}* скопировано на все остальные {copied_days} дней недели.\n\n"
+        f"Теперь у вас одинаковое меню на каждый день.",
+        parse_mode="Markdown",
+        reply_markup=builder.as_markup()
+    )
 
 
 @router.callback_query(F.data.startswith("menylist_"))
