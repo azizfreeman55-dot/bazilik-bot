@@ -328,6 +328,10 @@ async def handle_webapp_menu(request):
             )
             balance = balance_row["balance"] if balance_row else 0
 
+            total_orders = await db.fetchval(
+                "SELECT total_orders FROM users WHERE id = $1", user_db_id
+            ) or 0
+
             tomorrow = str(date.today() + timedelta(days=1))
             day_num = date.fromisoformat(tomorrow).weekday()
 
@@ -387,7 +391,8 @@ async def handle_webapp_menu(request):
             "balance": balance,
             "date_label": tomorrow,
             "orders_open": is_orders_open(),
-            "order_close_time": ORDER_CLOSE_TIME
+            "order_close_time": ORDER_CLOSE_TIME,
+            "is_first_order": total_orders == 0
         }, headers=cors_headers())
     except Exception as e:
         logger.error(f"webapp_menu error: {e}")
