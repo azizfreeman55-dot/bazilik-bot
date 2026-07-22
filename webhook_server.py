@@ -510,10 +510,17 @@ async def handle_webapp_order(request):
                 order_summaries.append(f"{item_name} x{qty}")
 
             streak_bonus_info = None
+            is_first_order = False
             if orders_created > 0:
                 from datetime import date as date_cls, timedelta as td_cls
                 today_str = str(date_cls.today())
                 yesterday_str = str(date_cls.today() - td_cls(days=1))
+
+                # Проверяем был ли это первый заказ ДО обновления total_orders
+                prev_total = await db.fetchval(
+                    "SELECT total_orders FROM users WHERE id = $1", user_db_id
+                ) or 0
+                is_first_order = (prev_total == 0)
 
                 # Узнаём текущий streak ДО обновления, чтобы посчитать новый
                 streak_row = await db.fetchrow(
@@ -606,6 +613,41 @@ async def handle_webapp_order(request):
                 f"📅 Доставка завтра, {tomorrow}{time_text}",
                 parse_mode="Markdown"
             )
+
+            # Если это первый заказ клиента — уведомляем всех администраторов
+            if is_first_order:
+                admin_ids = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
+                try:
+                    user_info = await get_pool()
+                    async with user_info.acquire() as info_db:
+                        client = await info_db.fetchrow(
+                            """SELECT u.full_name, u.phone, c.name as company_name
+                               FROM users u
+                               LEFT JOIN companies c ON c.id = u.company_id
+                               WHERE u.telegram_id = $1""",
+                            telegram_id
+                        )
+                    client_name = client["full_name"] if client else "Новый клиент"
+                    company_name = client["company_name"] if client and client["company_name"] else "—"
+                    phone = f"+{client['phone']}" if client and client["phone"] else "—"
+
+                    admin_text = (
+                        f"🎁 *Первый заказ нового клиента!*\n\n"
+                        f"👤 {client_name}\n"
+                        f"🏢 {company_name}\n"
+                        f"📱 {phone}\n\n"
+                        f"📦 Заказ: {items_text.strip()}\n"
+                        f"📅 Доставка: {tomorrow}{time_text}\n\n"
+                        f"🥤 *Не забудьте положить Coca‑Cola 0.5 л в подарок!*"
+                    )
+                    for admin_id in admin_ids:
+                        try:
+                            await bot.send_message(admin_id, admin_text, parse_mode="Markdown")
+                        except Exception as e:
+                            logger.warning(f"Не удалось уведомить админа {admin_id}: {e}")
+                except Exception as e:
+                    logger.error(f"First order admin notify error: {e}")
+
             await bot.session.close()
         except Exception as e:
             logger.error(f"Order notify error: {e}")
