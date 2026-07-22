@@ -18,6 +18,7 @@ from config import ADMIN_IDS
 router = Router()
 
 CATEGORIES = {
+    "breakfast": {"ru": "🌅 Завтраки",      "uz": "🌅 Nonushtalar"},
     "first":   {"ru": "🍲 Первые блюда",   "uz": "🍲 Birinchi taomlar"},
     "main":    {"ru": "🍛 Вторые блюда",   "uz": "🍛 Ikkinchi taomlar"},
     "second":  {"ru": "🍱 Сеты",            "uz": "🍱 Setlar"},
@@ -70,6 +71,7 @@ async def admin_menu_home(callback: CallbackQuery):
         cats = info["categories"]
         if cats:
             icons = ""
+            if "breakfast" in cats: icons += "🌅"
             if "first" in cats: icons += "🍲"
             if "main" in cats: icons += "🍛"
             if "second" in cats: icons += "🍱"
