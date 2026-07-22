@@ -882,6 +882,38 @@
         if (existing) existing.remove();
       }
 
+      // ─── Баннер "Первый заказ — Coca Cola в подарок" ──────────────────
+      const existingGiftBanner = document.getElementById("first-order-banner");
+      if (existingGiftBanner) existingGiftBanner.remove();
+
+      if (data.is_first_order) {
+        const giftBanner = document.createElement("div");
+        giftBanner.id = "first-order-banner";
+        giftBanner.style.cssText = `
+          margin: 0 0 8px;
+          background: linear-gradient(135deg, #B6E84B, #8AB535);
+          border-radius: 16px; padding: 14px 16px;
+          display: flex; align-items: center; gap: 12px;
+          cursor: pointer;
+        `;
+        const giftText = CURRENT_LANG === "uz"
+          ? "Birinchi buyurtmangizga Coca‑Cola 0.5 л <b>sovg'a!</b> 🎁"
+          : "На первый заказ Coca‑Cola 0.5 л <b>в подарок!</b> 🎁";
+        const giftSub = CURRENT_LANG === "uz"
+          ? "Buyurtma bering va sovg'angizni oling"
+          : "Сделайте заказ и получите подарок";
+        giftBanner.innerHTML = `
+          <span style="font-size: 36px; flex-shrink: 0;">🥤</span>
+          <div style="flex: 1;">
+            <div style="font-size: 14px; color: #0D0D0D; line-height: 1.4;">${giftText}</div>
+            <div style="font-size: 12px; color: #2D5F3E; margin-top: 2px;">${giftSub}</div>
+          </div>
+        `;
+        // вставляем после хедера
+        const header = document.querySelector(".header");
+        if (header) header.after(giftBanner);
+      }
+
       const availableCats = Object.keys(MENU).filter(c => MENU[c].length > 0);
       if (availableCats.length === 0) {
         document.getElementById("menu-list").innerHTML =
