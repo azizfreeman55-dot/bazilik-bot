@@ -7,6 +7,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 
 CATEGORY_NAMES = {
+    "breakfast": {"ru": "🌅 Завтраки",      "uz": "🌅 Nonushtalar"},
     "first":   {"ru": "🍲 Первые блюда",   "uz": "🍲 Birinchi taomlar"},
     "main":    {"ru": "🍛 Вторые блюда",   "uz": "🍛 Ikkinchi taomlar"},
     "second":  {"ru": "🍱 Сеты",            "uz": "🍱 Setlar"},
