@@ -32,9 +32,10 @@ def is_orders_open() -> bool:
     return ORDER_OPEN_TIME <= now <= ORDER_CLOSE_TIME
 
 def get_delivery_time() -> str:
-    """Возвращает ожидаемое время доставки = сейчас + 45 минут"""
-    from datetime import datetime, timedelta
-    delivery = datetime.now() + timedelta(minutes=DELIVERY_MINUTES)
+    """Возвращает ожидаемое время доставки = сейчас + 45 минут (Ташкент UTC+5)"""
+    from datetime import datetime, timedelta, timezone
+    tz_tashkent = timezone(timedelta(hours=5))
+    delivery = datetime.now(tz_tashkent) + timedelta(minutes=DELIVERY_MINUTES)
     return delivery.strftime("%H:%M")
 
 logging.basicConfig(level=logging.INFO)
