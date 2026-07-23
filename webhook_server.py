@@ -19,16 +19,23 @@ CLICK_SERVICE_ID = os.getenv("CLICK_SERVICE_ID")
 CLICK_MERCHANT_ID = os.getenv("CLICK_MERCHANT_ID")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Время закрытия приёма заказов на завтра. Совпадает с ORDER_CLOSE_TIME в config.py
-# обычного бота (handlers/orders.py) — там это тоже "20:00". Mini App до этого момента
-# не проверял время вообще, и заказ можно было оформить в любое время суток.
-ORDER_CLOSE_TIME = "20:00"
+# Онлайн-режим: заказы принимаются сегодня, доставка через 45 минут.
+# Рабочие часы доставки: с ORDER_OPEN_TIME до ORDER_CLOSE_TIME.
+ORDER_OPEN_TIME  = "07:00"
+ORDER_CLOSE_TIME = "15:00"
+DELIVERY_MINUTES = 45
 
 
 def is_orders_open() -> bool:
     from datetime import datetime
     now = datetime.now().strftime("%H:%M")
-    return now < ORDER_CLOSE_TIME
+    return ORDER_OPEN_TIME <= now <= ORDER_CLOSE_TIME
+
+def get_delivery_time() -> str:
+    """Возвращает ожидаемое время доставки = сейчас + 45 минут"""
+    from datetime import datetime, timedelta
+    delivery = datetime.now() + timedelta(minutes=DELIVERY_MINUTES)
+    return delivery.strftime("%H:%M")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -332,7 +339,7 @@ async def handle_webapp_menu(request):
                 "SELECT total_orders FROM users WHERE id = $1", user_db_id
             ) or 0
 
-            tomorrow = str(date.today() + timedelta(days=1))
+            tomorrow = str(date.today())  # онлайн-режим: заказ на сегодня
             day_num = date.fromisoformat(tomorrow).weekday()
 
             # Разовые позиции, которые уже реально существуют в menus на эту дату
@@ -389,7 +396,7 @@ async def handle_webapp_menu(request):
         return web.json_response({
             "categories": categories,
             "balance": balance,
-            "date_label": tomorrow,
+            "date_label": str(date.today()),  # сегодня
             "orders_open": is_orders_open(),
             "order_close_time": ORDER_CLOSE_TIME,
             "is_first_order": total_orders == 0
@@ -413,7 +420,7 @@ async def handle_webapp_order(request):
         if not is_orders_open():
             return web.json_response({
                 "success": False,
-                "error": f"Приём заказов закрыт. Заказы принимаются до {ORDER_CLOSE_TIME}, новое меню придёт завтра в 10:00."
+                "error": f"Заказы принимаются с {ORDER_OPEN_TIME} до {ORDER_CLOSE_TIME}. Попробуйте в рабочее время."
             }, headers=cors_headers())
 
         telegram_id = user_data.get("id")
@@ -421,7 +428,7 @@ async def handle_webapp_order(request):
             return web.json_response({"success": False, "error": "Корзина пуста"}, headers=cors_headers())
 
         pool = await get_pool()
-        tomorrow = str(date.today() + timedelta(days=1))
+        tomorrow = str(date.today())  # онлайн-режим: заказ на сегодня
 
         async with pool.acquire() as db:
             user = await db.fetchrow(
@@ -610,7 +617,7 @@ async def handle_webapp_order(request):
             await bot.send_message(
                 telegram_id,
                 f"✅ *Заказ оформлен через Mini App!*\n\n{items_text}{balance_text}{streak_text}\n\n"
-                f"📅 Доставка завтра, {tomorrow}{time_text}",
+                f"📅 Доставка сегодня к {get_delivery_time()}",
                 parse_mode="Markdown"
             )
 
@@ -637,7 +644,7 @@ async def handle_webapp_order(request):
                         f"🏢 {company_name}\n"
                         f"📱 {phone}\n\n"
                         f"📦 Заказ: {items_text.strip()}\n"
-                        f"📅 Доставка: {tomorrow}{time_text}\n\n"
+                        f"📅 Доставка сегодня к {get_delivery_time()}\n\n"
                         f"🥤 *Не забудьте положить Coca‑Cola 0.5 л в подарок!*"
                     )
                     for admin_id in admin_ids:
@@ -667,7 +674,7 @@ async def handle_webapp_my_order(request):
             return web.json_response({"error": "Invalid auth"}, status=401, headers=cors_headers())
 
         telegram_id = user_data.get("id")
-        tomorrow = str(date.today() + timedelta(days=1))
+        tomorrow = str(date.today())  # онлайн-режим: заказ на сегодня
 
         pool = await get_pool()
         async with pool.acquire() as db:
@@ -712,7 +719,7 @@ async def handle_webapp_my_order(request):
         return web.json_response({
             "items": items,
             "total": total,
-            "date_label": tomorrow,
+            "date_label": str(date.today()),  # сегодня
             "delivery_slot": slot_row["slot"] if slot_row else None
         }, headers=cors_headers())
     except Exception as e:
@@ -740,13 +747,13 @@ async def handle_webapp_update_order_qty(request):
         if direction == "inc" and not is_orders_open():
             return web.json_response({
                 "success": False,
-                "error": f"Приём заказов закрыт. Изменение количества доступно до {ORDER_CLOSE_TIME}."
+                "error": f"Изменение заказа доступно с {ORDER_OPEN_TIME} до {ORDER_CLOSE_TIME}."
             }, headers=cors_headers())
 
         if direction not in ("inc", "dec") or not menu_id:
             return web.json_response({"success": False, "error": "Неверные параметры"}, headers=cors_headers())
 
-        tomorrow = str(date.today() + timedelta(days=1))
+        tomorrow = str(date.today())  # онлайн-режим: заказ на сегодня
         pool = await get_pool()
         async with pool.acquire() as db:
             user = await db.fetchrow("SELECT id FROM users WHERE telegram_id = $1", telegram_id)
@@ -799,7 +806,7 @@ async def handle_webapp_cancel_order(request):
             return web.json_response({"success": False, "error": "Invalid auth"}, status=401, headers=cors_headers())
 
         telegram_id = user_data.get("id")
-        tomorrow = str(date.today() + timedelta(days=1))
+        tomorrow = str(date.today())  # онлайн-режим: заказ на сегодня
 
         pool = await get_pool()
         async with pool.acquire() as db:
@@ -859,7 +866,7 @@ async def handle_webapp_cancel_order(request):
                 )
                 await bot.send_message(
                     telegram_id,
-                    f"❌ *Заказ на {tomorrow} отменён через Mini App*{refund_text}",
+                    f"❌ *Заказ отменён*{refund_text}",
                     parse_mode="Markdown"
                 )
                 await bot.session.close()
@@ -1305,7 +1312,7 @@ async def handle_webapp_set_delivery_slot(request):
         if slot not in DELIVERY_SLOTS:
             return web.json_response({"success": False, "error": "Недопустимый интервал"}, headers=cors_headers())
 
-        tomorrow = str(date.today() + timedelta(days=1))
+        tomorrow = str(date.today())  # онлайн-режим: заказ на сегодня
         pool = await get_pool()
         async with pool.acquire() as db:
             user = await db.fetchrow("SELECT id FROM users WHERE telegram_id = $1", telegram_id)
@@ -1745,55 +1752,57 @@ async def handle_webapp_dashboard(request):
             )
             avg_rating = await db.fetchval("SELECT AVG(rating) FROM reviews")
 
-            # ── Статистика "прямо сейчас" ──────────────────────────────────
-            tomorrow = str(today + td_cls(days=1))
+            # ── Статистика "прямо сейчас" (онлайн-режим) ──────────────────
+            today_str = str(today)
 
-            # Заказов на завтра (уникальных клиентов)
-            orders_tomorrow = await db.fetchval(
+            # Активных заказов сегодня (уникальных клиентов)
+            orders_today_total = await db.fetchval(
                 """SELECT COUNT(DISTINCT user_id) FROM orders
                    WHERE order_date = $1::text AND status != 'cancelled'""",
-                tomorrow
+                today_str
             )
-            # Позиций на завтра (отдельных блюд)
-            positions_tomorrow = await db.fetchval(
+            # Позиций сегодня
+            positions_today = await db.fetchval(
                 """SELECT COUNT(*) FROM orders
                    WHERE order_date = $1::text AND status != 'cancelled'""",
-                tomorrow
+                today_str
             )
-            # Выручка на завтра
-            revenue_tomorrow = await db.fetchval(
+            # Выручка сегодня
+            revenue_today_total = await db.fetchval(
                 """SELECT COALESCE(SUM(m.price), 0) FROM orders o
                    JOIN menus m ON o.menu_id = m.id
                    WHERE o.order_date = $1::text AND o.status != 'cancelled'""",
-                tomorrow
+                today_str
             )
-            # Заказов на сегодня (уже доставляются или доставлены)
-            orders_today = await db.fetchval(
-                """SELECT COUNT(DISTINCT user_id) FROM orders
-                   WHERE order_date = $1::text AND status != 'cancelled'""",
-                str(today)
-            )
-            # Статус доставки сегодня
+            # Статус доставки
             delivered_today = await db.fetchval(
                 """SELECT COUNT(DISTINCT user_id) FROM orders
                    WHERE order_date = $1::text AND status = 'delivered'""",
-                str(today)
+                today_str
             )
             in_transit_today = await db.fetchval(
                 """SELECT COUNT(DISTINCT user_id) FROM orders
                    WHERE order_date = $1::text AND status = 'in_transit'""",
-                str(today)
+                today_str
+            )
+            pending_today = await db.fetchval(
+                """SELECT COUNT(DISTINCT user_id) FROM orders
+                   WHERE order_date = $1::text AND status = 'pending'""",
+                today_str
             )
 
             now_stats = {
-                "orders_tomorrow": orders_tomorrow or 0,
-                "positions_tomorrow": positions_tomorrow or 0,
-                "revenue_tomorrow": revenue_tomorrow or 0,
-                "orders_today": orders_today or 0,
-                "delivered_today": delivered_today or 0,
+                "orders_today": orders_today_total or 0,
+                "positions_today": positions_today or 0,
+                "revenue_today": revenue_today_total or 0,
+                "pending_today": pending_today or 0,
                 "in_transit_today": in_transit_today or 0,
-                "date_today": str(today),
-                "date_tomorrow": tomorrow,
+                "delivered_today": delivered_today or 0,
+                "date_today": today_str,
+                "delivery_minutes": DELIVERY_MINUTES,
+                "orders_open": is_orders_open(),
+                "open_time": ORDER_OPEN_TIME,
+                "close_time": ORDER_CLOSE_TIME,
             }
 
             # Статистика курьеров
