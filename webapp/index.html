@@ -864,14 +864,16 @@
       ordersOpen = data.orders_open !== false;
       document.getElementById("balance-pill").textContent = fmt(userBalance);
 
-      const dateLabel = data.date_label || (CURRENT_LANG === "uz" ? "ertaga" : "завтра");
+      const dateLabel = data.date_label || (CURRENT_LANG === "uz" ? "bugun" : "сегодня");
       document.getElementById("header-extra").innerHTML =
         `<div class="header-sub-label">${T("menu_for")}</div><div class="header-sub-value">${dateLabel}</div>`;
 
       if (!ordersOpen) {
+        const openT = data.open_time || "07:00";
+        const closeT = data.close_time || "15:00";
         const closedMsg = CURRENT_LANG === "uz"
-          ? `Buyurtmalar qabul qilinmaydi (${data.order_close_time || "20:00"} gacha qabul qilinadi). Ertaga 10:00 da yangi menyu keladi.`
-          : `Приём заказов закрыт (принимаются до ${data.order_close_time || "20:00"}). Завтра в 10:00 придёт новое меню.`;
+          ? `Buyurtmalar ${openT} dan ${closeT} gacha qabul qilinadi. Hozir qabul qilinmaydi.`
+          : `Заказы принимаются с ${openT} до ${closeT}. Сейчас приём закрыт.`;
         const bannerEl = document.createElement("div");
         bannerEl.style.cssText = "background: var(--red); color: white; padding: 10px 14px; border-radius: 12px; font-size: 12px; margin: 0 18px 8px; text-align: center; font-weight: 600;";
         bannerEl.textContent = closedMsg;
@@ -1066,8 +1068,8 @@
 
     if (!ordersOpen) {
       const msg = CURRENT_LANG === "uz"
-        ? "Buyurtmalar qabul qilinmaydi. Ertaga 10:00 da yangi menyu keladi."
-        : "Приём заказов закрыт. Завтра в 10:00 придёт новое меню.";
+        ? "Buyurtmalar 07:00 dan 15:00 gacha qabul qilinadi."
+        : "Заказы принимаются с 07:00 до 15:00.";
       if (tg?.showAlert) {
         tg.showAlert(msg);
       } else {
@@ -1158,7 +1160,7 @@
         if (method === "click") {
           startClickTopupForOrder(items, total);
         } else {
-          showDeliverySlotPicker(items, method);
+          finalizeOrder(items, method);
         }
       };
     });
@@ -1380,7 +1382,7 @@
     try {
       const data = await apiCall("/api/my-order");
       if (!data.items || data.items.length === 0) {
-        const dl = data.date_label || (CURRENT_LANG === "uz" ? "ertaga" : "завтра");
+        const dl = data.date_label || (CURRENT_LANG === "uz" ? "bugun" : "сегодня");
         el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">📝</div><div class="empty-state-text">${T("no_order_yet")} ${dl}</div></div>`;
         return;
       }
@@ -1402,16 +1404,19 @@
 
       let html = renderDeliveryStepper(bestStatus);
 
-      if (data.delivery_slot) {
-        const slotLabel = CURRENT_LANG === "uz" ? "Yetkazib berish vaqti" : "Время доставки";
-        html += `<div class="profile-card" style="display:flex; align-items:center; gap:10px; margin-bottom: 12px;">
-          <span style="font-size: 20px;">🕐</span>
-          <div>
-            <div style="font-size: 12px; color: var(--ink-soft);">${slotLabel}</div>
-            <div style="font-size: 14px; font-weight: 700;">${data.delivery_slot}</div>
-          </div>
-        </div>`;
-      }
+      const deliveryLabel = CURRENT_LANG === "uz" ? "Yetkazib berish vaqti" : "Время доставки";
+      const deliveryTime = (() => {
+        const now = new Date();
+        now.setMinutes(now.getMinutes() + 45);
+        return now.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+      })();
+      html += `<div class="profile-card" style="display:flex; align-items:center; gap:10px; margin-bottom: 12px;">
+        <span style="font-size: 20px;">🕐</span>
+        <div>
+          <div style="font-size: 12px; color: var(--ink-soft);">${deliveryLabel}</div>
+          <div style="font-size: 14px; font-weight: 700;">~${deliveryTime} (через 45 мин)</div>
+        </div>
+      </div>`;
 
       html += `<div class="order-card">`;
       for (const [cat, items] of Object.entries(byCategory)) {
@@ -2171,37 +2176,40 @@
 
       const now = data.now_stats || {};
       const todayLabel = now.date_today || "";
-      const tomorrowLabel = now.date_tomorrow || "";
+      const openTime = now.open_time || "07:00";
+      const closeTime = now.close_time || "15:00";
+      const isOpenNow = now.orders_open;
 
       let html = `
         <div class="profile-card" style="margin-bottom: 12px;">
-          <div style="font-size: 13px; font-weight: 700; margin-bottom: 10px;">⚡ Сейчас</div>
-
-          <div style="font-size: 12px; color: var(--ink-soft); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">
-            На завтра (${tomorrowLabel})
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom: 10px;">
+            <div style="font-size: 13px; font-weight: 700;">⚡ Сегодня (${todayLabel})</div>
+            <div style="font-size: 11px; padding: 3px 8px; border-radius: 8px; font-weight: 700;
+                 background: ${isOpenNow ? "var(--green-600)" : "var(--red)"}; color: white;">
+              ${isOpenNow ? "Приём открыт" : "Приём закрыт"}
+            </div>
           </div>
-          <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 14px;">
+          <div style="font-size: 11px; color: var(--ink-soft); margin-bottom: 10px;">Рабочие часы: ${openTime} – ${closeTime} · Доставка ~45 минут</div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 8px;">
             <div style="background: var(--green-600); border-radius: 10px; padding: 10px 8px; text-align: center;">
-              <div style="font-size: 24px; font-weight: 800; color: var(--on-accent);">${now.orders_tomorrow || 0}</div>
+              <div style="font-size: 24px; font-weight: 800; color: var(--on-accent);">${now.orders_today || 0}</div>
               <div style="font-size: 10px; color: var(--on-accent); opacity: 0.85; margin-top: 2px;">клиентов</div>
             </div>
             <div style="background: var(--cream-dark); border-radius: 10px; padding: 10px 8px; text-align: center;">
-              <div style="font-size: 24px; font-weight: 800; color: var(--ink);">${now.positions_tomorrow || 0}</div>
+              <div style="font-size: 24px; font-weight: 800; color: var(--ink);">${now.positions_today || 0}</div>
               <div style="font-size: 10px; color: var(--ink-soft); margin-top: 2px;">позиций</div>
             </div>
             <div style="background: var(--cream-dark); border-radius: 10px; padding: 10px 8px; text-align: center;">
-              <div style="font-size: 16px; font-weight: 800; color: var(--ink);">${fmt(now.revenue_tomorrow || 0)}</div>
+              <div style="font-size: 16px; font-weight: 800; color: var(--ink);">${fmt(now.revenue_today || 0)}</div>
               <div style="font-size: 10px; color: var(--ink-soft); margin-top: 2px;">выручка</div>
             </div>
           </div>
 
-          <div style="font-size: 12px; color: var(--ink-soft); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">
-            Доставка сегодня (${todayLabel})
-          </div>
           <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;">
             <div style="background: var(--cream-dark); border-radius: 10px; padding: 10px 8px; text-align: center;">
-              <div style="font-size: 24px; font-weight: 800; color: var(--ink);">${now.orders_today || 0}</div>
-              <div style="font-size: 10px; color: var(--ink-soft); margin-top: 2px;">всего</div>
+              <div style="font-size: 24px; font-weight: 800; color: var(--ink);">${now.pending_today || 0}</div>
+              <div style="font-size: 10px; color: var(--ink-soft); margin-top: 2px;">ожидает ⏳</div>
             </div>
             <div style="background: var(--cream-dark); border-radius: 10px; padding: 10px 8px; text-align: center;">
               <div style="font-size: 24px; font-weight: 800; color: #F59E0B;">${now.in_transit_today || 0}</div>
