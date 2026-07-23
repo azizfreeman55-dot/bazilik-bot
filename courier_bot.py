@@ -91,6 +91,7 @@ def courier_main_keyboard() -> ReplyKeyboardMarkup:
     builder = ReplyKeyboardBuilder()
     builder.button(text="📦 Мои заказы")
     builder.button(text="🗺 Мой маршрут")
+    builder.button(text="💰 Принять оплату")
     builder.button(text="📊 Статистика")
     builder.adjust(2)
     return builder.as_markup(resize_keyboard=True)
@@ -100,6 +101,7 @@ def admin_main_keyboard() -> ReplyKeyboardMarkup:
     builder = ReplyKeyboardBuilder()
     builder.button(text="📦 Мои заказы")
     builder.button(text="🗺 Мой маршрут")
+    builder.button(text="💰 Принять оплату")
     builder.button(text="🚚 Распределить заказы")
     builder.button(text="👥 Курьеры")
     builder.button(text="📊 Статистика")
@@ -537,6 +539,74 @@ async def accept_payment_amount(message: Message, state: FSMContext):
         await main_bot.session.close()
     except Exception as e:
         logger.warning(f"Не удалось уведомить клиента об оплате: {e}")
+
+
+@router.message(F.text == "💰 Принять оплату")
+async def show_clients_for_payment(message: Message):
+    """Показывает текущих должников по сегодняшнему маршруту курьера."""
+    courier = await get_courier(message.from_user.id)
+    if not courier:
+        await message.answer("❌ Вы не зарегистрированы. Напишите /start")
+        return
+
+    delivery_date = get_today()
+    route_data = await get_courier_route(courier["id"], delivery_date)
+
+    if not route_data:
+        await message.answer(
+            "💰 *Приём оплаты*\n\n"
+            "На сегодня у вас нет назначенного маршрута.",
+            parse_mode="Markdown"
+        )
+        return
+
+    from database.db import get_unpaid_clients_for_company
+
+    # Один клиент может встретиться в данных несколько раз, поэтому собираем
+    # должников по telegram_id и показываем каждого только один раз.
+    debtors = {}
+    for stop in route_data["stops"]:
+        clients = await get_unpaid_clients_for_company(
+            stop["company_id"], delivery_date
+        )
+        for client in clients:
+            balance = client.get("current_balance")
+            balance = int(balance) if balance is not None else 0
+            if balance < 0:
+                debtors[client["telegram_id"]] = {
+                    "full_name": client["full_name"] or "Клиент",
+                    "debt": abs(balance),
+                    "company_name": stop["company_name"]
+                }
+
+    if not debtors:
+        await message.answer(
+            "✅ *Оплата на сегодня*\n\n"
+            "Клиентов с задолженностью по вашему маршруту нет.",
+            parse_mode="Markdown"
+        )
+        return
+
+    text = "💰 *Клиенты, у которых нужно принять оплату:*\n\n"
+    builder = InlineKeyboardBuilder()
+
+    for telegram_id, client in debtors.items():
+        text += (
+            f"• *{client['full_name']}*\n"
+            f"  🏢 {client['company_name']}\n"
+            f"  💳 Долг: *{client['debt']:,} сум*\n\n"
+        )
+        builder.button(
+            text=f"💰 Принять у {client['full_name']}",
+            callback_data=f"acceptpay_{telegram_id}_{client['debt']}"
+        )
+
+    builder.adjust(1)
+    await message.answer(
+        text,
+        parse_mode="Markdown",
+        reply_markup=builder.as_markup()
+    )
 
 
 @router.callback_query(F.data.startswith("problem_"))
