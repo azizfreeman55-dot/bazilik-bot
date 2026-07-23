@@ -16,15 +16,21 @@ logger = logging.getLogger(__name__)
 
 
 async def send_menu_notification(bot: Bot):
-    tomorrow = str(date.today() + timedelta(days=1))
-    menu = await get_menu(tomorrow)
+    today = str(date.today())
+    day_num = date.today().weekday()
+
+    menu = await get_menu(today)
+    if not menu:
+        # Меню на сегодня нет — попробуем из weekly_menu
+        from database.db import get_weekly_menu
+        menu = await get_weekly_menu(day_num)
 
     if not menu:
         for admin_id in ADMIN_IDS:
             try:
                 await bot.send_message(
                     admin_id,
-                    f"⚠️ Меню на {tomorrow} не добавлено!\n"
+                    f"⚠️ Меню на {today} не добавлено!\n"
                     "Добавьте через 🖥️ Админ панель → Добавить меню"
                 )
             except Exception:
@@ -32,9 +38,48 @@ async def send_menu_notification(bot: Bot):
         return
 
     days = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
-    d = date.fromisoformat(tomorrow)
-    day_name = days[d.weekday()]
-    day_num = d.weekday()
+    day_name = days[day_num]
+
+    users = await get_all_users_for_notification()
+
+    for user_id in users:
+        try:
+            from database.db import get_user_lang
+            lang = await get_user_lang(user_id)
+            from langs import t
+
+            if lang and lang.startswith("uz"):
+                text = (
+                    f"🌅 *Bugun ({today}) — {day_name}*\n\n"
+                    f"Buyurtmalar qabul qilinmoqda!\n"
+                    f"⏰ 07:00 dan 15:00 gacha\n"
+                    f"🚚 Yetkazib berish ~45 daqiqa\n\n"
+                )
+            else:
+                text = (
+                    f"🌅 *Сегодня ({today}) — {day_name}*\n\n"
+                    f"Принимаем заказы прямо сейчас!\n"
+                    f"⏰ с 07:00 до 15:00\n"
+                    f"🚚 Доставка ~45 минут\n\n"
+                )
+
+            for item in menu[:5]:  # показываем первые 5 позиций
+                text += f"• {item['name']} — {item['price']:,} сум\n"
+            if len(menu) > 5:
+                text += f"...и ещё {len(menu) - 5} позиций в Mini App\n"
+
+            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+            from aiogram.utils.keyboard import InlineKeyboardBuilder
+            builder = InlineKeyboardBuilder()
+            builder.button(
+                text="🍽️ Открыть меню" if not (lang and lang.startswith("uz")) else "🍽️ Menyuni ochish",
+                web_app={"url": "https://bazilik-webhook.onrender.com/webapp/index.html"}
+            )
+            await bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=builder.as_markup())
+        except Exception as e:
+            logger.warning(f"Не удалось уведомить {user_id}: {e}")
+
+    logger.info(f"✅ Утреннее уведомление отправлено")
 
     users = await get_all_users_for_notification()
     auto_ordered = await process_weekly_auto_orders(day_num, tomorrow, menu)
@@ -152,21 +197,20 @@ async def send_reminder_notification(bot: Bot):
 
 async def close_orders_notification(bot: Bot):
     """
-    Закрывает заказы на завтра, отправляет сводку админам,
-    и автоматически распределяет заказы по курьерам (round-robin).
+    15:00 — закрывает приём заказов на сегодня,
+    отправляет сводку для кухни и курьеров.
     """
-    tomorrow = str(date.today() + timedelta(days=1))
-    await close_orders_for_date(tomorrow)
+    today = str(date.today())
+    await close_orders_for_date(today)
 
-    summary = await get_daily_summary(tomorrow)
-    text = f"🔒 *Заказы на {tomorrow} закрыты!*\n\n"
+    summary = await get_daily_summary(today)
+    text = f"🔒 *Приём заказов закрыт ({today})*\n\n"
 
     if summary["items"]:
         text += "📊 *Сводка для кухни:*\n"
         for item in summary["items"]:
             text += f"• {item['name']}: *{item['count']} порций*\n"
-        text += f"\n📦 Итого: *{summary['total']} обедов*\n"
-        text += f"💰 Выручка: *{summary['total'] * 35000:,} сум*"
+        text += f"\n📦 Итого: *{summary['total']} заказов*"
     else:
         text += "❌ Заказов нет"
 
@@ -389,26 +433,28 @@ async def award_company_of_month(bot: Bot):
 def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone="Asia/Tashkent")
 
+    # 🎂 День рождения — в 9:00
     scheduler.add_job(
         send_birthday_greetings,
         trigger=CronTrigger(hour=9, minute=0),
         args=[bot], id="birthday_greetings", replace_existing=True
     )
+
+    # 📋 Утреннее уведомление — "Принимаем заказы с 07:00!" в 07:00
     scheduler.add_job(
         send_menu_notification,
-        trigger=CronTrigger(hour=10, minute=0),
+        trigger=CronTrigger(hour=7, minute=0),
         args=[bot], id="send_menu", replace_existing=True
     )
-    scheduler.add_job(
-        send_reminder_notification,
-        trigger=CronTrigger(hour=16, minute=0),
-        args=[bot], id="send_reminder", replace_existing=True
-    )
+
+    # 🔒 Закрытие приёма в 15:00 — уведомление + автораспределение курьерам
     scheduler.add_job(
         close_orders_notification,
-        trigger=CronTrigger(hour=20, minute=0),
+        trigger=CronTrigger(hour=15, minute=0),
         args=[bot], id="close_orders", replace_existing=True
     )
+
+    # 🏆 Компания месяца — 1-го числа в 9:30
     scheduler.add_job(
         award_company_of_month,
         trigger=CronTrigger(day=1, hour=9, minute=30),
@@ -416,7 +462,7 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     )
 
     logger.info(
-        "✅ Планировщик настроен (09:00 ДР, 09:30/1-го компания месяца, "
-        "10:00 меню, 16:00 напоминание, 20:00 закрытие + автораспределение курьерам)"
+        "✅ Планировщик (онлайн-режим): 07:00 меню+заказы, "
+        "09:00 ДР, 15:00 закрытие+курьеры, 1-го компания месяца"
     )
     return scheduler
