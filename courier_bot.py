@@ -29,7 +29,7 @@ load_dotenv()
 from database.db import (
     get_courier, create_courier, get_all_couriers,
     get_orders_by_company, get_company_order_details,
-    create_delivery_route, get_courier_route,
+    create_delivery_route, assign_company_to_courier, get_courier_route,
     mark_stop_delivered, mark_route_started, mark_route_finished,
     get_company_clients_telegram_ids, init_db
 )
@@ -874,6 +874,186 @@ async def distribute_orders(message: Message):
     builder.adjust(1)
 
     await message.answer(text, parse_mode="Markdown", reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data.startswith("assign_manual_"))
+async def show_manual_distribution(callback: CallbackQuery):
+    """Показывает компании и их текущее назначение курьерам."""
+    if callback.from_user.id not in COURIER_ADMIN_IDS:
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+
+    delivery_date = callback.data.removeprefix("assign_manual_")
+    companies = await get_orders_by_company(delivery_date)
+    couriers = await get_all_couriers()
+
+    if not companies:
+        await callback.answer("На эту дату заказов нет", show_alert=True)
+        return
+    if not couriers:
+        await callback.answer("Нет зарегистрированных курьеров", show_alert=True)
+        return
+
+    from database.db import get_pool
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        assigned_rows = await db.fetch(
+            """SELECT ds.company_id, c.full_name AS courier_name
+               FROM delivery_stops ds
+               JOIN delivery_routes dr ON dr.id = ds.route_id
+               JOIN couriers c ON c.id = dr.courier_id
+               WHERE dr.delivery_date = $1::text""",
+            delivery_date
+        )
+
+    assigned = {
+        row["company_id"]: row["courier_name"] for row in assigned_rows
+    }
+
+    text = (
+        f"⚙️ *Ручное распределение на {delivery_date}*\n\n"
+        "Выберите компанию, затем назначьте курьера:\n\n"
+    )
+    builder = InlineKeyboardBuilder()
+
+    for company in companies:
+        courier_name = assigned.get(company["company_id"])
+        status = f"✅ {courier_name}" if courier_name else "⏳ Не назначено"
+        text += (
+            f"• *{company['company_name']}* — {company['order_count']} поз.\n"
+            f"  {status}\n"
+        )
+        builder.button(
+            text=f"🏢 {company['company_name']} → {courier_name or 'выбрать'}",
+            callback_data=(
+                f"manual_company_{company['company_id']}_{delivery_date}"
+            )
+        )
+
+    builder.button(
+        text="🔄 Обновить",
+        callback_data=f"assign_manual_{delivery_date}"
+    )
+    builder.adjust(1)
+
+    await callback.message.edit_text(
+        text,
+        parse_mode="Markdown",
+        reply_markup=builder.as_markup()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("manual_company_"))
+async def choose_courier_for_company(callback: CallbackQuery):
+    """Предлагает выбрать курьера для одной компании."""
+    if callback.from_user.id not in COURIER_ADMIN_IDS:
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+
+    parts = callback.data.split("_", 3)
+    company_id = int(parts[2])
+    delivery_date = parts[3]
+
+    companies = await get_orders_by_company(delivery_date)
+    company = next(
+        (c for c in companies if c["company_id"] == company_id), None
+    )
+    if not company:
+        await callback.answer("Компания или её заказы не найдены", show_alert=True)
+        return
+
+    couriers = await get_all_couriers()
+    if not couriers:
+        await callback.answer("Нет зарегистрированных курьеров", show_alert=True)
+        return
+
+    builder = InlineKeyboardBuilder()
+    for courier in couriers:
+        builder.button(
+            text=f"🚚 {courier['full_name']}",
+            callback_data=(
+                f"manual_set_{company_id}_{courier['id']}_{delivery_date}"
+            )
+        )
+    builder.button(
+        text="◀️ Назад к компаниям",
+        callback_data=f"assign_manual_{delivery_date}"
+    )
+    builder.adjust(1)
+
+    await callback.message.edit_text(
+        f"🏢 *{company['company_name']}*\n"
+        f"📦 Позиций: {company['order_count']}\n"
+        f"👥 Клиентов: {company['client_count']}\n\n"
+        "Выберите курьера:",
+        parse_mode="Markdown",
+        reply_markup=builder.as_markup()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("manual_set_"))
+async def manually_assign_company(callback: CallbackQuery):
+    """Назначает выбранную компанию выбранному курьеру."""
+    if callback.from_user.id not in COURIER_ADMIN_IDS:
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+
+    parts = callback.data.split("_", 4)
+    company_id = int(parts[2])
+    courier_id = int(parts[3])
+    delivery_date = parts[4]
+
+    result = await assign_company_to_courier(
+        courier_id, delivery_date, company_id
+    )
+    if not result["success"]:
+        await callback.answer(result["error"], show_alert=True)
+        return
+
+    from database.db import get_pool
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        courier = await db.fetchrow(
+            "SELECT telegram_id, full_name FROM couriers WHERE id = $1",
+            courier_id
+        )
+        company = await db.fetchrow(
+            "SELECT name, address FROM companies WHERE id = $1",
+            company_id
+        )
+
+    try:
+        notification = (
+            f"🚚 *Вам назначена новая точка на {delivery_date}*\n\n"
+            f"🏢 {company['name']}"
+        )
+        if company["address"]:
+            notification += f"\n📍 {company['address']}"
+        notification += "\n\nОткройте «🗺 Мой маршрут»."
+        await callback.bot.send_message(
+            courier["telegram_id"],
+            notification,
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        logger.warning(f"Не удалось уведомить курьера: {e}")
+
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="⚙️ Продолжить распределение",
+        callback_data=f"assign_manual_{delivery_date}"
+    )
+
+    await callback.message.edit_text(
+        f"✅ *Компания назначена!*\n\n"
+        f"🏢 {company['name']}\n"
+        f"🚚 Курьер: *{courier['full_name']}*",
+        parse_mode="Markdown",
+        reply_markup=builder.as_markup()
+    )
+    await callback.answer("✅ Назначено")
 
 
 @router.callback_query(F.data.startswith("assign_all_"))
