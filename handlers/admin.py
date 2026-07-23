@@ -722,19 +722,22 @@ async def admin_summary(callback: CallbackQuery):
         await callback.answer("❌ Нет доступа", show_alert=True)
         return
 
-    tomorrow = str(date.today() + timedelta(days=1))
-    summary = await get_daily_summary(tomorrow)
+    # Получаем сегодняшнюю дату
+    today = str(date.today())
+    summary = await get_daily_summary(today)
 
     if not summary["items"]:
         await callback.answer()
         await callback.message.edit_text(
-            f"📊 Сводка на {tomorrow}\n\nЗаказов пока нет",
+            f"📊 Сводка на сегодня — {today}\n\nЗаказов пока нет",
             reply_markup=admin_keyboard()
         )
         return
 
-    text = f"📊 *Сводка заказов на {tomorrow}:*\n\n"
+    text = f"📊 *Сводка заказов на сегодня — {today}:*\n\n"
+
     by_category = {}
+
     for item in summary["items"]:
         cat = item.get("category", "second")
         by_category.setdefault(cat, []).append(item)
@@ -742,15 +745,19 @@ async def admin_summary(callback: CallbackQuery):
     for cat, items in by_category.items():
         cat_name = CATEGORIES.get(cat, {}).get("ru", cat)
         text += f"*{cat_name}:*\n"
+
         for item in items:
             text += f"  • {item['name']}: *{item['count']} шт.*\n"
+
         text += "\n"
 
     text += f"📦 Всего: *{summary['total']} позиций*"
 
     await callback.answer()
     await callback.message.edit_text(
-        text, parse_mode="Markdown", reply_markup=admin_keyboard()
+        text,
+        parse_mode="Markdown",
+        reply_markup=admin_keyboard()
     )
 
 
