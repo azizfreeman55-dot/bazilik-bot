@@ -411,16 +411,18 @@ async def handle_webapp_order(request):
         init_data = await get_init_data_from_request(request)
         body = await request.json()
         items = body.get("items", [])
-        payment_method = body.get("payment_method", "auto")  # balance | cash | auto
+        payment_method = body.get("payment_method", "auto")
+        delivery_mode = body.get("delivery_mode", "today")  # "today" | "tomorrow"
 
         user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
         if not user_data:
             return web.json_response({"success": False, "error": "Invalid auth"}, status=401, headers=cors_headers())
 
-        if not is_orders_open():
+        # Для "сейчас" проверяем рабочие часы
+        if delivery_mode == "today" and not is_orders_open():
             return web.json_response({
                 "success": False,
-                "error": f"Заказы принимаются с {ORDER_OPEN_TIME} до {ORDER_CLOSE_TIME}. Попробуйте в рабочее время."
+                "error": f"Заказы «Сейчас» принимаются с {ORDER_OPEN_TIME} до {ORDER_CLOSE_TIME}."
             }, headers=cors_headers())
 
         telegram_id = user_data.get("id")
@@ -428,7 +430,11 @@ async def handle_webapp_order(request):
             return web.json_response({"success": False, "error": "Корзина пуста"}, headers=cors_headers())
 
         pool = await get_pool()
-        tomorrow = str(date.today())  # онлайн-режим: заказ на сегодня
+        # order_date зависит от режима доставки
+        if delivery_mode == "tomorrow":
+            tomorrow = str(date.today() + timedelta(days=1))
+        else:
+            tomorrow = str(date.today())  # сегодня = онлайн
 
         async with pool.acquire() as db:
             user = await db.fetchrow(
@@ -612,12 +618,18 @@ async def handle_webapp_order(request):
                        WHERE u.telegram_id = $1 AND ds.order_date = $2::text""",
                     telegram_id, tomorrow
                 )
-            time_text = f"\n🕐 Время доставки: {slot_row['slot']}" if slot_row else ""
+
+            if delivery_mode == "tomorrow":
+                delivery_text = f"📅 Доставка завтра, {tomorrow}"
+                if slot_row:
+                    delivery_text += f"\n🕐 Время: {slot_row['slot']}"
+            else:
+                delivery_text = f"🚀 Доставка сегодня к {get_delivery_time()} (~45 мин)"
 
             await bot.send_message(
                 telegram_id,
                 f"✅ *Заказ оформлен через Mini App!*\n\n{items_text}{balance_text}{streak_text}\n\n"
-                f"📅 Доставка сегодня к {get_delivery_time()}",
+                f"{delivery_text}",
                 parse_mode="Markdown"
             )
 
@@ -644,7 +656,7 @@ async def handle_webapp_order(request):
                         f"🏢 {company_name}\n"
                         f"📱 {phone}\n\n"
                         f"📦 Заказ: {items_text.strip()}\n"
-                        f"📅 Доставка сегодня к {get_delivery_time()}\n\n"
+                        f"{delivery_text}\n\n"
                         f"🥤 *Не забудьте положить Coca‑Cola 0.5 л в подарок!*"
                     )
                     for admin_id in admin_ids:
