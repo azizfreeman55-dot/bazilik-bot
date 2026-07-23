@@ -1066,36 +1066,92 @@
     const items = Object.values(cart).map(c => ({ menu_id: c.item.id, qty: c.qty, category: c.category }));
     if (items.length === 0) return;
 
-    if (!ordersOpen) {
-      const msg = CURRENT_LANG === "uz"
-        ? "Buyurtmalar 07:00 dan 15:00 gacha qabul qilinadi."
-        : "Заказы принимаются с 07:00 до 15:00.";
-      if (tg?.showAlert) {
-        tg.showAlert(msg);
-      } else {
-        showToast(msg);
-      }
-      return;
-    }
-
     const total = Object.values(cart).reduce((s, c) => s + c.qty * c.item.price, 0);
     if (total < MIN_ORDER_AMOUNT) {
       const remaining = MIN_ORDER_AMOUNT - total;
       const msg = CURRENT_LANG === "uz"
         ? `Bepul yetkazib berish uchun minimal buyurtma — ${fmt(MIN_ORDER_AMOUNT)}. Yana ${fmt(remaining)} qo'shing.`
         : `Минимальная сумма заказа для бесплатной доставки — ${fmt(MIN_ORDER_AMOUNT)}. Добавьте ещё ${fmt(remaining)}.`;
-      if (tg?.showAlert) {
-        tg.showAlert(msg);
-      } else {
-        showToast(msg);
-      }
+      if (tg?.showAlert) tg.showAlert(msg); else showToast(msg);
       return;
     }
 
-    showPaymentChoice(items);
+    showDeliveryTimePicker(items);
   }
 
-  function showPaymentChoice(items) {
+  function showDeliveryTimePicker(items) {
+    const modal = document.createElement("div");
+    modal.id = "delivery-time-picker";
+    modal.style.cssText = `
+      position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 300;
+      display: flex; align-items: flex-end; justify-content: center;
+    `;
+
+    const now = new Date();
+    const deliveryNow = new Date(now.getTime() + 45 * 60000);
+    const deliveryNowStr = deliveryNow.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+    const hour = now.getHours();
+    const canOrderNow = hour >= 7 && hour < 15;
+
+    const titleText = CURRENT_LANG === "uz" ? "Qachon yetkazib berish?" : "Когда доставить?";
+    const nowLabel = CURRENT_LANG === "uz" ? `🚀 Hozir (~${deliveryNowStr})` : `🚀 Сейчас (~${deliveryNowStr})`;
+    const nowSub = CURRENT_LANG === "uz" ? "~45 daqiqada yetkazib beriladi" : "Доставка через ~45 минут";
+    const tomorrowLabel = CURRENT_LANG === "uz" ? "📅 Ertaga" : "📅 На завтра";
+    const tomorrowSub = CURRENT_LANG === "uz" ? "Vaqt oralig'ini tanlash" : "Выберите временной слот";
+    const cancelText = CURRENT_LANG === "uz" ? "Bekor qilish" : "Отмена";
+
+    modal.innerHTML = `
+      <div style="background: var(--cream-dark); border-radius: 20px 20px 0 0; padding: 20px 18px;
+                  width: 100%; max-width: 420px;">
+        <div style="font-size: 17px; font-weight: 700; margin-bottom: 14px; text-align: center;">${titleText}</div>
+
+        <button id="order-now-btn" ${!canOrderNow ? "disabled" : ""}
+          style="width: 100%; display: flex; align-items: center; gap: 12px; padding: 16px 14px;
+                 border-radius: 14px; border: 2px solid ${canOrderNow ? "var(--green-600)" : "var(--line)"};
+                 background: ${canOrderNow ? "rgba(182,232,75,0.08)" : "var(--cream-dark)"}; margin-bottom: 10px;
+                 text-align: left; cursor: ${canOrderNow ? "pointer" : "not-allowed"};
+                 opacity: ${canOrderNow ? "1" : "0.5"};">
+          <span style="font-size: 30px;">🚀</span>
+          <div>
+            <div style="font-size: 15px; font-weight: 700; color: ${canOrderNow ? "var(--green-600)" : "var(--ink)"};">${nowLabel}</div>
+            <div style="font-size: 12px; color: var(--ink-soft); margin-top: 2px;">${canOrderNow ? nowSub : (CURRENT_LANG === "uz" ? "07:00–15:00 da mavjud" : "Доступно с 07:00 до 15:00")}</div>
+          </div>
+        </button>
+
+        <button id="order-tomorrow-btn"
+          style="width: 100%; display: flex; align-items: center; gap: 12px; padding: 16px 14px;
+                 border-radius: 14px; border: 1px solid var(--line); background: var(--white);
+                 margin-bottom: 14px; text-align: left; cursor: pointer;">
+          <span style="font-size: 30px;">📅</span>
+          <div>
+            <div style="font-size: 15px; font-weight: 700; color: var(--ink);">${tomorrowLabel}</div>
+            <div style="font-size: 12px; color: var(--ink-soft); margin-top: 2px;">${tomorrowSub}</div>
+          </div>
+        </button>
+
+        <button class="btn-danger" id="delivery-cancel-btn">${cancelText}</button>
+      </div>
+    `;
+    document.body.appendChild(modal);
+
+    if (canOrderNow) {
+      document.getElementById("order-now-btn").onclick = () => {
+        document.body.removeChild(modal);
+        showPaymentChoice(items, "today");
+      };
+    }
+
+    document.getElementById("order-tomorrow-btn").onclick = () => {
+      document.body.removeChild(modal);
+      showDeliverySlotPicker(items, "tomorrow");
+    };
+
+    document.getElementById("delivery-cancel-btn").onclick = () => {
+      document.body.removeChild(modal);
+    };
+  }
+
+  function showPaymentChoice(items, deliveryMode = "today") {
     const total = Object.values(cart).reduce((s, c) => s + c.qty * c.item.price, 0);
     const enoughBalance = userBalance >= total;
 
@@ -1160,7 +1216,7 @@
         if (method === "click") {
           startClickTopupForOrder(items, total);
         } else {
-          finalizeOrder(items, method);
+          finalizeOrder(items, method, deliveryMode);
         }
       };
     });
@@ -1171,7 +1227,7 @@
 
   const DELIVERY_SLOTS = ["11:00-12:00", "12:00-13:00", "13:00-14:00", "14:00-15:00"];
 
-  function showDeliverySlotPicker(items, paymentMethod) {
+  function showDeliverySlotPicker(items, deliveryMode = "tomorrow") {
     const modal = document.createElement("div");
     modal.id = "slot-modal";
     modal.style.cssText = `
@@ -1202,7 +1258,7 @@
         const slot = btn.dataset.slot;
         await apiCall("/api/set-delivery-slot", { slot });
         document.body.removeChild(modal);
-        finalizeOrder(items, paymentMethod);
+        showPaymentChoice(items, deliveryMode);
       };
     });
     document.getElementById("slot-cancel-btn").onclick = () => {
@@ -1323,10 +1379,14 @@
     };
   }
 
-  async function finalizeOrder(items, paymentMethod) {
+  async function finalizeOrder(items, paymentMethod, deliveryMode = "today") {
     document.getElementById("cart-action").textContent = T("sending");
     try {
-      const result = await apiCall("/api/order", { items, payment_method: paymentMethod });
+      const result = await apiCall("/api/order", {
+        items,
+        payment_method: paymentMethod,
+        delivery_mode: deliveryMode  // "today" = сейчас, "tomorrow" = на завтра со слотом
+      });
       if (result.success) {
         cart = {};
         renderCart();
