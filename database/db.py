@@ -1194,7 +1194,7 @@ async def mark_stop_delivered(stop_id: int, note: str = None):
         await db.execute(
             """UPDATE orders SET status = 'delivered', updated_at = NOW()
                WHERE order_date = $1::text
-               AND status = 'confirmed'
+               AND status IN ('pending', 'confirmed', 'in_transit')
                AND user_id IN (
                    SELECT id FROM users WHERE company_id = $2
                )""",
