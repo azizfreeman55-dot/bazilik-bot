@@ -198,7 +198,9 @@ async def show_my_orders(message: Message):
         await message.answer("❌ Вы не зарегистрированы. Напишите /start")
         return
 
-    delivery_date = get_tomorrow()
+    # Курьер работает с актуальными заказами на сегодняшний день.
+    # При каждом нажатии кнопки данные заново запрашиваются из БД.
+    delivery_date = get_today()
     route_data = await get_courier_route(courier["id"], delivery_date)
 
     if not route_data:
@@ -600,12 +602,13 @@ async def show_route(message: Message):
         await message.answer("❌ Вы не зарегистрированы. Напишите /start")
         return
 
-    delivery_date = get_tomorrow()
+    # Показываем текущий маршрут на сегодня.
+    delivery_date = get_today()
     route_data = await get_courier_route(courier["id"], delivery_date)
 
     if not route_data:
         await message.answer(
-            "🗺 *Маршрут на завтра ещё не назначен*\n\n"
+            "🗺 *Маршрут на сегодня ещё не назначен*\n\n"
             "Ожидайте уведомления.",
             parse_mode="Markdown"
         )
@@ -761,7 +764,9 @@ async def distribute_orders(message: Message):
     if message.from_user.id not in COURIER_ADMIN_IDS:
         return
 
-    delivery_date = get_tomorrow()
+    # Получаем актуальные заказы на сегодня.
+    # Повторное нажатие кнопки обновит список из БД.
+    delivery_date = get_today()
     companies = await get_orders_by_company(delivery_date)
 
     if not companies:
