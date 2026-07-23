@@ -861,30 +861,15 @@
 
       MENU = data.categories || {};
       userBalance = data.balance || 0;
-      ordersOpen = data.orders_open !== false;
       document.getElementById("balance-pill").textContent = fmt(userBalance);
 
       const dateLabel = data.date_label || (CURRENT_LANG === "uz" ? "bugun" : "сегодня");
       document.getElementById("header-extra").innerHTML =
         `<div class="header-sub-label">${T("menu_for")}</div><div class="header-sub-value">${dateLabel}</div>`;
 
-      if (!ordersOpen) {
-        const openT = data.open_time || "07:00";
-        const closeT = data.close_time || "15:00";
-        const closedMsg = CURRENT_LANG === "uz"
-          ? `Buyurtmalar ${openT} dan ${closeT} gacha qabul qilinadi. Hozir qabul qilinmaydi.`
-          : `Заказы принимаются с ${openT} до ${closeT}. Сейчас приём закрыт.`;
-        const bannerEl = document.createElement("div");
-        bannerEl.style.cssText = "background: var(--red); color: white; padding: 10px 14px; border-radius: 12px; font-size: 12px; margin: 0 18px 8px; text-align: center; font-weight: 600;";
-        bannerEl.textContent = closedMsg;
-        bannerEl.id = "orders-closed-banner";
-        const existing = document.getElementById("orders-closed-banner");
-        if (existing) existing.remove();
-        document.querySelector(".header").after(bannerEl);
-      } else {
-        const existing = document.getElementById("orders-closed-banner");
-        if (existing) existing.remove();
-      }
+      // Убираем старый баннер если был
+      const existingClosedBanner = document.getElementById("orders-closed-banner");
+      if (existingClosedBanner) existingClosedBanner.remove();
 
       // ─── Баннер "Первый заказ — Coca Cola в подарок" ──────────────────
       const existingGiftBanner = document.getElementById("first-order-banner");
@@ -1090,8 +1075,6 @@
     const now = new Date();
     const deliveryNow = new Date(now.getTime() + 45 * 60000);
     const deliveryNowStr = deliveryNow.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
-    const hour = now.getHours();
-    const canOrderNow = hour >= 7 && hour < 15;
 
     const titleText = CURRENT_LANG === "uz" ? "Qachon yetkazib berish?" : "Когда доставить?";
     const nowLabel = CURRENT_LANG === "uz" ? `🚀 Hozir (~${deliveryNowStr})` : `🚀 Сейчас (~${deliveryNowStr})`;
@@ -1105,16 +1088,15 @@
                   width: 100%; max-width: 420px;">
         <div style="font-size: 17px; font-weight: 700; margin-bottom: 14px; text-align: center;">${titleText}</div>
 
-        <button id="order-now-btn" ${!canOrderNow ? "disabled" : ""}
+        <button id="order-now-btn"
           style="width: 100%; display: flex; align-items: center; gap: 12px; padding: 16px 14px;
-                 border-radius: 14px; border: 2px solid ${canOrderNow ? "var(--green-600)" : "var(--line)"};
-                 background: ${canOrderNow ? "rgba(182,232,75,0.08)" : "var(--cream-dark)"}; margin-bottom: 10px;
-                 text-align: left; cursor: ${canOrderNow ? "pointer" : "not-allowed"};
-                 opacity: ${canOrderNow ? "1" : "0.5"};">
+                 border-radius: 14px; border: 2px solid var(--green-600);
+                 background: rgba(182,232,75,0.08); margin-bottom: 10px;
+                 text-align: left; cursor: pointer;">
           <span style="font-size: 30px;">🚀</span>
           <div>
-            <div style="font-size: 15px; font-weight: 700; color: ${canOrderNow ? "var(--green-600)" : "var(--ink)"};">${nowLabel}</div>
-            <div style="font-size: 12px; color: var(--ink-soft); margin-top: 2px;">${canOrderNow ? nowSub : (CURRENT_LANG === "uz" ? "07:00–15:00 da mavjud" : "Доступно с 07:00 до 15:00")}</div>
+            <div style="font-size: 15px; font-weight: 700; color: var(--green-600);">${nowLabel}</div>
+            <div style="font-size: 12px; color: var(--ink-soft); margin-top: 2px;">${nowSub}</div>
           </div>
         </button>
 
@@ -1134,12 +1116,10 @@
     `;
     document.body.appendChild(modal);
 
-    if (canOrderNow) {
-      document.getElementById("order-now-btn").onclick = () => {
-        document.body.removeChild(modal);
-        showPaymentChoice(items, "today");
-      };
-    }
+    document.getElementById("order-now-btn").onclick = () => {
+      document.body.removeChild(modal);
+      showPaymentChoice(items, "today");
+    };
 
     document.getElementById("order-tomorrow-btn").onclick = () => {
       document.body.removeChild(modal);
