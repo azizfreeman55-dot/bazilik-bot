@@ -1009,6 +1009,8 @@ async def get_company_order_details(company_id: int, order_date: str) -> list:
     async with pool.acquire() as db:
         rows = await db.fetch(
             """SELECT
+                o.id as order_id,
+                o.status,
                 u.telegram_id,
                 u.full_name,
                 u.phone,
@@ -1025,6 +1027,145 @@ async def get_company_order_details(company_id: int, order_date: str) -> list:
             company_id, str(order_date)
         )
         return [dict(r) for r in rows]
+
+
+async def admin_cancel_order_item(order_id: int) -> dict:
+    """
+    Отменяет одну конкретную позицию сформированного заказа.
+
+    Разрешено только до начала доставки: для статусов pending и confirmed.
+    Запись сохраняется в базе со статусом cancelled для истории.
+    """
+    pool = await get_pool()
+
+    async with pool.acquire() as db:
+        async with db.transaction():
+            order = await db.fetchrow(
+                """SELECT o.id, o.user_id, o.order_date, o.status, o.paid,
+                          u.telegram_id, u.full_name, u.company_id,
+                          m.name AS meal_name, m.price
+                   FROM orders o
+                   JOIN users u ON u.id = o.user_id
+                   JOIN menus m ON m.id = o.menu_id
+                   WHERE o.id = $1
+                   FOR UPDATE""",
+                order_id
+            )
+
+            if not order:
+                return {"success": False, "error": "Позиция не найдена"}
+
+            if order["status"] == "cancelled":
+                return {"success": False, "error": "Позиция уже удалена"}
+
+            if order["status"] not in ("pending", "confirmed"):
+                return {
+                    "success": False,
+                    "error": "Нельзя удалить: доставка уже началась"
+                }
+
+            if order["paid"]:
+                return {
+                    "success": False,
+                    "error": "Нельзя удалить уже оплаченную позицию"
+                }
+
+            if order["company_id"]:
+                route_started = await db.fetchval(
+                    """SELECT EXISTS(
+                           SELECT 1
+                           FROM delivery_stops ds
+                           JOIN delivery_routes dr ON dr.id = ds.route_id
+                           WHERE ds.company_id = $1
+                           AND dr.delivery_date = $2::text
+                           AND dr.status != 'pending'
+                       )""",
+                    order["company_id"], order["order_date"]
+                )
+                if route_started:
+                    return {
+                        "success": False,
+                        "error": "Нельзя удалить: маршрут уже начат"
+                    }
+
+            await db.execute(
+                """UPDATE orders
+                   SET status = 'cancelled', updated_at = NOW()
+                   WHERE id = $1""",
+                order_id
+            )
+
+            await db.execute(
+                """UPDATE users
+                   SET total_orders = GREATEST(total_orders - 1, 0),
+                       points = GREATEST(points - 5, 0)
+                   WHERE id = $1""",
+                order["user_id"]
+            )
+
+            if order["company_id"]:
+                await db.execute(
+                    """UPDATE companies
+                       SET total_orders = GREATEST(total_orders - 1, 0)
+                       WHERE id = $1""",
+                    order["company_id"]
+                )
+
+                company_has_orders = await db.fetchval(
+                    """SELECT EXISTS(
+                           SELECT 1
+                           FROM orders o
+                           JOIN users u ON u.id = o.user_id
+                           WHERE u.company_id = $1
+                           AND o.order_date = $2::text
+                           AND o.status != 'cancelled'
+                       )""",
+                    order["company_id"], order["order_date"]
+                )
+
+                # Если это была последняя позиция компании, убираем пустую
+                # точку из маршрута и удаляем полностью пустой маршрут.
+                if not company_has_orders:
+                    route_ids = await db.fetch(
+                        """SELECT ds.route_id
+                           FROM delivery_stops ds
+                           JOIN delivery_routes dr ON dr.id = ds.route_id
+                           WHERE ds.company_id = $1
+                           AND dr.delivery_date = $2::text""",
+                        order["company_id"], order["order_date"]
+                    )
+                    await db.execute(
+                        """DELETE FROM delivery_stops ds
+                           USING delivery_routes dr
+                           WHERE ds.route_id = dr.id
+                           AND ds.company_id = $1
+                           AND dr.delivery_date = $2::text""",
+                        order["company_id"], order["order_date"]
+                    )
+                    for route in route_ids:
+                        has_stops = await db.fetchval(
+                            """SELECT EXISTS(
+                                   SELECT 1 FROM delivery_stops
+                                   WHERE route_id = $1
+                               )""",
+                            route["route_id"]
+                        )
+                        if not has_stops:
+                            await db.execute(
+                                """DELETE FROM delivery_routes
+                                   WHERE id = $1 AND status = 'pending'""",
+                                route["route_id"]
+                            )
+
+            return {
+                "success": True,
+                "order_id": order["id"],
+                "full_name": order["full_name"] or "Клиент",
+                "meal_name": order["meal_name"],
+                "price": order["price"],
+                "telegram_id": order["telegram_id"],
+                "order_date": order["order_date"]
+            }
 
 
 def _parse_coords_from_maps_link(maps_link: str | None) -> tuple[float, float] | None:
