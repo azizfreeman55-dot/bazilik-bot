@@ -1141,6 +1141,132 @@ async def create_delivery_route(courier_id: int, delivery_date: str,
     return route_id
 
 
+async def assign_company_to_courier(courier_id: int, delivery_date: str,
+                                    company_id: int) -> dict:
+    """
+    Вручную назначает одну компанию курьеру.
+
+    Сохраняет уже добавленные точки целевого курьера. Если компания ранее была
+    назначена другому курьеру, переносит её только пока оба маршрута не начаты.
+    """
+    pool = await get_pool()
+    delivery_date = str(delivery_date)
+
+    async with pool.acquire() as db:
+        async with db.transaction():
+            courier = await db.fetchrow(
+                """SELECT id, full_name FROM couriers
+                   WHERE id = $1 AND is_active = TRUE""",
+                courier_id
+            )
+            if not courier:
+                return {"success": False, "error": "Курьер не найден или неактивен"}
+
+            company = await db.fetchrow(
+                "SELECT id, name FROM companies WHERE id = $1",
+                company_id
+            )
+            if not company:
+                return {"success": False, "error": "Компания не найдена"}
+
+            has_orders = await db.fetchval(
+                """SELECT EXISTS(
+                       SELECT 1
+                       FROM orders o
+                       JOIN users u ON u.id = o.user_id
+                       WHERE u.company_id = $1
+                       AND o.order_date = $2::text
+                       AND o.status != 'cancelled'
+                   )""",
+                company_id, delivery_date
+            )
+            if not has_orders:
+                return {
+                    "success": False,
+                    "error": "У компании нет актуальных заказов"
+                }
+
+            old_assignment = await db.fetchrow(
+                """SELECT ds.id AS stop_id, ds.route_id, dr.courier_id,
+                          dr.status
+                   FROM delivery_stops ds
+                   JOIN delivery_routes dr ON dr.id = ds.route_id
+                   WHERE ds.company_id = $1
+                   AND dr.delivery_date = $2::text
+                   FOR UPDATE""",
+                company_id, delivery_date
+            )
+
+            if old_assignment and old_assignment["courier_id"] == courier_id:
+                return {
+                    "success": True,
+                    "route_id": old_assignment["route_id"],
+                    "already_assigned": True
+                }
+
+            if old_assignment and old_assignment["status"] != "pending":
+                return {
+                    "success": False,
+                    "error": "Нельзя перенести компанию: прежний маршрут уже начат"
+                }
+
+            target_route = await db.fetchrow(
+                """SELECT id, status FROM delivery_routes
+                   WHERE courier_id = $1 AND delivery_date = $2::text
+                   FOR UPDATE""",
+                courier_id, delivery_date
+            )
+
+            if target_route and target_route["status"] != "pending":
+                return {
+                    "success": False,
+                    "error": "Нельзя изменить маршрут: курьер уже начал работу"
+                }
+
+            if old_assignment:
+                await db.execute(
+                    "DELETE FROM delivery_stops WHERE id = $1",
+                    old_assignment["stop_id"]
+                )
+
+                remaining_stops = await db.fetchval(
+                    "SELECT COUNT(*) FROM delivery_stops WHERE route_id = $1",
+                    old_assignment["route_id"]
+                )
+                if remaining_stops == 0:
+                    await db.execute(
+                        "DELETE FROM delivery_routes WHERE id = $1",
+                        old_assignment["route_id"]
+                    )
+
+            if not target_route:
+                target_route = await db.fetchrow(
+                    """INSERT INTO delivery_routes
+                       (courier_id, delivery_date, status)
+                       VALUES ($1, $2::text, 'pending')
+                       RETURNING id, status""",
+                    courier_id, delivery_date
+                )
+
+            next_order = await db.fetchval(
+                """SELECT COALESCE(MAX(stop_order), 0) + 1
+                   FROM delivery_stops WHERE route_id = $1""",
+                target_route["id"]
+            )
+            await db.execute(
+                """INSERT INTO delivery_stops
+                   (route_id, company_id, stop_order, status)
+                   VALUES ($1, $2, $3, 'pending')""",
+                target_route["id"], company_id, next_order
+            )
+
+            return {
+                "success": True,
+                "route_id": target_route["id"],
+                "already_assigned": False
+            }
+
+
 async def get_courier_route(courier_id: int, delivery_date: str) -> dict | None:
     pool = await get_pool()
     delivery_date = str(delivery_date)
