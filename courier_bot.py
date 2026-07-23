@@ -30,6 +30,7 @@ from database.db import (
     get_courier, create_courier, get_all_couriers,
     get_orders_by_company, get_company_order_details,
     create_delivery_route, assign_company_to_courier, get_courier_route,
+    admin_cancel_order_item,
     mark_stop_delivered, mark_route_started, mark_route_finished,
     get_company_clients_telegram_ids, init_db
 )
@@ -103,6 +104,7 @@ def admin_main_keyboard() -> ReplyKeyboardMarkup:
     builder.button(text="🗺 Мой маршрут")
     builder.button(text="💰 Принять оплату")
     builder.button(text="🚚 Распределить заказы")
+    builder.button(text="🗑 Изменить заказ")
     builder.button(text="👥 Курьеры")
     builder.button(text="📊 Статистика")
     builder.adjust(2)
@@ -828,6 +830,231 @@ async def finish_route(callback: CallbackQuery):
 
 
 # ─── Распределение заказов (только для админа) ────────────────────────────────
+
+@router.message(F.text == "🗑 Изменить заказ")
+async def admin_choose_company_for_edit(message: Message):
+    """Показывает администратору компании с заказами на сегодня."""
+    if message.from_user.id not in COURIER_ADMIN_IDS:
+        await message.answer("❌ Нет доступа")
+        return
+
+    delivery_date = get_today()
+    companies = await get_orders_by_company(delivery_date)
+
+    if not companies:
+        await message.answer(
+            f"🗑 *Изменение заказа*\n\nНа {delivery_date} заказов нет.",
+            parse_mode="Markdown"
+        )
+        return
+
+    text = (
+        f"🗑 *Изменение заказов на {delivery_date}*\n\n"
+        "Выберите компанию:\n"
+    )
+    builder = InlineKeyboardBuilder()
+    for company in companies:
+        builder.button(
+            text=(
+                f"🏢 {company['company_name']} "
+                f"({company['order_count']} поз.)"
+            ),
+            callback_data=(
+                f"admc_{company['company_id']}_{delivery_date}"
+            )
+        )
+    builder.adjust(1)
+
+    await message.answer(
+        text,
+        parse_mode="Markdown",
+        reply_markup=builder.as_markup()
+    )
+
+
+@router.callback_query(F.data.startswith("admin_orders_"))
+async def admin_refresh_companies_for_edit(callback: CallbackQuery):
+    """Возвращает администратора к списку компаний."""
+    if callback.from_user.id not in COURIER_ADMIN_IDS:
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+
+    delivery_date = callback.data.removeprefix("admin_orders_")
+    companies = await get_orders_by_company(delivery_date)
+
+    if not companies:
+        await callback.message.edit_text(
+            f"🗑 *Изменение заказов на {delivery_date}*\n\n"
+            "Активных заказов больше нет.",
+            parse_mode="Markdown"
+        )
+        await callback.answer()
+        return
+
+    builder = InlineKeyboardBuilder()
+    for company in companies:
+        builder.button(
+            text=(
+                f"🏢 {company['company_name']} "
+                f"({company['order_count']} поз.)"
+            ),
+            callback_data=(
+                f"admc_{company['company_id']}_{delivery_date}"
+            )
+        )
+    builder.adjust(1)
+
+    await callback.message.edit_text(
+        f"🗑 *Изменение заказов на {delivery_date}*\n\n"
+        "Выберите компанию:",
+        parse_mode="Markdown",
+        reply_markup=builder.as_markup()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admc_"))
+async def admin_show_company_order_items(callback: CallbackQuery):
+    """Показывает каждую позицию заказа с отдельной кнопкой удаления."""
+    if callback.from_user.id not in COURIER_ADMIN_IDS:
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+
+    _, company_id, delivery_date = callback.data.split("_", 2)
+    company_id = int(company_id)
+    orders = await get_company_order_details(company_id, delivery_date)
+
+    if not orders:
+        await callback.answer("Активных позиций не найдено", show_alert=True)
+        return
+
+    from database.db import get_pool
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        company = await db.fetchrow(
+            "SELECT name FROM companies WHERE id = $1",
+            company_id
+        )
+
+    text = f"🏢 *{company['name']}*\n📅 {delivery_date}\n\n"
+    builder = InlineKeyboardBuilder()
+
+    current_client = None
+    for order in orders:
+        if current_client != order["telegram_id"]:
+            current_client = order["telegram_id"]
+            text += f"\n👤 *{order['full_name'] or 'Клиент'}*\n"
+
+        icon = CATEGORY_ICONS.get(order["category"], "🍽")
+        text += (
+            f"  {icon} {order['meal_name']} — "
+            f"{order['price']:,} сум\n"
+        )
+        builder.button(
+            text=f"❌ {order['full_name'] or 'Клиент'}: {order['meal_name']}",
+            callback_data=(
+                f"rmask_{order['order_id']}_{company_id}_{delivery_date}"
+            )
+        )
+
+    builder.button(
+        text="◀️ Назад к компаниям",
+        callback_data=f"admin_orders_{delivery_date}"
+    )
+    builder.adjust(1)
+
+    await callback.message.edit_text(
+        text,
+        parse_mode="Markdown",
+        reply_markup=builder.as_markup()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("rmask_"))
+async def admin_confirm_remove_order_item(callback: CallbackQuery):
+    """Запрашивает подтверждение перед отменой одной позиции."""
+    if callback.from_user.id not in COURIER_ADMIN_IDS:
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+
+    _, order_id, company_id, delivery_date = callback.data.split("_", 3)
+
+    from database.db import get_pool
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        order = await db.fetchrow(
+            """SELECT u.full_name, m.name AS meal_name, m.price, o.status
+               FROM orders o
+               JOIN users u ON u.id = o.user_id
+               JOIN menus m ON m.id = o.menu_id
+               WHERE o.id = $1""",
+            int(order_id)
+        )
+
+    if not order:
+        await callback.answer("Позиция не найдена", show_alert=True)
+        return
+
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="✅ Да, удалить позицию",
+        callback_data=f"rmok_{order_id}_{company_id}_{delivery_date}"
+    )
+    builder.button(
+        text="◀️ Отмена",
+        callback_data=f"admc_{company_id}_{delivery_date}"
+    )
+    builder.adjust(1)
+
+    await callback.message.edit_text(
+        "⚠️ *Подтвердите удаление позиции*\n\n"
+        f"👤 {order['full_name'] or 'Клиент'}\n"
+        f"🍽 {order['meal_name']}\n"
+        f"💰 {order['price']:,} сум\n\n"
+        "Позиция исчезнет из сводки и маршрута доставки.",
+        parse_mode="Markdown",
+        reply_markup=builder.as_markup()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("rmok_"))
+async def admin_remove_order_item(callback: CallbackQuery):
+    """Отменяет выбранную администратором позицию заказа."""
+    if callback.from_user.id not in COURIER_ADMIN_IDS:
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+
+    _, order_id, company_id, delivery_date = callback.data.split("_", 3)
+    result = await admin_cancel_order_item(int(order_id))
+
+    if not result["success"]:
+        await callback.answer(result["error"], show_alert=True)
+        return
+
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="🗑 Продолжить изменение заказа",
+        callback_data=f"admc_{company_id}_{delivery_date}"
+    )
+    builder.button(
+        text="◀️ К списку компаний",
+        callback_data=f"admin_orders_{delivery_date}"
+    )
+    builder.adjust(1)
+
+    await callback.message.edit_text(
+        "✅ *Позиция удалена из заказа*\n\n"
+        f"👤 {result['full_name']}\n"
+        f"🍽 {result['meal_name']}\n"
+        f"💰 {result['price']:,} сум\n\n"
+        "Сводка и маршрут будут показывать обновлённое количество.",
+        parse_mode="Markdown",
+        reply_markup=builder.as_markup()
+    )
+    await callback.answer("✅ Позиция удалена")
+
 
 @router.message(F.text == "🚚 Распределить заказы")
 async def distribute_orders(message: Message):
