@@ -418,12 +418,6 @@ async def handle_webapp_order(request):
         if not user_data:
             return web.json_response({"success": False, "error": "Invalid auth"}, status=401, headers=cors_headers())
 
-        # Для "сейчас" проверяем рабочие часы
-        if delivery_mode == "today" and not is_orders_open():
-            return web.json_response({
-                "success": False,
-                "error": f"Заказы «Сейчас» принимаются с {ORDER_OPEN_TIME} до {ORDER_CLOSE_TIME}."
-            }, headers=cors_headers())
 
         telegram_id = user_data.get("id")
         if not items:
