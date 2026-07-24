@@ -999,7 +999,7 @@ async def get_daily_summary(order_date: str) -> dict:
             """SELECT m.name, m.item_number, m.category, COUNT(*) as count
                FROM orders o
                JOIN menus m ON o.menu_id = m.id
-               WHERE o.order_date = $1::text AND o.status IN ('confirmed', 'pending')
+               WHERE o.order_date = $1::text AND o.status != 'cancelled'
                GROUP BY m.id, m.name, m.item_number, m.category
                ORDER BY m.category, count DESC""",
             str(order_date)
@@ -1008,7 +1008,33 @@ async def get_daily_summary(order_date: str) -> dict:
             "SELECT COUNT(*) FROM orders WHERE order_date = $1::text AND status != 'cancelled'",
             str(order_date)
         )
-    return {"items": [dict(r) for r in items], "total": total, "date": order_date}
+        clients = await db.fetchval(
+            """SELECT COUNT(DISTINCT user_id)
+               FROM orders
+               WHERE order_date = $1::text AND status != 'cancelled'""",
+            str(order_date)
+        )
+        status_rows = await db.fetch(
+            """SELECT status, COUNT(*) AS count
+               FROM orders
+               WHERE order_date = $1::text AND status != 'cancelled'
+               GROUP BY status""",
+            str(order_date)
+        )
+
+    status_counts = {row["status"]: row["count"] for row in status_rows}
+    return {
+        "items": [dict(r) for r in items],
+        "total": total or 0,
+        "clients": clients or 0,
+        "delivered": status_counts.get("delivered", 0),
+        "in_transit": status_counts.get("in_transit", 0),
+        "waiting": (
+            status_counts.get("pending", 0)
+            + status_counts.get("confirmed", 0)
+        ),
+        "date": order_date,
+    }
 
 
 async def get_all_users_for_notification() -> list:
