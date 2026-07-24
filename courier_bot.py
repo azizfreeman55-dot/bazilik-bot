@@ -34,7 +34,8 @@ from database.db import (
     admin_cancel_order_item,
     get_manual_order_companies, get_manual_order_clients,
     get_manual_order_menu, admin_create_manual_order,
-    mark_stop_delivered, mark_route_started, mark_route_finished,
+    mark_stop_delivered, mark_stop_problem,
+    mark_route_started, mark_route_finished,
     get_company_clients_telegram_ids, get_delivery_slots_for_company, init_db
 )
 
@@ -282,7 +283,10 @@ async def show_my_orders(message: Message):
     text = f"📦 *Ваши заказы на {delivery_date}*\n\n"
 
     for stop in stops:
-        status_icon = "✅" if stop["status"] == "delivered" else "⏳"
+        status_icon = {
+            "delivered": "✅",
+            "problem": "⚠️",
+        }.get(stop["status"], "⏳")
         text += f"{status_icon} *{stop['stop_order']}. {stop['company_name']}*\n"
         if stop.get("address"):
             text += f"📍 {stop['address']}\n"
@@ -704,7 +708,10 @@ async def save_problem_note(callback: CallbackQuery):
     stop_id = int(parts[2])
     note = parts[3]
 
-    await mark_stop_delivered(stop_id, note=f"⚠️ {note}")
+    result = await mark_stop_problem(stop_id, note=f"⚠️ {note}")
+    if not result["success"]:
+        await callback.answer(result["error"], show_alert=True)
+        return
 
     # Уведомляем админа
     for admin_id in COURIER_ADMIN_IDS:
@@ -712,8 +719,11 @@ async def save_problem_note(callback: CallbackQuery):
             await callback.bot.send_message(
                 admin_id,
                 f"⚠️ *Проблема с доставкой!*\n\n"
+                f"🏢 Компания: *{result['company_name']}*\n"
+                f"📅 Дата: {result['delivery_date']}\n"
                 f"Курьер сообщил: _{note}_\n"
-                f"Stop ID: {stop_id}",
+                f"Stop ID: {stop_id}\n\n"
+                f"📦 Заказ не отмечен доставленным и позиции не добавлены.",
                 parse_mode="Markdown"
             )
         except Exception:
@@ -721,7 +731,8 @@ async def save_problem_note(callback: CallbackQuery):
 
     await callback.message.edit_text(
         f"⚠️ Проблема зафиксирована: _{note}_\n\n"
-        f"Администратор уведомлён.",
+        f"Администратор уведомлён.\n"
+        f"Заказ остался активным для повторной доставки.",
         parse_mode="Markdown"
     )
     await callback.answer()
