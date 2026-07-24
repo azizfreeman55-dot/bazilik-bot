@@ -9,19 +9,16 @@ from database.db import (
 )
 from langs import t
 from keyboards.keyboards import CATEGORY_NAMES, WEBAPP_URL
-from config import ORDER_CLOSE_TIME
 
 router = Router()
 
 
 def is_orders_open() -> bool:
-    now = datetime.now().strftime("%H:%M")
-    return now < ORDER_CLOSE_TIME
+    return True  # круглосуточно
 
 
-def get_tomorrow_date() -> str:
-    from datetime import timedelta
-    return str(date.today() + timedelta(days=1))
+def get_today_date() -> str:
+    return str(date.today())
 
 
 def get_day_name(date_str: str) -> str:
@@ -120,7 +117,7 @@ async def order_lunch(message: Message):
         await message.answer(t(lang, "orders_closed"), parse_mode="Markdown")
         return
 
-    tomorrow = get_tomorrow_date()
+    tomorrow = get_today_date()
     day_name = get_day_name(tomorrow)
 
     existing_orders = await get_today_orders_list(message.from_user.id, tomorrow)
@@ -138,9 +135,9 @@ async def order_lunch(message: Message):
     )
 
     if lang == "ru":
-        text = f"🍽️ *Меню на {day_name} ({tomorrow})*\n\nОткройте каталог чтобы выбрать блюда:{balance_text}"
+        text = f"🍽️ *Меню на сегодня ({tomorrow})*\n\nОткройте каталог чтобы выбрать блюда:{balance_text}"
     else:
-        text = f"🍽️ *{day_name} ({tomorrow}) menyu*\n\nTaomlarni tanlash uchun katalogni oching:{balance_text}"
+        text = f"🍽️ *Bugun ({tomorrow}) menyu*\n\nTaomlarni tanlash uchun katalogni oching:{balance_text}"
 
     await message.answer(
         text, parse_mode="Markdown",
@@ -157,7 +154,7 @@ def format_order_summary(orders: list, day_name: str, lang: str) -> str:
         cat = o.get("category", "main")
         by_category.setdefault(cat, []).append(o)
 
-    text = f"📝 *{'Ваш заказ на' if lang == 'ru' else 'Sizning buyurtmangiz'} {day_name}*\n\n"
+    text = f"📝 *{'Ваш заказ на сегодня' if lang == 'ru' else 'Bugungi buyurtmangiz'}*\n\n"
     for cat, items in by_category.items():
         cat_name = CATEGORY_NAMES.get(cat, {}).get(lang, cat)
         text += f"{cat_name}:\n"
@@ -178,7 +175,7 @@ def format_order_summary(orders: list, day_name: str, lang: str) -> str:
 @router.message(F.text.in_({"📝 Мой заказ", "📝 Mening buyurtmam"}))
 async def my_order(message: Message):
     lang = await get_user_lang(message.from_user.id)
-    tomorrow = get_tomorrow_date()
+    tomorrow = get_today_date()
     day_name = get_day_name(tomorrow)
     orders = await get_today_orders_list(message.from_user.id, tomorrow)
 
@@ -224,7 +221,7 @@ async def ask_cancel_full_order(callback: CallbackQuery):
 @router.callback_query(F.data == "confirm_cancel_full")
 async def confirm_cancel_full_order(callback: CallbackQuery):
     lang = await get_user_lang(callback.from_user.id)
-    tomorrow = get_tomorrow_date()
+    tomorrow = get_today_date()
     user = await get_user(callback.from_user.id)
 
     refund_amount = await find_total_deduction_for_date(user["id"], tomorrow)
@@ -253,7 +250,7 @@ async def confirm_cancel_full_order(callback: CallbackQuery):
 @router.callback_query(F.data == "back_to_order_summary")
 async def back_to_order_summary(callback: CallbackQuery):
     lang = await get_user_lang(callback.from_user.id)
-    tomorrow = get_tomorrow_date()
+    tomorrow = get_today_date()
     day_name = get_day_name(tomorrow)
     orders = await get_today_orders_list(callback.from_user.id, tomorrow)
 
