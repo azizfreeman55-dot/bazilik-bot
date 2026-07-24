@@ -1014,25 +1014,37 @@ async def get_daily_summary(order_date: str) -> dict:
                WHERE order_date = $1::text AND status != 'cancelled'""",
             str(order_date)
         )
-        status_rows = await db.fetch(
-            """SELECT status, COUNT(*) AS count
-               FROM orders
-               WHERE order_date = $1::text AND status != 'cancelled'
-               GROUP BY status""",
+        client_statuses = await db.fetchrow(
+            """WITH client_status AS (
+                   SELECT user_id,
+                          MAX(
+                              CASE status
+                                  WHEN 'delivered' THEN 4
+                                  WHEN 'in_transit' THEN 3
+                                  WHEN 'confirmed' THEN 2
+                                  WHEN 'pending' THEN 1
+                                  ELSE 0
+                              END
+                          ) AS status_rank
+                   FROM orders
+                   WHERE order_date = $1::text AND status != 'cancelled'
+                   GROUP BY user_id
+               )
+               SELECT
+                   COUNT(*) FILTER (WHERE status_rank = 4) AS delivered,
+                   COUNT(*) FILTER (WHERE status_rank = 3) AS in_transit,
+                   COUNT(*) FILTER (WHERE status_rank IN (1, 2)) AS waiting
+               FROM client_status""",
             str(order_date)
         )
 
-    status_counts = {row["status"]: row["count"] for row in status_rows}
     return {
         "items": [dict(r) for r in items],
         "total": total or 0,
         "clients": clients or 0,
-        "delivered": status_counts.get("delivered", 0),
-        "in_transit": status_counts.get("in_transit", 0),
-        "waiting": (
-            status_counts.get("pending", 0)
-            + status_counts.get("confirmed", 0)
-        ),
+        "delivered": client_statuses["delivered"] or 0,
+        "in_transit": client_statuses["in_transit"] or 0,
+        "waiting": client_statuses["waiting"] or 0,
         "date": order_date,
     }
 
