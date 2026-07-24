@@ -751,7 +751,13 @@ async def admin_summary(callback: CallbackQuery):
 
         text += "\n"
 
-    text += f"📦 Всего: *{summary['total']} позиций*"
+    text += (
+        f"📦 Всего блюд: *{summary['total']}*\n"
+        f"👥 Клиентов: *{summary['clients']}*\n\n"
+        f"✅ Доставлено: *{summary['delivered']}*\n"
+        f"🚚 В пути: *{summary['in_transit']}*\n"
+        f"⏳ Ожидают доставки: *{summary['waiting']}*"
+    )
 
     await callback.answer()
     await callback.message.edit_text(
