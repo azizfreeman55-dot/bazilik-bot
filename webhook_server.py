@@ -607,7 +607,8 @@ async def handle_webapp_order(request):
                     telegram_id, tomorrow
                 )
 
-            delivery_text = f"🚀 Доставка сегодня к {get_delivery_time()} (~60 мин)"
+            selected_slot = slot_row["slot"] if slot_row else get_delivery_time()
+            delivery_text = f"🚀 Доставка сегодня к {selected_slot}"
 
             await bot.send_message(
                 telegram_id,
@@ -1289,11 +1290,50 @@ async def handle_webapp_update_profile(request):
         return web.json_response({"success": False, "error": str(e)}, status=500, headers=cors_headers())
 
 
-DELIVERY_SLOTS = ["08:00-09:00", "09:00-10:00", "10:00-11:00", "11:00-12:00", "12:00-13:00", "13:00-14:00", "14:00-15:00"]
+DELIVERY_START_MINUTES = 8 * 60
+DELIVERY_END_MINUTES = 16 * 60
+
+
+def validate_delivery_slot(slot):
+    """
+    Проверяет выбранное время доставки.
+
+    Mini App отправляет конкретное время в формате HH:MM:
+    самое быстрое — через 60 минут, остальные варианты — с шагом 30 минут.
+    Доставка доступна с 08:00 до 16:00 по времени Ташкента.
+    """
+    if not isinstance(slot, str):
+        return False, "Недопустимое время доставки"
+
+    try:
+        hours_text, minutes_text = slot.split(":")
+        if len(hours_text) != 2 or len(minutes_text) != 2:
+            raise ValueError
+        hours = int(hours_text)
+        minutes = int(minutes_text)
+        if not (0 <= hours <= 23 and 0 <= minutes <= 59):
+            raise ValueError
+    except (TypeError, ValueError):
+        return False, "Недопустимое время доставки"
+
+    selected_minutes = hours * 60 + minutes
+    if not DELIVERY_START_MINUTES <= selected_minutes <= DELIVERY_END_MINUTES:
+        return False, "Доставка доступна с 08:00 до 16:00"
+
+    from datetime import datetime, timezone
+    tz_tashkent = timezone(timedelta(hours=5))
+    now = datetime.now(tz_tashkent)
+    earliest_minutes = now.hour * 60 + now.minute + DELIVERY_MINUTES
+
+    # Сравниваем с точностью до минуты: Mini App также отправляет время без секунд.
+    if selected_minutes < earliest_minutes:
+        return False, "Выберите время не раньше чем через 60 минут"
+
+    return True, None
 
 
 async def handle_webapp_set_delivery_slot(request):
-    """POST /api/set-delivery-slot — сохраняет выбранный интервал доставки на завтра"""
+    """POST /api/set-delivery-slot — сохраняет выбранное время доставки на сегодня"""
     try:
         init_data = await get_init_data_from_request(request)
         user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
@@ -1304,8 +1344,12 @@ async def handle_webapp_set_delivery_slot(request):
         body = await request.json()
         slot = body.get("slot")
 
-        if slot not in DELIVERY_SLOTS:
-            return web.json_response({"success": False, "error": "Недопустимый интервал"}, headers=cors_headers())
+        is_valid, validation_error = validate_delivery_slot(slot)
+        if not is_valid:
+            return web.json_response(
+                {"success": False, "error": validation_error},
+                headers=cors_headers()
+            )
 
         tomorrow = str(date.today())  # онлайн: сегодня
         pool = await get_pool()
@@ -1320,7 +1364,7 @@ async def handle_webapp_set_delivery_slot(request):
                 user["id"], tomorrow, slot
             )
 
-        return web.json_response({"success": True, "slots": DELIVERY_SLOTS}, headers=cors_headers())
+        return web.json_response({"success": True, "slot": slot}, headers=cors_headers())
     except Exception as e:
         logger.error(f"webapp_set_delivery_slot error: {e}")
         return web.json_response({"success": False, "error": str(e)}, status=500, headers=cors_headers())
