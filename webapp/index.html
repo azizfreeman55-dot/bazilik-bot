@@ -784,6 +784,7 @@
   let currentCat = "second";
   let cart = {};
   let userBalance = 0;
+  let selectedDeliverySlot = localStorage.getItem("selectedDeliverySlot") || null;
   let currentPage = "menu";
 
   function fmt(n) { return Math.round(n).toLocaleString("ru-RU") + " сум"; }
@@ -1061,7 +1062,7 @@
       return;
     }
 
-    showPaymentChoice(items);
+    showDeliverySlotPicker(items);
   }
 
   function showPaymentChoice(items) {
@@ -1138,26 +1139,104 @@
     };
   }
 
-  const DELIVERY_SLOTS = ["08:00-09:00", "09:00-10:00", "10:00-11:00", "11:00-12:00", "12:00-13:00", "13:00-14:00", "14:00-15:00"];
+  const DELIVERY_START_HOUR = 8;
+  const DELIVERY_END_HOUR = 16;
+  const MIN_DELIVERY_DELAY_MINUTES = 60;
+  const DELIVERY_STEP_MINUTES = 30;
+
+  function formatDeliveryTime(dateValue) {
+    return dateValue.toLocaleTimeString("ru-RU", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false
+    });
+  }
+
+  function generateDeliveryTimeOptions(now = new Date()) {
+    const opening = new Date(now);
+    opening.setHours(DELIVERY_START_HOUR, 0, 0, 0);
+
+    const closing = new Date(now);
+    closing.setHours(DELIVERY_END_HOUR, 0, 0, 0);
+
+    const fastest = new Date(now.getTime() + MIN_DELIVERY_DELAY_MINUTES * 60000);
+    fastest.setSeconds(0, 0);
+
+    if (fastest < opening) {
+      fastest.setTime(opening.getTime());
+    }
+    if (fastest > closing) {
+      return [];
+    }
+
+    const options = [{ value: formatDeliveryTime(fastest), fast: true }];
+
+    const nextHalfHour = new Date(fastest);
+    const minutes = nextHalfHour.getMinutes();
+    const remainder = minutes % DELIVERY_STEP_MINUTES;
+    if (remainder === 0) {
+      nextHalfHour.setMinutes(minutes + DELIVERY_STEP_MINUTES, 0, 0);
+    } else {
+      nextHalfHour.setMinutes(
+        minutes + (DELIVERY_STEP_MINUTES - remainder), 0, 0
+      );
+    }
+
+    for (
+      let optionTime = nextHalfHour;
+      optionTime <= closing;
+      optionTime = new Date(
+        optionTime.getTime() + DELIVERY_STEP_MINUTES * 60000
+      )
+    ) {
+      options.push({ value: formatDeliveryTime(optionTime), fast: false });
+    }
+
+    return options;
+  }
 
   function showDeliverySlotPicker(items) {
+    const deliveryOptions = generateDeliveryTimeOptions();
+
+    if (deliveryOptions.length === 0) {
+      const message = CURRENT_LANG === "uz"
+        ? "Bugungi yetkazib berish vaqti tugadi. Yetkazib berish 08:00 dan 16:00 gacha ishlaydi."
+        : "На сегодня свободного времени доставки уже нет. Доставка работает с 08:00 до 16:00.";
+      if (tg?.showAlert) tg.showAlert(message); else showToast(message);
+      return;
+    }
+
     const modal = document.createElement("div");
     modal.id = "slot-modal";
     modal.style.cssText = `
       position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 300;
       display: flex; align-items: flex-end; justify-content: center;
     `;
-    const title = CURRENT_LANG === "uz" ? "Ertaga yetkazib berish vaqtini tanlang" : "Выберите время доставки на завтра";
+    const title = CURRENT_LANG === "uz"
+      ? "Yetkazib berish vaqtini tanlang"
+      : "Выберите время доставки";
+    const subtitle = CURRENT_LANG === "uz"
+      ? "Eng tez yetkazib berish — kamida 60 daqiqadan keyin"
+      : "Самая быстрая доставка — не раньше чем через 60 минут";
     modal.innerHTML = `
       <div style="background: var(--cream-dark); border-radius: 20px 20px 0 0; padding: 20px 18px;
-                  width: 100%; max-width: 420px;">
-        <div style="font-size: 16px; font-weight: 700; margin-bottom: 14px;">${title}</div>
+                  width: 100%; max-width: 420px; max-height: 80vh; overflow-y: auto;">
+        <div style="font-size: 16px; font-weight: 700; margin-bottom: 4px;">${title}</div>
+        <div style="font-size: 12px; color: var(--ink-soft); margin-bottom: 14px;">${subtitle}</div>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px;">
-          ${DELIVERY_SLOTS.map(slot => `
-            <button class="slot-pick-btn" data-slot="${slot}"
+          ${deliveryOptions.map(option => `
+            <button class="slot-pick-btn" data-slot="${option.value}"
               style="padding: 14px; border-radius: 12px; border: 1px solid var(--line);
-                     background: var(--white); color: var(--ink); font-size: 14px; font-weight: 700; cursor: pointer;">
-              🕐 ${slot}
+                     background: ${option.fast ? "var(--green-600)" : "var(--white)"};
+                     color: ${option.fast ? "var(--on-accent)" : "var(--ink)"};
+                     font-size: 14px; font-weight: 700; cursor: pointer;
+                     ${option.fast ? "grid-column: 1 / -1;" : ""}">
+              ${option.fast ? "⚡" : "🕐"}
+              ${option.fast
+                ? (CURRENT_LANG === "uz"
+                    ? `Eng tez — ${option.value}`
+                    : `Самое быстрое — ${option.value}`)
+                : option.value}
             </button>
           `).join("")}
         </div>
@@ -1169,9 +1248,22 @@
     modal.querySelectorAll(".slot-pick-btn").forEach(btn => {
       btn.onclick = async () => {
         const slot = btn.dataset.slot;
-        await apiCall("/api/set-delivery-slot", { slot });
-        document.body.removeChild(modal);
-        showPaymentChoice(items);
+        btn.disabled = true;
+        try {
+          const result = await apiCall("/api/set-delivery-slot", { slot });
+          if (result && result.success === false) {
+            showToast(result.error || T("order_error"));
+            btn.disabled = false;
+            return;
+          }
+          selectedDeliverySlot = slot;
+          localStorage.setItem("selectedDeliverySlot", slot);
+          document.body.removeChild(modal);
+          showPaymentChoice(items);
+        } catch (e) {
+          btn.disabled = false;
+          showToast(T("connection_error"));
+        }
       };
     });
     document.getElementById("slot-cancel-btn").onclick = () => {
@@ -1295,7 +1387,11 @@
   async function finalizeOrder(items, paymentMethod) {
     document.getElementById("cart-action").textContent = T("sending");
     try {
-      const result = await apiCall("/api/order", { items, payment_method: paymentMethod });
+      const result = await apiCall("/api/order", {
+        items,
+        payment_method: paymentMethod,
+        delivery_slot: selectedDeliverySlot
+      });
       if (result.success) {
         cart = {};
         renderCart();
@@ -1374,16 +1470,15 @@
       let html = renderDeliveryStepper(bestStatus);
 
       const deliveryLabel = CURRENT_LANG === "uz" ? "Yetkazib berish vaqti" : "Время доставки";
-      const deliveryTime = (() => {
-        const now = new Date();
-        now.setMinutes(now.getMinutes() + 45);
-        return now.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
-      })();
+      const deliveryTime = data.delivery_slot
+        || selectedDeliverySlot
+        || localStorage.getItem("selectedDeliverySlot")
+        || "—";
       html += `<div class="profile-card" style="display:flex; align-items:center; gap:10px; margin-bottom: 12px;">
         <span style="font-size: 20px;">🕐</span>
         <div>
           <div style="font-size: 12px; color: var(--ink-soft);">${deliveryLabel}</div>
-          <div style="font-size: 14px; font-weight: 700;">~${deliveryTime} (через 45 мин)</div>
+          <div style="font-size: 14px; font-weight: 700;">${deliveryTime}</div>
         </div>
       </div>`;
 
