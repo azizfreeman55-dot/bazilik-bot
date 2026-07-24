@@ -872,7 +872,7 @@
       const existingClosedBanner = document.getElementById("orders-closed-banner");
       if (existingClosedBanner) existingClosedBanner.remove();
 
-      // ─── Баннер "Первый заказ — Coca Cola в подарок" ──────────────────
+      // ─── Баннер "Первый заказ — компот в подарок" ─────────────────────
       const existingGiftBanner = document.getElementById("first-order-banner");
       if (existingGiftBanner) existingGiftBanner.remove();
 
@@ -887,8 +887,8 @@
           cursor: pointer;
         `;
         const giftText = CURRENT_LANG === "uz"
-          ? "Birinchi buyurtmangizga Coca‑Cola 0.5 л <b>sovg'a!</b> 🎁"
-          : "На первый заказ Coca‑Cola 0.5 л <b>в подарок!</b> 🎁";
+  ? "Birinchi buyurtmangizga 0,5 l kompot <b>sovg'a!</b> 🎁"
+  : "На первый заказ компот 0,5 л <b>в подарок!</b> 🎁";
         const giftSub = CURRENT_LANG === "uz"
           ? "Buyurtma bering va sovg'angizni oling"
           : "Сделайте заказ и получите подарок";
