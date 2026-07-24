@@ -5,8 +5,9 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from database.db import (
     get_user, get_today_orders_list, get_user_lang, get_pool,
-    cancel_all_orders_for_date
+    cancel_all_orders_for_date, get_delivery_slot
 )
+from config import ADMIN_IDS
 from langs import t
 from keyboards.keyboards import CATEGORY_NAMES, WEBAPP_URL
 
@@ -223,10 +224,18 @@ async def confirm_cancel_full_order(callback: CallbackQuery):
     lang = await get_user_lang(callback.from_user.id)
     tomorrow = get_today_date()
     user = await get_user(callback.from_user.id)
+    cancelled_orders = await get_today_orders_list(
+        callback.from_user.id, tomorrow
+    )
+    delivery_slot = await get_delivery_slot(
+        callback.from_user.id, tomorrow
+    )
 
     refund_amount = await find_total_deduction_for_date(user["id"], tomorrow)
 
-    await cancel_all_orders_for_date(callback.from_user.id, tomorrow)
+    cancelled_count = await cancel_all_orders_for_date(
+        callback.from_user.id, tomorrow
+    )
 
     if refund_amount > 0:
         refund_marker = f"REFUND|{tomorrow}"
@@ -245,6 +254,42 @@ async def confirm_cancel_full_order(callback: CallbackQuery):
         f"{t(lang, 'order_cancelled')}{refund_text}"
     )
     await callback.answer()
+
+    if cancelled_count > 0:
+        grouped = {}
+        for order in cancelled_orders:
+            key = (order["meal_name"], order["price"])
+            grouped[key] = grouped.get(key, 0) + 1
+
+        items_text = "\n".join(
+            f"• {name} × {qty} — {price * qty:,} сум"
+            for (name, price), qty in grouped.items()
+        )
+        cancelled_total = sum(
+            order["price"] for order in cancelled_orders
+        )
+        admin_text = (
+            "❌ КЛИЕНТ ОТМЕНИЛ ЗАКАЗ\n\n"
+            f"👤 {user.get('full_name') or 'Клиент'}\n"
+            f"🏢 {user.get('company_name') or '—'}\n"
+            f"📱 {'+' + user['phone'] if user.get('phone') else '—'}\n"
+            f"📅 Дата доставки: {tomorrow}\n"
+            f"🕐 Время доставки: {delivery_slot or '—'}\n\n"
+            f"📦 Отменённые позиции:\n{items_text}\n\n"
+            f"💰 Сумма: {cancelled_total:,} сум"
+        )
+        if refund_amount > 0:
+            admin_text += (
+                f"\n💳 Возвращено клиенту: {refund_amount:,} сум"
+            )
+
+        for admin_id in ADMIN_IDS:
+            try:
+                await callback.bot.send_message(admin_id, admin_text)
+            except Exception:
+                # Ошибка отправки одному администратору не должна мешать
+                # отмене заказа и уведомлению остальных.
+                pass
 
 
 @router.callback_query(F.data == "back_to_order_summary")
