@@ -1,6 +1,7 @@
 import logging
 import asyncpg
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime, time as datetime_time
+from zoneinfo import ZoneInfo
 from config import DATABASE_URL
 
 logger = logging.getLogger(__name__)
@@ -1835,13 +1836,50 @@ async def toggle_notification(telegram_id: int, notify_type: str) -> bool | None
 
 # ─── Интервалы доставки ─────────────────────────────────────────────────────────
 
-DELIVERY_SLOTS = ["11:00-12:00", "12:00-13:00", "13:00-14:00", "14:00-15:00"]
+DELIVERY_START_MINUTES = 8 * 60
+DELIVERY_END_MINUTES = 16 * 60
+
+
+def is_valid_delivery_time(slot: str) -> bool:
+    """Проверяет точное время доставки в формате HH:MM и диапазоне 08:00–16:00."""
+    if not isinstance(slot, str):
+        return False
+    try:
+        hour_text, minute_text = slot.split(":", 1)
+        hour = int(hour_text)
+        minute = int(minute_text)
+    except (ValueError, AttributeError):
+        return False
+
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return False
+
+    total_minutes = hour * 60 + minute
+    return DELIVERY_START_MINUTES <= total_minutes <= DELIVERY_END_MINUTES
 
 
 async def set_delivery_slot(telegram_id: int, order_date: str, slot: str) -> bool:
-    """Сохраняет выбранный клиентом интервал доставки на дату заказа"""
-    if slot not in DELIVERY_SLOTS:
+    """Сохраняет выбранное клиентом точное время доставки на дату заказа."""
+    if not is_valid_delivery_time(slot):
         return False
+
+    # Для заказа на сегодня сервер тоже проверяет минимальные 60 минут.
+    # Это защищает правило даже при ручном вызове API в обход интерфейса.
+    try:
+        delivery_day = date.fromisoformat(str(order_date))
+        hour, minute = (int(value) for value in slot.split(":", 1))
+        tashkent_tz = ZoneInfo("Asia/Tashkent")
+        now = datetime.now(tashkent_tz)
+        delivery_at = datetime.combine(
+            delivery_day,
+            datetime_time(hour=hour, minute=minute),
+            tzinfo=tashkent_tz
+        )
+        if delivery_day == now.date() and delivery_at < now + timedelta(minutes=60):
+            return False
+    except (ValueError, TypeError):
+        return False
+
     pool = await get_pool()
     async with pool.acquire() as db:
         user = await db.fetchrow("SELECT id FROM users WHERE telegram_id = $1", telegram_id)
