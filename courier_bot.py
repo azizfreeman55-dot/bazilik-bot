@@ -32,7 +32,7 @@ from database.db import (
     create_delivery_route, assign_company_to_courier, get_courier_route,
     admin_cancel_order_item,
     mark_stop_delivered, mark_route_started, mark_route_finished,
-    get_company_clients_telegram_ids, init_db
+    get_company_clients_telegram_ids, get_delivery_slots_for_company, init_db
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -204,7 +204,7 @@ async def show_my_orders(message: Message):
 
     # Курьер работает с актуальными заказами на сегодняшний день.
     # При каждом нажатии кнопки данные заново запрашиваются из БД.
-    delivery_date = get_tomorrow()
+    delivery_date = get_today()
     route_data = await get_courier_route(courier["id"], delivery_date)
 
     if not route_data:
@@ -250,6 +250,9 @@ async def show_stop_detail(callback: CallbackQuery):
     company_id = int(company_id)
 
     orders = await get_company_order_details(company_id, delivery_date)
+    delivery_slots = await get_delivery_slots_for_company(
+        company_id, delivery_date
+    )
 
     if not orders:
         await callback.answer("Заказов не найдено", show_alert=True)
@@ -264,6 +267,7 @@ async def show_stop_detail(callback: CallbackQuery):
             clients[key] = {
                 "name": o["full_name"] or "—",
                 "phone": o.get("phone"),
+                "delivery_slot": delivery_slots.get(o.get("telegram_id")),
                 "items": []
             }
         icon = CATEGORY_ICONS.get(o["category"], "🍽")
@@ -273,6 +277,8 @@ async def show_stop_detail(callback: CallbackQuery):
     for i, info in enumerate(clients.values(), 1):
         phone_line = f" — [+{info['phone']}](tel:+{info['phone']})" if info["phone"] else ""
         text += f"{i}. *{info['name']}*{phone_line}\n"
+        if info.get("delivery_slot"):
+            text += f"   🕐 Доставить к: *{info['delivery_slot']}*\n"
         for item in info["items"]:
             text += f"   {item}\n"
         text += "\n"
@@ -551,7 +557,7 @@ async def show_clients_for_payment(message: Message):
         await message.answer("❌ Вы не зарегистрированы. Напишите /start")
         return
 
-    delivery_date = get_tomorrow()
+    delivery_date = get_today()
     route_data = await get_courier_route(courier["id"], delivery_date)
 
     if not route_data:
@@ -675,7 +681,7 @@ async def show_route(message: Message):
         return
 
     # Показываем текущий маршрут на сегодня.
-    delivery_date = get_tomorrow()
+    delivery_date = get_today()
     route_data = await get_courier_route(courier["id"], delivery_date)
 
     if not route_data:
@@ -838,7 +844,7 @@ async def admin_choose_company_for_edit(message: Message):
         await message.answer("❌ Нет доступа")
         return
 
-    delivery_date = get_tomorrow()
+    delivery_date = get_today()
     companies = await get_orders_by_company(delivery_date)
 
     if not companies:
@@ -1061,9 +1067,9 @@ async def distribute_orders(message: Message):
     if message.from_user.id not in COURIER_ADMIN_IDS:
         return
 
-    # Получаем актуальные заказы на сегодня.
+    # Администратор распределяет актуальные заказы на сегодня.
     # Повторное нажатие кнопки обновит список из БД.
-    delivery_date = get_tomorrow()
+    delivery_date = get_today()
     companies = await get_orders_by_company(delivery_date)
 
     if not companies:
