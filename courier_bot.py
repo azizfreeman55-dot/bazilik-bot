@@ -12,7 +12,8 @@ COURIER_ADMIN_IDS=ваш_telegram_id (через запятую)
 import asyncio
 import logging
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.types import Message, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
@@ -31,6 +32,8 @@ from database.db import (
     get_orders_by_company, get_company_order_details,
     create_delivery_route, assign_company_to_courier, get_courier_route,
     admin_cancel_order_item,
+    get_manual_order_companies, get_manual_order_clients,
+    get_manual_order_menu, admin_create_manual_order,
     mark_stop_delivered, mark_route_started, mark_route_finished,
     get_company_clients_telegram_ids, get_delivery_slots_for_company, init_db
 )
@@ -71,6 +74,16 @@ class AcceptPayment(StatesGroup):
     waiting_amount = State()
 
 
+class ManualOrder(StatesGroup):
+    choosing_company = State()
+    choosing_client = State()
+    choosing_items = State()
+    choosing_quantity = State()
+    choosing_time = State()
+    choosing_payment = State()
+    confirming = State()
+
+
 # ─── Утилиты ──────────────────────────────────────────────────────────────────
 
 def get_today() -> str:
@@ -104,11 +117,60 @@ def admin_main_keyboard() -> ReplyKeyboardMarkup:
     builder.button(text="🗺 Мой маршрут")
     builder.button(text="💰 Принять оплату")
     builder.button(text="🚚 Распределить заказы")
+    builder.button(text="➕ Добавить заказ")
     builder.button(text="🗑 Изменить заказ")
     builder.button(text="👥 Курьеры")
     builder.button(text="📊 Статистика")
     builder.adjust(2)
     return builder.as_markup(resize_keyboard=True)
+
+
+def manual_delivery_times() -> list:
+    """Доступные варианты сегодня: минимум через 60 минут, до 16:00."""
+    tz_tashkent = ZoneInfo("Asia/Tashkent")
+    now = datetime.now(tz_tashkent)
+    opening = now.replace(hour=8, minute=0, second=0, microsecond=0)
+    closing = now.replace(hour=16, minute=0, second=0, microsecond=0)
+    fastest = now + timedelta(minutes=60)
+    fastest = fastest.replace(second=0, microsecond=0)
+    if fastest < opening:
+        fastest = opening
+    if fastest > closing:
+        return []
+
+    result = [(fastest.strftime("%H:%M"), True)]
+    next_minutes = ((fastest.minute // 30) + 1) * 30
+    next_time = fastest.replace(minute=0) + timedelta(minutes=next_minutes)
+    while next_time <= closing:
+        value = next_time.strftime("%H:%M")
+        if value != result[0][0]:
+            result.append((value, False))
+        next_time += timedelta(minutes=30)
+    return result
+
+
+def manual_order_menu_markup(menu_items: list, cart: dict):
+    builder = InlineKeyboardBuilder()
+    for item in menu_items:
+        qty = int(cart.get(str(item["id"]), 0))
+        marker = f" ×{qty} ✅" if qty else ""
+        icon = CATEGORY_ICONS.get(item["category"], "🍽")
+        builder.button(
+            text=(
+                f"{icon} {item['name']} — "
+                f"{item['price']:,} сум{marker}"
+            )[:64],
+            callback_data=f"mo_item_{item['id']}"
+        )
+    if cart:
+        total_qty = sum(int(qty) for qty in cart.values())
+        builder.button(
+            text=f"✅ Продолжить ({total_qty} поз.)",
+            callback_data="mo_checkout"
+        )
+    builder.button(text="❌ Отменить", callback_data="mo_cancel")
+    builder.adjust(1)
+    return builder.as_markup()
 
 
 # ─── Регистрация курьера ───────────────────────────────────────────────────────
@@ -833,6 +895,362 @@ async def finish_route(callback: CallbackQuery):
         "🏁 *Маршрут завершён!*\n\nОтличная работа! Все заказы доставлены. 💪",
         parse_mode="Markdown"
     )
+
+
+# ─── Ручное добавление заказа (только для админа) ─────────────────────────────
+
+@router.message(F.text == "➕ Добавить заказ")
+async def manual_order_start(message: Message, state: FSMContext):
+    if message.from_user.id not in COURIER_ADMIN_IDS:
+        await message.answer("❌ Нет доступа")
+        return
+
+    await state.clear()
+    companies = await get_manual_order_companies()
+    if not companies:
+        await message.answer("❌ Зарегистрированные клиенты не найдены.")
+        return
+
+    builder = InlineKeyboardBuilder()
+    for company in companies:
+        builder.button(
+            text=f"🏢 {company['name']} ({company['client_count']})"[:64],
+            callback_data=f"mo_company_{company['id']}"
+        )
+    builder.button(text="❌ Отменить", callback_data="mo_cancel")
+    builder.adjust(1)
+    await state.set_state(ManualOrder.choosing_company)
+    await message.answer(
+        "➕ Ручное добавление заказа\n\nВыберите компанию клиента:",
+        reply_markup=builder.as_markup()
+    )
+
+
+@router.callback_query(F.data.startswith("mo_company_"))
+async def manual_order_choose_company(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in COURIER_ADMIN_IDS:
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+
+    company_id = int(callback.data.removeprefix("mo_company_"))
+    clients = await get_manual_order_clients(company_id)
+    if not clients:
+        await callback.answer("В компании нет клиентов", show_alert=True)
+        return
+
+    builder = InlineKeyboardBuilder()
+    for client in clients:
+        name = client["full_name"] or "Без имени"
+        phone = f" · {client['phone']}" if client["phone"] else ""
+        builder.button(
+            text=f"👤 {name}{phone}"[:64],
+            callback_data=f"mo_client_{client['id']}"
+        )
+    builder.button(text="❌ Отменить", callback_data="mo_cancel")
+    builder.adjust(1)
+    await state.update_data(company_id=company_id)
+    await state.set_state(ManualOrder.choosing_client)
+    await callback.message.edit_text(
+        "➕ Ручное добавление заказа\n\nВыберите клиента:",
+        reply_markup=builder.as_markup()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("mo_client_"))
+async def manual_order_choose_client(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in COURIER_ADMIN_IDS:
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+
+    user_id = int(callback.data.removeprefix("mo_client_"))
+    data = await state.get_data()
+    clients = await get_manual_order_clients(data.get("company_id"))
+    client = next((item for item in clients if item["id"] == user_id), None)
+    if not client:
+        await callback.answer("Клиент не найден", show_alert=True)
+        return
+
+    order_date = get_today()
+    menu_items = await get_manual_order_menu(order_date)
+    if not menu_items:
+        await callback.answer("Меню на сегодня не заполнено", show_alert=True)
+        return
+
+    await state.update_data(
+        user_id=user_id,
+        client_name=client["full_name"] or "Клиент",
+        client_telegram_id=client["telegram_id"],
+        order_date=order_date,
+        cart={},
+        menu_items=menu_items
+    )
+    await state.set_state(ManualOrder.choosing_items)
+    await callback.message.edit_text(
+        f"👤 Клиент: {client['full_name'] or 'Клиент'}\n\n"
+        "Выберите блюдо:",
+        reply_markup=manual_order_menu_markup(menu_items, {})
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("mo_item_"))
+async def manual_order_choose_item(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in COURIER_ADMIN_IDS:
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+
+    menu_id = int(callback.data.removeprefix("mo_item_"))
+    data = await state.get_data()
+    menu_item = next(
+        (item for item in data.get("menu_items", []) if item["id"] == menu_id),
+        None
+    )
+    if not menu_item:
+        await callback.answer("Блюдо не найдено", show_alert=True)
+        return
+
+    builder = InlineKeyboardBuilder()
+    for qty in range(1, 11):
+        builder.button(
+            text=str(qty),
+            callback_data=f"mo_qty_{qty}"
+        )
+    builder.button(text="⬅️ К меню", callback_data="mo_back_menu")
+    builder.button(text="❌ Отменить", callback_data="mo_cancel")
+    builder.adjust(5, 5, 1, 1)
+    await state.update_data(pending_menu_id=menu_id)
+    await state.set_state(ManualOrder.choosing_quantity)
+    await callback.message.edit_text(
+        f"🍽 {menu_item['name']}\n"
+        f"Цена: {menu_item['price']:,} сум\n\n"
+        "Укажите количество:",
+        reply_markup=builder.as_markup()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("mo_qty_"))
+async def manual_order_choose_quantity(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in COURIER_ADMIN_IDS:
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+
+    qty = int(callback.data.removeprefix("mo_qty_"))
+    data = await state.get_data()
+    menu_id = data.get("pending_menu_id")
+    menu_items = data.get("menu_items", [])
+    menu_item = next(
+        (item for item in menu_items if item["id"] == menu_id),
+        None
+    )
+    if not menu_item:
+        await callback.answer("Блюдо не найдено", show_alert=True)
+        return
+
+    cart = dict(data.get("cart", {}))
+    cart[str(menu_id)] = qty
+    await state.update_data(cart=cart, pending_menu_id=None)
+    await state.set_state(ManualOrder.choosing_items)
+    await callback.message.edit_text(
+        f"✅ Добавлено: {menu_item['name']} × {qty}\n\n"
+        "Можно выбрать другие блюда или продолжить оформление:",
+        reply_markup=manual_order_menu_markup(menu_items, cart)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "mo_back_menu")
+async def manual_order_back_to_menu(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    await state.set_state(ManualOrder.choosing_items)
+    await callback.message.edit_text(
+        "Выберите блюдо:",
+        reply_markup=manual_order_menu_markup(
+            data.get("menu_items", []),
+            data.get("cart", {})
+        )
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "mo_checkout")
+async def manual_order_choose_time(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in COURIER_ADMIN_IDS:
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+
+    data = await state.get_data()
+    if not data.get("cart"):
+        await callback.answer("Сначала выберите блюдо", show_alert=True)
+        return
+
+    times = manual_delivery_times()
+    if not times:
+        await callback.answer(
+            "На сегодня время доставки закончилось (до 16:00)",
+            show_alert=True
+        )
+        return
+
+    builder = InlineKeyboardBuilder()
+    for value, fastest in times:
+        builder.button(
+            text=f"{'⚡ Самое быстрое — ' if fastest else '🕐 '}{value}",
+            callback_data=f"mo_time_{value.replace(':', '')}"
+        )
+    builder.button(text="⬅️ К меню", callback_data="mo_back_menu")
+    builder.button(text="❌ Отменить", callback_data="mo_cancel")
+    builder.adjust(1)
+    await state.set_state(ManualOrder.choosing_time)
+    await callback.message.edit_text(
+        "🕐 Выберите время доставки:",
+        reply_markup=builder.as_markup()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("mo_time_"))
+async def manual_order_choose_payment(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in COURIER_ADMIN_IDS:
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+
+    raw_time = callback.data.removeprefix("mo_time_")
+    if len(raw_time) != 4 or not raw_time.isdigit():
+        await callback.answer("Неверное время", show_alert=True)
+        return
+    delivery_slot = f"{raw_time[:2]}:{raw_time[2:]}"
+    await state.update_data(delivery_slot=delivery_slot)
+    await state.set_state(ManualOrder.choosing_payment)
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text="💵 Наличными", callback_data="mo_pay_cash")
+    builder.button(text="💳 С баланса", callback_data="mo_pay_balance")
+    builder.button(text="❌ Отменить", callback_data="mo_cancel")
+    builder.adjust(1)
+    await callback.message.edit_text(
+        f"🕐 Доставка: {delivery_slot}\n\nВыберите способ оплаты:",
+        reply_markup=builder.as_markup()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("mo_pay_"))
+async def manual_order_confirm_screen(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in COURIER_ADMIN_IDS:
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+
+    payment_method = callback.data.removeprefix("mo_pay_")
+    if payment_method not in ("cash", "balance"):
+        await callback.answer("Неверный способ оплаты", show_alert=True)
+        return
+
+    await state.update_data(payment_method=payment_method)
+    data = await state.get_data()
+    menu_by_id = {
+        str(item["id"]): item for item in data.get("menu_items", [])
+    }
+    lines = []
+    total = 0
+    for menu_id, qty in data.get("cart", {}).items():
+        item = menu_by_id.get(str(menu_id))
+        if not item:
+            continue
+        line_total = item["price"] * int(qty)
+        total += line_total
+        lines.append(f"• {item['name']} × {qty} — {line_total:,} сум")
+
+    payment_text = "Наличными" if payment_method == "cash" else "С баланса"
+    text = (
+        "Проверьте ручной заказ:\n\n"
+        f"👤 {data.get('client_name', 'Клиент')}\n"
+        + "\n".join(lines)
+        + f"\n\n💰 Итого: {total:,} сум"
+        + f"\n🕐 Доставка: {data.get('delivery_slot')}"
+        + f"\n💳 Оплата: {payment_text}"
+    )
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Добавить заказ", callback_data="mo_confirm")
+    builder.button(text="❌ Отменить", callback_data="mo_cancel")
+    builder.adjust(1)
+    await state.set_state(ManualOrder.confirming)
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "mo_confirm")
+async def manual_order_save(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in COURIER_ADMIN_IDS:
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+
+    data = await state.get_data()
+    if data.get("processing"):
+        await callback.answer("Заказ уже добавляется")
+        return
+    await state.update_data(processing=True)
+
+    items = [
+        {"menu_id": int(menu_id), "qty": int(qty)}
+        for menu_id, qty in data.get("cart", {}).items()
+    ]
+    result = await admin_create_manual_order(
+        user_id=data.get("user_id"),
+        items=items,
+        order_date=data.get("order_date", get_today()),
+        delivery_slot=data.get("delivery_slot"),
+        payment_method=data.get("payment_method")
+    )
+    if not result["success"]:
+        await state.update_data(processing=False)
+        await callback.answer(result["error"], show_alert=True)
+        return
+
+    await state.clear()
+    payment_text = (
+        "Наличными" if result["payment_method"] == "cash" else "С баланса"
+    )
+    await callback.message.edit_text(
+        "✅ Заказ добавлен вручную!\n\n"
+        f"👤 {result['full_name']}\n"
+        f"📦 Позиций: {result['positions']}\n"
+        f"💰 Сумма: {result['total']:,} сум\n"
+        f"🕐 Доставка: {result['delivery_slot']}\n"
+        f"💳 Оплата: {payment_text}"
+    )
+    await callback.answer("✅ Заказ добавлен")
+
+    if MAIN_BOT_TOKEN:
+        main_bot = Bot(token=MAIN_BOT_TOKEN)
+        try:
+            items_text = "\n".join(
+                f"• {item['name']} × {item['qty']}"
+                for item in result["items"]
+            )
+            await main_bot.send_message(
+                result["telegram_id"],
+                "✅ Ваш заказ добавлен администратором!\n\n"
+                f"{items_text}\n\n"
+                f"💰 Итого: {result['total']:,} сум\n"
+                f"🕐 Доставка сегодня к {result['delivery_slot']}\n"
+                f"💳 Оплата: {payment_text}"
+            )
+        except Exception as error:
+            logger.warning(
+                "Не удалось уведомить клиента о ручном заказе: %s",
+                error
+            )
+        finally:
+            await main_bot.session.close()
+
+
+@router.callback_query(F.data == "mo_cancel")
+async def manual_order_cancel(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text("❌ Добавление заказа отменено.")
+    await callback.answer()
 
 
 # ─── Распределение заказов (только для админа) ────────────────────────────────
