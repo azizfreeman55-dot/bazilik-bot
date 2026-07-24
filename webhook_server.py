@@ -19,20 +19,15 @@ CLICK_SERVICE_ID = os.getenv("CLICK_SERVICE_ID")
 CLICK_MERCHANT_ID = os.getenv("CLICK_MERCHANT_ID")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Онлайн-режим: заказы принимаются сегодня, доставка через 45 минут.
-# Рабочие часы доставки: с ORDER_OPEN_TIME до ORDER_CLOSE_TIME.
-ORDER_OPEN_TIME  = "07:00"
-ORDER_CLOSE_TIME = "15:00"
-DELIVERY_MINUTES = 45
+# Онлайн-режим: заказы принимаются круглосуточно, доставка через 60 минут.
+DELIVERY_MINUTES = 60
 
 
 def is_orders_open() -> bool:
-    from datetime import datetime
-    now = datetime.now().strftime("%H:%M")
-    return ORDER_OPEN_TIME <= now <= ORDER_CLOSE_TIME
+    return True  # круглосуточно
 
 def get_delivery_time() -> str:
-    """Возвращает ожидаемое время доставки = сейчас + 45 минут (Ташкент UTC+5)"""
+    """Возвращает ожидаемое время доставки = сейчас + 60 минут (Ташкент UTC+5)"""
     from datetime import datetime, timedelta, timezone
     tz_tashkent = timezone(timedelta(hours=5))
     delivery = datetime.now(tz_tashkent) + timedelta(minutes=DELIVERY_MINUTES)
@@ -340,7 +335,7 @@ async def handle_webapp_menu(request):
                 "SELECT total_orders FROM users WHERE id = $1", user_db_id
             ) or 0
 
-            tomorrow = str(date.today() + timedelta(days=1))
+            tomorrow = str(date.today())  # онлайн: сегодня
             day_num = date.fromisoformat(tomorrow).weekday()
 
             # Разовые позиции, которые уже реально существуют в menus на эту дату
@@ -397,7 +392,7 @@ async def handle_webapp_menu(request):
         return web.json_response({
             "categories": categories,
             "balance": balance,
-            "date_label": str(date.today() + timedelta(days=1)),
+            "date_label": str(date.today()),  # онлайн: сегодня
             "orders_open": is_orders_open(),
             "order_close_time": ORDER_CLOSE_TIME,
             "is_first_order": total_orders == 0
@@ -425,11 +420,7 @@ async def handle_webapp_order(request):
             return web.json_response({"success": False, "error": "Корзина пуста"}, headers=cors_headers())
 
         pool = await get_pool()
-        # order_date зависит от режима доставки
-        if delivery_mode == "tomorrow":
-            tomorrow = str(date.today() + timedelta(days=1))
-        else:
-            tomorrow = str(date.today())  # сегодня = онлайн
+        tomorrow = str(date.today())  # онлайн: заказ на сегодня
 
         async with pool.acquire() as db:
             user = await db.fetchrow(
@@ -678,7 +669,7 @@ async def handle_webapp_my_order(request):
             return web.json_response({"error": "Invalid auth"}, status=401, headers=cors_headers())
 
         telegram_id = user_data.get("id")
-        tomorrow = str(date.today() + timedelta(days=1))
+        tomorrow = str(date.today())  # онлайн: сегодня
 
         pool = await get_pool()
         async with pool.acquire() as db:
@@ -723,7 +714,7 @@ async def handle_webapp_my_order(request):
         return web.json_response({
             "items": items,
             "total": total,
-            "date_label": str(date.today() + timedelta(days=1)),
+            "date_label": str(date.today()),  # онлайн: сегодня
             "delivery_slot": slot_row["slot"] if slot_row else None
         }, headers=cors_headers())
     except Exception as e:
@@ -757,7 +748,7 @@ async def handle_webapp_update_order_qty(request):
         if direction not in ("inc", "dec") or not menu_id:
             return web.json_response({"success": False, "error": "Неверные параметры"}, headers=cors_headers())
 
-        tomorrow = str(date.today() + timedelta(days=1))
+        tomorrow = str(date.today())  # онлайн: сегодня
         pool = await get_pool()
         async with pool.acquire() as db:
             user = await db.fetchrow("SELECT id FROM users WHERE telegram_id = $1", telegram_id)
@@ -810,7 +801,7 @@ async def handle_webapp_cancel_order(request):
             return web.json_response({"success": False, "error": "Invalid auth"}, status=401, headers=cors_headers())
 
         telegram_id = user_data.get("id")
-        tomorrow = str(date.today() + timedelta(days=1))
+        tomorrow = str(date.today())  # онлайн: сегодня
 
         pool = await get_pool()
         async with pool.acquire() as db:
@@ -1316,7 +1307,7 @@ async def handle_webapp_set_delivery_slot(request):
         if slot not in DELIVERY_SLOTS:
             return web.json_response({"success": False, "error": "Недопустимый интервал"}, headers=cors_headers())
 
-        tomorrow = str(date.today() + timedelta(days=1))
+        tomorrow = str(date.today())  # онлайн: сегодня
         pool = await get_pool()
         async with pool.acquire() as db:
             user = await db.fetchrow("SELECT id FROM users WHERE telegram_id = $1", telegram_id)
