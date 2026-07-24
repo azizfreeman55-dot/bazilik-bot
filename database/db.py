@@ -1658,6 +1658,57 @@ async def mark_stop_delivered(stop_id: int, note: str = None):
         )
 
 
+async def mark_stop_problem(stop_id: int, note: str) -> dict:
+    """
+    Фиксирует проблему доставки, не отмечая заказ доставленным.
+
+    Позиции заказа не создаются и не меняются. Если маршрут уже был начат,
+    заказы компании возвращаются из in_transit в confirmed, чтобы эту же
+    доставку можно было повторить без добавления новых позиций.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        async with db.transaction():
+            stop = await db.fetchrow(
+                """SELECT ds.id, ds.company_id, ds.route_id,
+                          c.name AS company_name, dr.delivery_date
+                   FROM delivery_stops ds
+                   JOIN companies c ON c.id = ds.company_id
+                   JOIN delivery_routes dr ON dr.id = ds.route_id
+                   WHERE ds.id = $1
+                   FOR UPDATE""",
+                stop_id
+            )
+            if not stop:
+                return {"success": False, "error": "Точка доставки не найдена"}
+
+            await db.execute(
+                """UPDATE delivery_stops
+                   SET status = 'problem',
+                       delivered_at = NULL,
+                       note = $2
+                   WHERE id = $1""",
+                stop_id, note
+            )
+            await db.execute(
+                """UPDATE orders
+                   SET status = 'confirmed', updated_at = NOW()
+                   WHERE order_date = $1::text
+                   AND status = 'in_transit'
+                   AND user_id IN (
+                       SELECT id FROM users WHERE company_id = $2
+                   )""",
+                stop["delivery_date"], stop["company_id"]
+            )
+
+            return {
+                "success": True,
+                "company_id": stop["company_id"],
+                "company_name": stop["company_name"],
+                "delivery_date": stop["delivery_date"]
+            }
+
+
 async def mark_route_started(route_id: int):
     pool = await get_pool()
     async with pool.acquire() as db:
