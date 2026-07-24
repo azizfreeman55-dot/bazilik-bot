@@ -1827,20 +1827,66 @@ async def get_unpaid_clients_for_company(company_id: int, order_date: str) -> li
 # ─── Рейтинг курьера ───────────────────────────────────────────────────────────
 
 async def save_courier_review(courier_id: int, user_id: int, delivery_route_id: int, rating: int) -> bool:
-    """Сохраняет оценку курьера от клиента. Возвращает False если уже оценено."""
+    """
+    Сохраняет оценку курьера от клиента.
+
+    Маршрут мог быть пересоздан после отправки кнопки клиенту. В таком случае
+    старого delivery_route_id уже нет, поэтому сохраняем оценку за курьером
+    без ссылки на удалённый маршрут.
+    """
     pool = await get_pool()
     async with pool.acquire() as db:
-        existing = await db.fetchrow(
-            "SELECT id FROM courier_reviews WHERE user_id = $1 AND delivery_route_id = $2",
-            user_id, delivery_route_id
-        )
-        if existing:
-            return False
-        await db.execute(
-            """INSERT INTO courier_reviews (courier_id, user_id, delivery_route_id, rating)
-               VALUES ($1, $2, $3, $4)""",
-            courier_id, user_id, delivery_route_id, rating
-        )
+        async with db.transaction():
+            # Блокируем запись клиента, чтобы два быстрых нажатия не создали
+            # два одинаковых отзыва.
+            user_exists = await db.fetchval(
+                "SELECT id FROM users WHERE id = $1 FOR UPDATE",
+                user_id
+            )
+            if not user_exists:
+                return False
+
+            courier_exists = await db.fetchval(
+                "SELECT id FROM couriers WHERE id = $1",
+                courier_id
+            )
+            if not courier_exists:
+                return False
+
+            route_exists = await db.fetchval(
+                """SELECT EXISTS(
+                       SELECT 1 FROM delivery_routes
+                       WHERE id = $1 AND courier_id = $2
+                   )""",
+                delivery_route_id, courier_id
+            )
+            route_reference = delivery_route_id if route_exists else None
+
+            if route_reference is not None:
+                existing = await db.fetchrow(
+                    """SELECT id FROM courier_reviews
+                       WHERE user_id = $1 AND delivery_route_id = $2""",
+                    user_id, route_reference
+                )
+            else:
+                existing = await db.fetchrow(
+                    """SELECT id FROM courier_reviews
+                       WHERE user_id = $1
+                       AND courier_id = $2
+                       AND delivery_route_id IS NULL
+                       AND created_at::date = CURRENT_DATE""",
+                    user_id, courier_id
+                )
+
+            if existing:
+                return False
+
+            await db.execute(
+                """INSERT INTO courier_reviews
+                   (courier_id, user_id, delivery_route_id, rating)
+                   VALUES ($1, $2, $3, $4)""",
+                courier_id, user_id, route_reference, rating
+            )
     return True
 
 
