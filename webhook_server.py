@@ -794,7 +794,7 @@ async def handle_webapp_update_order_qty(request):
 
 
 async def handle_webapp_cancel_order(request):
-    """POST /api/cancel-order — отменить весь заказ на завтра"""
+    """POST /api/cancel-order — отменить весь заказ на сегодня"""
     try:
         init_data = await get_init_data_from_request(request)
         user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
@@ -806,9 +806,36 @@ async def handle_webapp_cancel_order(request):
 
         pool = await get_pool()
         async with pool.acquire() as db:
-            user = await db.fetchrow("SELECT id FROM users WHERE telegram_id = $1", telegram_id)
+            user = await db.fetchrow(
+                """SELECT u.id, u.full_name, u.phone,
+                          c.name AS company_name
+                   FROM users u
+                   LEFT JOIN companies c ON c.id = u.company_id
+                   WHERE u.telegram_id = $1""",
+                telegram_id
+            )
             if not user:
                 return web.json_response({"success": False, "error": "User not found"}, status=404, headers=cors_headers())
+
+            cancelled_items = await db.fetch(
+                """SELECT m.name, m.price, COUNT(o.id) AS qty
+                   FROM orders o
+                   JOIN menus m ON m.id = o.menu_id
+                   WHERE o.user_id = $1
+                   AND o.order_date = $2::text
+                   AND o.status = 'pending'
+                   GROUP BY m.id, m.name, m.price
+                   ORDER BY m.name""",
+                user["id"], tomorrow
+            )
+            cancelled_total = sum(
+                item["price"] * item["qty"] for item in cancelled_items
+            )
+            delivery_slot = await db.fetchval(
+                """SELECT slot FROM delivery_slots
+                   WHERE user_id = $1 AND order_date = $2::text""",
+                user["id"], tomorrow
+            )
 
             debit_marker = f"|{tomorrow}"
             refund_marker = f"REFUND|{tomorrow}"
@@ -855,19 +882,56 @@ async def handle_webapp_cancel_order(request):
                 )
 
         if cancelled_count > 0:
+            bot = Bot(token=BOT_TOKEN)
             try:
-                bot = Bot(token=BOT_TOKEN)
                 refund_text = (
                     f"\n💳 +{refund_amount:,} сум возвращено на баланс" if refund_amount > 0 else ""
                 )
-                await bot.send_message(
-                    telegram_id,
-                    f"❌ *Заказ отменён*{refund_text}",
-                    parse_mode="Markdown"
+                try:
+                    await bot.send_message(
+                        telegram_id,
+                        f"❌ *Заказ отменён*{refund_text}",
+                        parse_mode="Markdown"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Не удалось уведомить клиента {telegram_id} об отмене: {e}"
+                    )
+
+                items_text = "\n".join(
+                    f"• {item['name']} × {item['qty']} — "
+                    f"{item['price'] * item['qty']:,} сум"
+                    for item in cancelled_items
                 )
+                admin_text = (
+                    "❌ КЛИЕНТ ОТМЕНИЛ ЗАКАЗ\n\n"
+                    f"👤 {user['full_name'] or 'Клиент'}\n"
+                    f"🏢 {user['company_name'] or '—'}\n"
+                    f"📱 {'+' + user['phone'] if user['phone'] else '—'}\n"
+                    f"📅 Дата доставки: {tomorrow}\n"
+                    f"🕐 Время доставки: {delivery_slot or '—'}\n\n"
+                    f"📦 Отменённые позиции:\n{items_text}\n\n"
+                    f"💰 Сумма: {cancelled_total:,} сум"
+                )
+                if refund_amount > 0:
+                    admin_text += (
+                        f"\n💳 Возвращено клиенту: {refund_amount:,} сум"
+                    )
+
+                admin_ids = [
+                    int(value.strip())
+                    for value in os.getenv("ADMIN_IDS", "").split(",")
+                    if value.strip()
+                ]
+                for admin_id in admin_ids:
+                    try:
+                        await bot.send_message(admin_id, admin_text)
+                    except Exception as e:
+                        logger.warning(
+                            f"Не удалось уведомить админа {admin_id} об отмене: {e}"
+                        )
+            finally:
                 await bot.session.close()
-            except Exception as e:
-                logger.error(f"Cancel notify error: {e}")
 
         return web.json_response({
             "success": True,
