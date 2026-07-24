@@ -607,9 +607,7 @@ async def handle_webapp_order(request):
                     telegram_id, tomorrow
                 )
 
-            delivery_text = f"📅 Доставка завтра, {tomorrow}"
-            if slot_row:
-                delivery_text += f"\n🕐 Время: {slot_row['slot']}"
+            delivery_text = f"🚀 Доставка сегодня к {get_delivery_time()} (~60 мин)"
 
             await bot.send_message(
                 telegram_id,
