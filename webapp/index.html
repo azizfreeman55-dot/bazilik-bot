@@ -863,7 +863,7 @@
       userBalance = data.balance || 0;
       document.getElementById("balance-pill").textContent = fmt(userBalance);
 
-      const dateLabel = data.date_label || (CURRENT_LANG === "uz" ? "ertaga" : "завтра");
+      const dateLabel = data.date_label || (CURRENT_LANG === "uz" ? "bugun" : "сегодня");
       document.getElementById("header-extra").innerHTML =
         `<div class="header-sub-label">${T("menu_for")}</div><div class="header-sub-value">${dateLabel}</div>`;
 
@@ -1061,7 +1061,7 @@
       return;
     }
 
-    showDeliverySlotPicker(items);
+    showPaymentChoice(items);
   }
 
   function showPaymentChoice(items) {
@@ -1351,7 +1351,7 @@
     try {
       const data = await apiCall("/api/my-order");
       if (!data.items || data.items.length === 0) {
-        const dl = data.date_label || (CURRENT_LANG === "uz" ? "ertaga" : "завтра");
+        const dl = data.date_label || (CURRENT_LANG === "uz" ? "bugun" : "сегодня");
         el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">📝</div><div class="empty-state-text">${T("no_order_yet")} ${dl}</div></div>`;
         return;
       }
