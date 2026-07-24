@@ -8,6 +8,7 @@ from .analytics import router as analytics_router
 from .gifts import router as gifts_router
 from .balance import router as balance_router
 from .payment import router as payment_router
+from .reviews import router as reviews_router
 
 
 def register_all_handlers(dp: Dispatcher):
@@ -20,3 +21,4 @@ def register_all_handlers(dp: Dispatcher):
     dp.include_router(gifts_router)
     dp.include_router(balance_router)
     dp.include_router(payment_router)
+    dp.include_router(reviews_router)
