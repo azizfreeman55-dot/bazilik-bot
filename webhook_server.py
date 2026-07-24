@@ -21,6 +21,8 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 
 # Онлайн-режим: заказы принимаются круглосуточно, доставка через 60 минут.
 DELIVERY_MINUTES = 60
+ORDER_OPEN_TIME  = "00:00"  # принимаем заказы круглосуточно
+ORDER_CLOSE_TIME = "23:59"
 
 
 def is_orders_open() -> bool:
