@@ -754,6 +754,194 @@ async def create_order(telegram_id: int, menu_id: int, order_date: str,
     return await get_today_order(telegram_id, order_date)
 
 
+async def get_manual_order_companies() -> list:
+    """Компании, в которых есть зарегистрированные клиенты."""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        rows = await db.fetch(
+            """SELECT c.id, c.name, COUNT(u.id) AS client_count
+               FROM companies c
+               JOIN users u ON u.company_id = c.id
+               GROUP BY c.id, c.name
+               ORDER BY c.name"""
+        )
+        return [dict(row) for row in rows]
+
+
+async def get_manual_order_clients(company_id: int) -> list:
+    """Зарегистрированные клиенты выбранной компании."""
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        rows = await db.fetch(
+            """SELECT id, telegram_id, full_name, phone
+               FROM users
+               WHERE company_id = $1
+               ORDER BY full_name, phone""",
+            company_id
+        )
+        return [dict(row) for row in rows]
+
+
+async def get_manual_order_menu(order_date: str) -> list:
+    """Активное меню на дату для ручного оформления заказа."""
+    categories = ("first", "second", "salad", "dessert", "drink")
+    for category in categories:
+        await get_menu(str(order_date), category)
+
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        rows = await db.fetch(
+            """SELECT id, name, price, category, item_number
+               FROM menus
+               WHERE menu_date = $1::text AND is_active = 1
+               ORDER BY
+                 CASE category
+                   WHEN 'first' THEN 1
+                   WHEN 'second' THEN 2
+                   WHEN 'salad' THEN 3
+                   WHEN 'dessert' THEN 4
+                   WHEN 'drink' THEN 5
+                   ELSE 6
+                 END,
+                 item_number""",
+            str(order_date)
+        )
+        return [dict(row) for row in rows]
+
+
+async def admin_create_manual_order(
+    user_id: int,
+    items: list,
+    order_date: str,
+    delivery_slot: str,
+    payment_method: str
+) -> dict:
+    """
+    Создаёт ручной заказ зарегистрированному клиенту.
+    Количество хранится так же, как в Mini App: одна строка orders на одну штуку.
+    """
+    if payment_method not in ("cash", "balance"):
+        return {"success": False, "error": "Неверный способ оплаты"}
+
+    normalized_items = []
+    for item in items:
+        try:
+            menu_id = int(item["menu_id"])
+            qty = int(item["qty"])
+        except (KeyError, TypeError, ValueError):
+            return {"success": False, "error": "Неверные данные заказа"}
+        if qty < 1 or qty > 50:
+            return {"success": False, "error": "Количество должно быть от 1 до 50"}
+        normalized_items.append({"menu_id": menu_id, "qty": qty})
+
+    if not normalized_items:
+        return {"success": False, "error": "В заказе нет позиций"}
+
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        async with db.transaction():
+            user = await db.fetchrow(
+                """SELECT id, telegram_id, full_name, company_id,
+                          total_orders, streak_days, last_order_date,
+                          last_streak_bonus
+                   FROM users
+                   WHERE id = $1
+                   FOR UPDATE""",
+                user_id
+            )
+            if not user:
+                return {"success": False, "error": "Клиент не найден"}
+            if not user["company_id"]:
+                return {
+                    "success": False,
+                    "error": "У клиента не указана компания"
+                }
+
+            requested_ids = [item["menu_id"] for item in normalized_items]
+            menu_rows = await db.fetch(
+                """SELECT id, name, price
+                   FROM menus
+                   WHERE id = ANY($1::int[])
+                   AND menu_date = $2::text
+                   AND is_active = 1""",
+                requested_ids, str(order_date)
+            )
+            menu_by_id = {row["id"]: row for row in menu_rows}
+            if len(menu_by_id) != len(set(requested_ids)):
+                return {
+                    "success": False,
+                    "error": "Одно из выбранных блюд больше недоступно"
+                }
+
+            order_lines = []
+            total_amount = 0
+            positions_created = 0
+            for item in normalized_items:
+                menu = menu_by_id[item["menu_id"]]
+                for _ in range(item["qty"]):
+                    await db.execute(
+                        """INSERT INTO orders
+                           (user_id, menu_id, order_date, status, payment_method)
+                           VALUES ($1, $2, $3::text, 'pending', $4)""",
+                        user_id, menu["id"], str(order_date), payment_method
+                    )
+                positions_created += item["qty"]
+                total_amount += menu["price"] * item["qty"]
+                order_lines.append({
+                    "name": menu["name"],
+                    "qty": item["qty"],
+                    "price": menu["price"]
+                })
+
+            await db.execute(
+                """INSERT INTO delivery_slots (user_id, order_date, slot)
+                   VALUES ($1, $2::text, $3)
+                   ON CONFLICT (user_id, order_date)
+                   DO UPDATE SET slot = EXCLUDED.slot""",
+                user_id, str(order_date), delivery_slot
+            )
+
+            today = date.today()
+            today_str = str(today)
+            yesterday_str = str(today - timedelta(days=1))
+            current_streak = user["streak_days"] or 0
+            if user["last_order_date"] == yesterday_str:
+                new_streak = current_streak + 1
+            elif user["last_order_date"] == today_str:
+                new_streak = current_streak
+            else:
+                new_streak = 1
+
+            new_total_orders = (user["total_orders"] or 0) + 1
+            await db.execute(
+                """UPDATE users
+                   SET total_orders = $1,
+                       points = points + 5,
+                       last_order_date = $2,
+                       streak_days = $3
+                   WHERE id = $4""",
+                new_total_orders, today_str, new_streak, user_id
+            )
+            await db.execute(
+                """UPDATE companies
+                   SET total_orders = total_orders + 1
+                   WHERE id = $1""",
+                user["company_id"]
+            )
+
+    await update_user_status(user_id, new_total_orders)
+    return {
+        "success": True,
+        "telegram_id": user["telegram_id"],
+        "full_name": user["full_name"] or "Клиент",
+        "items": order_lines,
+        "positions": positions_created,
+        "total": total_amount,
+        "delivery_slot": delivery_slot,
+        "payment_method": payment_method
+    }
+
+
 async def cancel_order(telegram_id: int, order_date: str) -> bool:
     pool = await get_pool()
     async with pool.acquire() as db:
