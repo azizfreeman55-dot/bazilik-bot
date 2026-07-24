@@ -754,9 +754,9 @@ async def admin_summary(callback: CallbackQuery):
     text += (
         f"📦 Всего блюд: *{summary.get('total', 0)}*\n"
         f"👥 Клиентов: *{summary.get('clients', 0)}*\n\n"
-        f"✅ Доставлено: *{summary.get('delivered', 0)}*\n"
-        f"🚚 В пути: *{summary.get('in_transit', 0)}*\n"
-        f"⏳ Ожидают доставки: *{summary.get('waiting', 0)}*"
+        f"✅ Доставлено клиентам: *{summary.get('delivered', 0)}*\n"
+        f"🚚 В пути к клиентам: *{summary.get('in_transit', 0)}*\n"
+        f"⏳ Ожидают доставку: *{summary.get('waiting', 0)}*"
     )
 
     await callback.answer()
@@ -850,4 +850,3 @@ async def back_admin(callback: CallbackQuery):
         reply_markup=admin_keyboard()
     )
     await callback.answer()
-
