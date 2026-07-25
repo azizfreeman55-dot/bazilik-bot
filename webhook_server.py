@@ -581,8 +581,8 @@ async def handle_webapp_order(request):
             else:
                 deducted = False
 
+        bot = Bot(token=BOT_TOKEN)
         try:
-            bot = Bot(token=BOT_TOKEN)
             items_text = "\n".join(f"• {s}" for s in order_summaries)
 
             payment_labels = {
@@ -610,19 +610,25 @@ async def handle_webapp_order(request):
             selected_slot = slot_row["slot"] if slot_row else get_delivery_time()
             delivery_text = f"🚀 Доставка сегодня к {selected_slot}"
 
-            await bot.send_message(
-                telegram_id,
-                f"✅ *Заказ оформлен через Mini App!*\n\n{items_text}{balance_text}{streak_text}\n\n"
-                f"{delivery_text}",
-                parse_mode="Markdown"
-            )
+            # Ошибка отправки сообщения клиенту не должна блокировать
+            # уведомление администраторов о новом заказе.
+            try:
+                await bot.send_message(
+                    telegram_id,
+                    f"✅ *Заказ оформлен через Mini App!*\n\n{items_text}{balance_text}{streak_text}\n\n"
+                    f"{delivery_text}",
+                    parse_mode="Markdown"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Не удалось уведомить клиента {telegram_id} о заказе: {e}"
+                )
 
-            # Если это первый заказ клиента — уведомляем всех администраторов
-            if is_first_order:
-                admin_ids = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
+            # Уведомляем администраторов о КАЖДОМ оформленном заказе.
+            # Для первого заказа добавляем напоминание про подарок.
+            if orders_created > 0:
                 try:
-                    user_info = await get_pool()
-                    async with user_info.acquire() as info_db:
+                    async with pool.acquire() as info_db:
                         client = await info_db.fetchrow(
                             """SELECT u.full_name, u.phone, c.name as company_name
                                FROM users u
@@ -634,26 +640,46 @@ async def handle_webapp_order(request):
                     company_name = client["company_name"] if client and client["company_name"] else "—"
                     phone = f"+{client['phone']}" if client and client["phone"] else "—"
 
+                    title = (
+                        "🎁 ПЕРВЫЙ ЗАКАЗ НОВОГО КЛИЕНТА"
+                        if is_first_order
+                        else "🆕 НОВЫЙ ЗАКАЗ"
+                    )
                     admin_text = (
-                        f"🎁 *Первый заказ нового клиента!*\n\n"
+                        f"{title}\n\n"
                         f"👤 {client_name}\n"
                         f"🏢 {company_name}\n"
-                        f"📱 {phone}\n\n"
-                        f"📦 Заказ: {items_text.strip()}\n"
-                        f"{delivery_text}\n\n"
-                        f"🥤 *Не забудьте положить Coca‑Cola 0.5 л в подарок!*"
+                        f"📱 {phone}\n"
+                        f"📅 Дата доставки: {tomorrow}\n"
+                        f"🕐 Время: {selected_slot}\n\n"
+                        f"📦 Позиции:\n{items_text.strip()}\n\n"
+                        f"💰 Сумма: {total_amount:,} сум\n"
+                        f"{payment_labels.get(payment_method, payment_labels['balance'])}"
                     )
+                    if is_first_order:
+                        admin_text += (
+                            "\n\n🥤 Не забудьте положить компот 0,5 л в подарок!"
+                        )
+
+                    admin_ids = [
+                        int(value.strip())
+                        for value in os.getenv("ADMIN_IDS", "").split(",")
+                        if value.strip()
+                    ]
                     for admin_id in admin_ids:
                         try:
-                            await bot.send_message(admin_id, admin_text, parse_mode="Markdown")
+                            await bot.send_message(admin_id, admin_text)
                         except Exception as e:
-                            logger.warning(f"Не удалось уведомить админа {admin_id}: {e}")
+                            logger.warning(
+                                f"Не удалось уведомить админа {admin_id} "
+                                f"о новом заказе: {e}"
+                            )
                 except Exception as e:
-                    logger.error(f"First order admin notify error: {e}")
-
-            await bot.session.close()
+                    logger.error(f"New order admin notify error: {e}")
         except Exception as e:
             logger.error(f"Order notify error: {e}")
+        finally:
+            await bot.session.close()
 
         return web.json_response({"success": True}, headers=cors_headers())
     except Exception as e:
@@ -2066,3 +2092,4 @@ if __name__ == "__main__":
     app = loop.run_until_complete(create_app())
     logger.info(f"🚀 Webhook server starting on port {port}")
     web.run_app(app, host="0.0.0.0", port=port)
+
