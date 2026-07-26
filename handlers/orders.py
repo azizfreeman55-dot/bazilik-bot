@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, WebAppInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -12,14 +13,28 @@ from langs import t
 from keyboards.keyboards import CATEGORY_NAMES, WEBAPP_URL
 
 router = Router()
+TASHKENT_TZ = ZoneInfo("Asia/Tashkent")
 
 
 def is_orders_open() -> bool:
-    return True  # круглосуточно
+    """Заказы принимаются ежедневно, кроме воскресенья (время Ташкента)."""
+    return datetime.now(TASHKENT_TZ).weekday() != 6
+
+
+def orders_closed_text(lang: str) -> str:
+    if lang == "uz":
+        return (
+            "😌 *Bugun dam olish kuni.*\n\n"
+            "Buyurtmalar dushanbadan shanbagacha qabul qilinadi."
+        )
+    return (
+        "😌 *Сегодня выходной.*\n\n"
+        "Заказы принимаются с понедельника по субботу."
+    )
 
 
 def get_today_date() -> str:
-    return str(date.today())
+    return str(datetime.now(TASHKENT_TZ).date())
 
 
 def get_day_name(date_str: str) -> str:
@@ -115,7 +130,7 @@ async def order_lunch(message: Message):
         return
 
     if not is_orders_open():
-        await message.answer(t(lang, "orders_closed"), parse_mode="Markdown")
+        await message.answer(orders_closed_text(lang), parse_mode="Markdown")
         return
 
     tomorrow = get_today_date()
@@ -181,7 +196,11 @@ async def my_order(message: Message):
     orders = await get_today_orders_list(message.from_user.id, tomorrow)
 
     if not orders:
-        text = f"{t(lang, 'no_order')}\n\n*{t(lang, 'btn_order')}*" if is_orders_open() else t(lang, "orders_closed")
+        text = (
+            f"{t(lang, 'no_order')}\n\n*{t(lang, 'btn_order')}*"
+            if is_orders_open()
+            else orders_closed_text(lang)
+        )
         await message.answer(text, parse_mode="Markdown")
         return
 
@@ -197,9 +216,6 @@ async def my_order(message: Message):
 @router.callback_query(F.data == "cancel_full_order")
 async def ask_cancel_full_order(callback: CallbackQuery):
     lang = await get_user_lang(callback.from_user.id)
-    if not is_orders_open():
-        await callback.answer(t(lang, "orders_closed")[:200], show_alert=True)
-        return
 
     builder = InlineKeyboardBuilder()
     builder.button(
