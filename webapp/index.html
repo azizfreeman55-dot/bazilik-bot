@@ -563,6 +563,8 @@
       loading_stats: "Загружаем статистику…", loading_autoorder: "Загружаем автозаказ…",
       empty_category: "В этой категории пока пусто", empty_menu: "Меню на эту дату ещё не добавлено",
       add: "+ Добавить", checkout: "Оформить заказ", sending: "Отправляем…",
+      day_off: "Выходной",
+      sunday_closed: "Сегодня выходной. Заказы принимаются с понедельника по субботу.",
       positions_count: ["позиция", "позиции", "позиций"],
       order_total: "Итого", change_order: "Изменить заказ", cancel_order: "Отменить весь заказ",
       add_more_items: "➕ Добавить ещё блюда",
@@ -641,6 +643,8 @@
       loading_stats: "Statistika yuklanmoqda…", loading_autoorder: "Avtobuyurtma yuklanmoqda…",
       empty_category: "Bu kategoriyada hozircha bo'sh", empty_menu: "Bu sanaga menyu hali qo'shilmagan",
       add: "+ Qo'shish", checkout: "Buyurtma berish", sending: "Yuborilmoqda…",
+      day_off: "Dam olish kuni",
+      sunday_closed: "Bugun dam olish kuni. Buyurtmalar dushanbadan shanbagacha qabul qilinadi.",
       positions_count: ["pozitsiya", "pozitsiya", "pozitsiya"],
       order_total: "Jami", change_order: "Buyurtmani o'zgartirish", cancel_order: "Hammasini bekor qilish",
       add_more_items: "➕ Yana taom qo'shish",
@@ -861,6 +865,7 @@
       }
 
       MENU = data.categories || {};
+      ordersOpen = data.orders_open !== false;
       userBalance = data.balance || 0;
       document.getElementById("balance-pill").textContent = fmt(userBalance);
 
@@ -872,11 +877,32 @@
       const existingClosedBanner = document.getElementById("orders-closed-banner");
       if (existingClosedBanner) existingClosedBanner.remove();
 
+      if (!ordersOpen) {
+        cart = {};
+        renderCart();
+        const closedBanner = document.createElement("div");
+        closedBanner.id = "orders-closed-banner";
+        closedBanner.style.cssText = `
+          margin: 0 0 8px;
+          background: #FFF1E8;
+          border: 1px solid #F2C6AA;
+          border-radius: 16px;
+          padding: 14px 16px;
+          color: var(--ink);
+          font-size: 14px;
+          line-height: 1.45;
+          font-weight: 600;
+        `;
+        closedBanner.textContent = `😌 ${T("sunday_closed")}`;
+        const header = document.querySelector(".header");
+        if (header) header.after(closedBanner);
+      }
+
       // ─── Баннер "Первый заказ — компот в подарок" ─────────────────────
       const existingGiftBanner = document.getElementById("first-order-banner");
       if (existingGiftBanner) existingGiftBanner.remove();
 
-      if (data.is_first_order) {
+      if (data.is_first_order && ordersOpen) {
         const giftBanner = document.createElement("div");
         giftBanner.id = "first-order-banner";
         giftBanner.style.cssText = `
@@ -887,8 +913,8 @@
           cursor: pointer;
         `;
         const giftText = CURRENT_LANG === "uz"
-  ? "Birinchi buyurtmangizga 0,5 l kompot <b>sovg'a!</b> 🎁"
-  : "На первый заказ компот 0,5 л <b>в подарок!</b> 🎁";
+          ? "Birinchi buyurtmangizga 0,5 l kompot <b>sovg'a!</b> 🎁"
+          : "На первый заказ компот 0,5 л <b>в подарок!</b> 🎁";
         const giftSub = CURRENT_LANG === "uz"
           ? "Buyurtma bering va sovg'angizni oling"
           : "Сделайте заказ и получите подарок";
@@ -998,6 +1024,10 @@
 
   function renderStepper(item, qty) {
     const el = document.getElementById(`stepper-${item.id}`);
+    if (!ordersOpen) {
+      el.innerHTML = `<button class="step-plus add" disabled style="opacity:0.55;cursor:not-allowed;">${T("day_off")}</button>`;
+      return;
+    }
     if (qty === 0) {
       el.innerHTML = `<button class="step-plus add" data-id="${item.id}">${T("add")}</button>`;
     } else {
@@ -1013,6 +1043,10 @@
   }
 
   function handleStep(item, action) {
+    if (!ordersOpen) {
+      if (tg?.showAlert) tg.showAlert(T("sunday_closed")); else showToast(T("sunday_closed"));
+      return;
+    }
     if (!cart[item.id]) cart[item.id] = { item, qty: 0, category: currentCat };
     if (action === "inc") {
       cart[item.id].qty += 1;
@@ -1031,7 +1065,7 @@
     let count = 0, total = 0;
     Object.values(cart).forEach(c => { count += c.qty; total += c.qty * c.item.price; });
     const bar = document.getElementById("cart-bar");
-    if (count === 0 || currentPage !== "menu") { bar.classList.remove("visible"); return; }
+    if (!ordersOpen || count === 0 || currentPage !== "menu") { bar.classList.remove("visible"); return; }
     bar.classList.add("visible");
     document.getElementById("cart-count").textContent = `${count} ${pluralWord(count, "positions_count")}`;
     document.getElementById("cart-total").textContent = fmt(total);
@@ -1049,6 +1083,10 @@
   }
 
   function submitOrder() {
+    if (!ordersOpen) {
+      if (tg?.showAlert) tg.showAlert(T("sunday_closed")); else showToast(T("sunday_closed"));
+      return;
+    }
     const items = Object.values(cart).map(c => ({ menu_id: c.item.id, qty: c.qty, category: c.category }));
     if (items.length === 0) return;
 
@@ -1401,7 +1439,7 @@
         document.getElementById("cart-action").innerHTML = `${T("checkout")} <span>→</span>`;
         switchPage("order");
       } else {
-        showToast(result.error || T("order_error"));
+        showToast(result.error_code === "sunday_closed" ? T("sunday_closed") : (result.error || T("order_error")));
         document.getElementById("cart-action").innerHTML = `${T("checkout")} <span>→</span>`;
       }
     } catch (e) {
