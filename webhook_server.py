@@ -4,7 +4,8 @@ import hmac
 import json
 import logging
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from aiohttp import web
 from aiogram import Bot
@@ -19,14 +20,24 @@ CLICK_SERVICE_ID = os.getenv("CLICK_SERVICE_ID")
 CLICK_MERCHANT_ID = os.getenv("CLICK_MERCHANT_ID")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Онлайн-режим: заказы принимаются круглосуточно, доставка через 60 минут.
+# Онлайн-режим: заказы принимаются круглосуточно с понедельника по субботу.
+# Воскресенье — выходной. Доставка через 60 минут.
 DELIVERY_MINUTES = 60
 ORDER_OPEN_TIME  = "00:00"  # принимаем заказы круглосуточно
 ORDER_CLOSE_TIME = "23:59"
+TASHKENT_TZ = ZoneInfo("Asia/Tashkent")
 
 
 def is_orders_open() -> bool:
-    return True  # круглосуточно
+    return datetime.now(TASHKENT_TZ).weekday() != 6
+
+
+def sunday_closed_response():
+    return {
+        "success": False,
+        "error_code": "sunday_closed",
+        "error": "Сегодня выходной. Заказы принимаются с понедельника по субботу."
+    }
 
 def get_delivery_time() -> str:
     """Возвращает ожидаемое время доставки = сейчас + 60 минут (Ташкент UTC+5)"""
@@ -396,6 +407,7 @@ async def handle_webapp_menu(request):
             "balance": balance,
             "date_label": str(date.today()),  # онлайн: сегодня
             "orders_open": is_orders_open(),
+            "orders_closed_reason": "sunday" if not is_orders_open() else None,
             "order_close_time": ORDER_CLOSE_TIME,
             "is_first_order": total_orders == 0
         }, headers=cors_headers())
@@ -416,6 +428,8 @@ async def handle_webapp_order(request):
         if not user_data:
             return web.json_response({"success": False, "error": "Invalid auth"}, status=401, headers=cors_headers())
 
+        if not is_orders_open():
+            return web.json_response(sunday_closed_response(), headers=cors_headers())
 
         telegram_id = user_data.get("id")
         if not items:
@@ -767,10 +781,7 @@ async def handle_webapp_update_order_qty(request):
         direction = body.get("direction")  # "inc" | "dec"
 
         if direction == "inc" and not is_orders_open():
-            return web.json_response({
-                "success": False,
-                "error": f"Изменение заказа доступно с {ORDER_OPEN_TIME} до {ORDER_CLOSE_TIME}."
-            }, headers=cors_headers())
+            return web.json_response(sunday_closed_response(), headers=cors_headers())
 
         if direction not in ("inc", "dec") or not menu_id:
             return web.json_response({"success": False, "error": "Неверные параметры"}, headers=cors_headers())
@@ -1429,6 +1440,9 @@ async def handle_webapp_set_delivery_slot(request):
         user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
         if not user_data:
             return web.json_response({"success": False, "error": "Invalid auth"}, status=401, headers=cors_headers())
+
+        if not is_orders_open():
+            return web.json_response(sunday_closed_response(), headers=cors_headers())
 
         telegram_id = user_data.get("id")
         body = await request.json()
