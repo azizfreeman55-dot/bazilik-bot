@@ -888,7 +888,7 @@
           border: 1px solid #F2C6AA;
           border-radius: 16px;
           padding: 14px 16px;
-          color: var(--ink);
+          color: #1C1C1C;
           font-size: 14px;
           line-height: 1.45;
           font-weight: 600;
@@ -902,7 +902,9 @@
       const existingGiftBanner = document.getElementById("first-order-banner");
       if (existingGiftBanner) existingGiftBanner.remove();
 
-      if (data.is_first_order && ordersOpen) {
+      // Подарок за первый заказ показываем всегда, в том числе в воскресенье.
+      // Баннер выходного отдельно сообщает, что оформить заказ можно с понедельника.
+      if (data.is_first_order) {
         const giftBanner = document.createElement("div");
         giftBanner.id = "first-order-banner";
         giftBanner.style.cssText = `
