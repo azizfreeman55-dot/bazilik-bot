@@ -18,6 +18,7 @@ from config import ADMIN_IDS
 router = Router()
 
 CATEGORIES = {
+    "breakfast": {"ru": "🌅 Завтраки",      "uz": "🌅 Nonushtalar"},
     "first":   {"ru": "🍲 Первые блюда",   "uz": "🍲 Birinchi taomlar"},
     "main":    {"ru": "🍛 Вторые блюда",   "uz": "🍛 Ikkinchi taomlar"},
     "second":  {"ru": "🍱 Сеты",            "uz": "🍱 Setlar"},
@@ -25,6 +26,9 @@ CATEGORIES = {
     "dessert": {"ru": "🍰 Десерты",          "uz": "🍰 Desertlar"},
     "drink":   {"ru": "🥤 Напитки",          "uz": "🥤 Ichimliklar"},
 }
+
+# Категории, скрытые из управления меню, но сохранённые в базе.
+HIDDEN_ADMIN_CATEGORIES = {"main"}  # «Вторые блюда»
 
 DAYS_RU = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
 DAYS_SHORT = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
@@ -70,8 +74,8 @@ async def admin_menu_home(callback: CallbackQuery):
         cats = info["categories"]
         if cats:
             icons = ""
+            if "breakfast" in cats: icons += "🌅"
             if "first" in cats: icons += "🍲"
-            if "main" in cats: icons += "🍛"
             if "second" in cats: icons += "🍱"
             if "salad" in cats: icons += "🥗"
             if "dessert" in cats: icons += "🍰"
@@ -113,6 +117,7 @@ async def menu_day_detail(callback: CallbackQuery):
         rows = await db.fetch(
             """SELECT category, COUNT(*) as cnt FROM weekly_menu
                WHERE day_of_week = $1 AND is_active = 1
+               AND category != 'main'
                GROUP BY category""",
             day_num
         )
@@ -121,6 +126,8 @@ async def menu_day_detail(callback: CallbackQuery):
     text = f"📅 *{day_name}*\n\n"
     builder = InlineKeyboardBuilder()
     for key, names in CATEGORIES.items():
+        if key in HIDDEN_ADMIN_CATEGORIES:
+            continue
         cnt = filled_cats.get(key)
         if cnt:
             text += f"✅ {names['ru']}: {cnt} позиций\n"
@@ -131,6 +138,7 @@ async def menu_day_detail(callback: CallbackQuery):
     builder.adjust(1)
 
     if filled_cats:
+        builder.button(text="📋 Скопировать на все дни", callback_data=f"menycopyall_{day_num}")
         builder.button(text="🗑 Очистить весь день", callback_data=f"menyclear_{day_num}")
     builder.button(text="◀️ Назад к дням", callback_data="admin_add_menu")
     builder.adjust(1, 1, 1, 1, 1, 1)
@@ -139,12 +147,100 @@ async def menu_day_detail(callback: CallbackQuery):
     await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=builder.as_markup())
 
 
+@router.callback_query(F.data.startswith("menycopyall_"))
+async def menu_copy_to_all_days(callback: CallbackQuery):
+    """Копирует меню одного дня на все остальные 6 дней недели"""
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+
+    src_day = int(callback.data.replace("menycopyall_", ""))
+    src_day_name = DAYS_RU[src_day]
+
+    # Подтверждение — чтобы не скопировать случайно
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Да, скопировать на все 7 дней", callback_data=f"menycopyconfirm_{src_day}")
+    builder.button(text="◀️ Отмена", callback_data=f"menuday_{src_day}")
+    builder.adjust(1)
+
+    await callback.answer()
+    await callback.message.edit_text(
+        f"📋 Скопировать меню *{src_day_name}* на все остальные дни недели?\n\n"
+        f"⚠️ Существующее меню в других днях будет *заменено*.",
+        parse_mode="Markdown",
+        reply_markup=builder.as_markup()
+    )
+
+
+@router.callback_query(F.data.startswith("menycopyconfirm_"))
+async def menu_copy_confirm(callback: CallbackQuery):
+    """Выполняет копирование меню на все дни"""
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+
+    src_day = int(callback.data.replace("menycopyconfirm_", ""))
+
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        # Берём все позиции исходного дня
+        src_items = await db.fetch(
+            """SELECT item_number, name, description, price, photo_id, category
+               FROM weekly_menu WHERE day_of_week = $1 AND is_active = 1
+               AND category != 'main'
+               ORDER BY category, item_number""",
+            src_day
+        )
+
+        if not src_items:
+            await callback.answer("⚠️ Исходный день пустой!", show_alert=True)
+            return
+
+        copied_days = 0
+        for target_day in range(7):
+            if target_day == src_day:
+                continue
+            # Удаляем старое меню целевого дня
+            await db.execute(
+                """DELETE FROM weekly_menu
+                   WHERE day_of_week = $1 AND category != 'main'""",
+                target_day
+            )
+            # Копируем позиции
+            for item in src_items:
+                await db.execute(
+                    """INSERT INTO weekly_menu
+                       (day_of_week, item_number, name, description, price, photo_id, category)
+                       VALUES ($1, $2, $3, $4, $5, $6, $7)""",
+                    target_day, item["item_number"], item["name"],
+                    item["description"] or "", item["price"],
+                    item["photo_id"], item["category"]
+                )
+            copied_days += 1
+
+    src_day_name = DAYS_RU[src_day]
+    await callback.answer(f"✅ Скопировано на {copied_days} дней!", show_alert=True)
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text="◀️ К управлению меню", callback_data="admin_add_menu")
+    await callback.message.edit_text(
+        f"✅ *Готово!*\n\n"
+        f"Меню *{src_day_name}* скопировано на все остальные {copied_days} дней недели.\n\n"
+        f"Теперь у вас одинаковое меню на каждый день.",
+        parse_mode="Markdown",
+        reply_markup=builder.as_markup()
+    )
+
+
 @router.callback_query(F.data.startswith("menylist_"))
 async def menu_category_list(callback: CallbackQuery):
     """Показывает список отдельных позиций категории — можно отредактировать каждую точечно"""
     parts = callback.data.replace("menylist_", "").split("_")
     day_num = int(parts[0])
     category = parts[1]
+    if category in HIDDEN_ADMIN_CATEGORIES:
+        await callback.answer("Категория скрыта", show_alert=True)
+        return
     day_name = DAYS_RU[day_num]
     cat_name = CATEGORIES[category]["ru"]
 
@@ -343,6 +439,9 @@ async def menu_add_one_item(callback: CallbackQuery, state: FSMContext):
     parts = callback.data.replace("menyaddone_", "").split("_")
     day_num = int(parts[0])
     category = parts[1]
+    if category in HIDDEN_ADMIN_CATEGORIES:
+        await callback.answer("Категория скрыта", show_alert=True)
+        return
 
     pool = await get_pool()
     async with pool.acquire() as db:
@@ -374,6 +473,9 @@ async def menu_day_edit_category(callback: CallbackQuery, state: FSMContext):
     parts = callback.data.replace("menyedit_", "").split("_")
     day_num = int(parts[0])
     category = parts[1]
+    if category in HIDDEN_ADMIN_CATEGORIES:
+        await callback.answer("Категория скрыта", show_alert=True)
+        return
     day_name = DAYS_RU[day_num]
     cat_name = CATEGORIES[category]["ru"]
 
@@ -605,6 +707,8 @@ async def menu_special_date_category(callback: CallbackQuery, state: FSMContext)
 
     builder = InlineKeyboardBuilder()
     for key, names in CATEGORIES.items():
+        if key in HIDDEN_ADMIN_CATEGORIES:
+            continue
         builder.button(text=names["ru"], callback_data=f"menu_cat_{key}")
     builder.adjust(2)
 
@@ -619,6 +723,9 @@ async def menu_special_date_category(callback: CallbackQuery, state: FSMContext)
 @router.callback_query(F.data.startswith("menu_cat_"), AddMenu.waiting_category)
 async def admin_category_selected(callback: CallbackQuery, state: FSMContext):
     category = callback.data.replace("menu_cat_", "")
+    if category in HIDDEN_ADMIN_CATEGORIES:
+        await callback.answer("Категория скрыта", show_alert=True)
+        return
     cat_name = CATEGORIES.get(category, {}).get("ru", category)
     await state.update_data(category=category, items=[], item_number=1)
     await state.set_state(AddMenu.waiting_photo)
@@ -637,19 +744,22 @@ async def admin_summary(callback: CallbackQuery):
         await callback.answer("❌ Нет доступа", show_alert=True)
         return
 
-    tomorrow = str(date.today() + timedelta(days=1))
-    summary = await get_daily_summary(tomorrow)
+    # Получаем сегодняшнюю дату
+    today = str(date.today())
+    summary = await get_daily_summary(today)
 
     if not summary["items"]:
         await callback.answer()
         await callback.message.edit_text(
-            f"📊 Сводка на {tomorrow}\n\nЗаказов пока нет",
+            f"📊 Сводка на сегодня — {today}\n\nЗаказов пока нет",
             reply_markup=admin_keyboard()
         )
         return
 
-    text = f"📊 *Сводка заказов на {tomorrow}:*\n\n"
+    text = f"📊 *Сводка заказов на сегодня — {today}:*\n\n"
+
     by_category = {}
+
     for item in summary["items"]:
         cat = item.get("category", "second")
         by_category.setdefault(cat, []).append(item)
@@ -657,15 +767,25 @@ async def admin_summary(callback: CallbackQuery):
     for cat, items in by_category.items():
         cat_name = CATEGORIES.get(cat, {}).get("ru", cat)
         text += f"*{cat_name}:*\n"
+
         for item in items:
             text += f"  • {item['name']}: *{item['count']} шт.*\n"
+
         text += "\n"
 
-    text += f"📦 Всего: *{summary['total']} позиций*"
+    text += (
+        f"📦 Всего блюд: *{summary.get('total', 0)}*\n"
+        f"👥 Клиентов: *{summary.get('clients', 0)}*\n\n"
+        f"✅ Доставлено клиентам: *{summary.get('delivered', 0)}*\n"
+        f"🚚 В пути к клиентам: *{summary.get('in_transit', 0)}*\n"
+        f"⏳ Ожидают доставку: *{summary.get('waiting', 0)}*"
+    )
 
     await callback.answer()
     await callback.message.edit_text(
-        text, parse_mode="Markdown", reply_markup=admin_keyboard()
+        text,
+        parse_mode="Markdown",
+        reply_markup=admin_keyboard()
     )
 
 

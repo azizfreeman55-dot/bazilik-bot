@@ -4,8 +4,7 @@ import hmac
 import json
 import logging
 import os
-from datetime import date, datetime, timedelta
-from zoneinfo import ZoneInfo
+from datetime import date, timedelta
 
 from aiohttp import web
 from aiogram import Bot
@@ -20,24 +19,18 @@ CLICK_SERVICE_ID = os.getenv("CLICK_SERVICE_ID")
 CLICK_MERCHANT_ID = os.getenv("CLICK_MERCHANT_ID")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Онлайн-режим: заказы принимаются круглосуточно с понедельника по субботу.
-# Воскресенье — выходной. Доставка через 60 минут.
+# Онлайн-режим: заказы принимаются круглосуточно, доставка через 60 минут.
 DELIVERY_MINUTES = 60
 ORDER_OPEN_TIME  = "00:00"  # принимаем заказы круглосуточно
 ORDER_CLOSE_TIME = "23:59"
-TASHKENT_TZ = ZoneInfo("Asia/Tashkent")
+
+# Категории, скрытые только от клиентов. Данные и управление в админ-панели
+# сохраняются, поэтому категорию можно будет вернуть без восстановления базы.
+HIDDEN_CLIENT_CATEGORIES = {"main"}  # «Вторые блюда»
 
 
 def is_orders_open() -> bool:
-    return datetime.now(TASHKENT_TZ).weekday() != 6
-
-
-def sunday_closed_response():
-    return {
-        "success": False,
-        "error_code": "sunday_closed",
-        "error": "Сегодня выходной. Заказы принимаются с понедельника по субботу."
-    }
+    return True  # круглосуточно
 
 def get_delivery_time() -> str:
     """Возвращает ожидаемое время доставки = сейчас + 60 минут (Ташкент UTC+5)"""
@@ -357,6 +350,7 @@ async def handle_webapp_menu(request):
             menu_rows = await db.fetch(
                 """SELECT id, item_number, name, price, photo_id, category
                    FROM menus WHERE menu_date = $1::text AND is_active = 1
+                   AND category != 'main'
                    ORDER BY category, item_number""",
                 tomorrow
             )
@@ -371,11 +365,12 @@ async def handle_webapp_menu(request):
             weekly_rows = await db.fetch(
                 """SELECT item_number, name, price, photo_id, category
                    FROM weekly_menu WHERE day_of_week = $1 AND is_active = 1
+                   AND category != 'main'
                    ORDER BY category, item_number""",
                 day_num
             )
 
-            categories = {"breakfast": [], "first": [], "main": [], "second": [], "salad": [], "dessert": [], "drink": []}
+            categories = {"breakfast": [], "first": [], "second": [], "salad": [], "dessert": [], "drink": []}
 
             if weekly_rows:
                 for row in weekly_rows:
@@ -407,7 +402,6 @@ async def handle_webapp_menu(request):
             "balance": balance,
             "date_label": str(date.today()),  # онлайн: сегодня
             "orders_open": is_orders_open(),
-            "orders_closed_reason": "sunday" if not is_orders_open() else None,
             "order_close_time": ORDER_CLOSE_TIME,
             "is_first_order": total_orders == 0
         }, headers=cors_headers())
@@ -428,8 +422,6 @@ async def handle_webapp_order(request):
         if not user_data:
             return web.json_response({"success": False, "error": "Invalid auth"}, status=401, headers=cors_headers())
 
-        if not is_orders_open():
-            return web.json_response(sunday_closed_response(), headers=cors_headers())
 
         telegram_id = user_data.get("id")
         if not items:
@@ -462,14 +454,30 @@ async def handle_webapp_order(request):
                 qty = entry.get("qty", 1)
                 if isinstance(menu_id, str) and menu_id.startswith("weekly_"):
                     _, day_num, item_number, cat = menu_id.split("_")
+                    if cat in HIDDEN_CLIENT_CATEGORIES:
+                        return web.json_response({
+                            "success": False,
+                            "error": "Категория «Вторые блюда» временно недоступна."
+                        }, headers=cors_headers())
                     price_row = await db.fetchrow(
-                        "SELECT price FROM weekly_menu WHERE day_of_week = $1 AND item_number = $2 AND category = $3",
+                        """SELECT price FROM weekly_menu
+                           WHERE day_of_week = $1 AND item_number = $2
+                           AND category = $3 AND category != 'main'
+                           AND is_active = 1""",
                         int(day_num), int(item_number), cat
                     )
                 else:
-                    price_row = await db.fetchrow("SELECT price FROM menus WHERE id = $1", int(menu_id))
-                if price_row:
-                    precheck_total += price_row["price"] * qty
+                    price_row = await db.fetchrow(
+                        """SELECT price FROM menus
+                           WHERE id = $1 AND category != 'main' AND is_active = 1""",
+                        int(menu_id)
+                    )
+                if not price_row:
+                    return web.json_response({
+                        "success": False,
+                        "error": "Одна из позиций больше недоступна. Обновите меню."
+                    }, headers=cors_headers())
+                precheck_total += price_row["price"] * qty
 
             if precheck_total < MIN_ORDER_AMOUNT:
                 remaining_needed = MIN_ORDER_AMOUNT - precheck_total
@@ -487,7 +495,9 @@ async def handle_webapp_order(request):
                     menu_item = await db.fetchrow(
                         """SELECT item_number, name, price, photo_id, category
                            FROM weekly_menu
-                           WHERE day_of_week = $1 AND item_number = $2 AND category = $3""",
+                           WHERE day_of_week = $1 AND item_number = $2
+                           AND category = $3 AND category != 'main'
+                           AND is_active = 1""",
                         int(day_num), int(item_number), cat
                     )
                     if not menu_item:
@@ -505,7 +515,9 @@ async def handle_webapp_order(request):
                     item_price = real_row["price"]
                 else:
                     menu_item = await db.fetchrow(
-                        "SELECT id, name, price FROM menus WHERE id = $1", int(menu_id)
+                        """SELECT id, name, price FROM menus
+                           WHERE id = $1 AND category != 'main' AND is_active = 1""",
+                        int(menu_id)
                     )
                     if not menu_item:
                         continue
@@ -781,7 +793,10 @@ async def handle_webapp_update_order_qty(request):
         direction = body.get("direction")  # "inc" | "dec"
 
         if direction == "inc" and not is_orders_open():
-            return web.json_response(sunday_closed_response(), headers=cors_headers())
+            return web.json_response({
+                "success": False,
+                "error": f"Изменение заказа доступно с {ORDER_OPEN_TIME} до {ORDER_CLOSE_TIME}."
+            }, headers=cors_headers())
 
         if direction not in ("inc", "dec") or not menu_id:
             return web.json_response({"success": False, "error": "Неверные параметры"}, headers=cors_headers())
@@ -805,6 +820,16 @@ async def handle_webapp_update_order_qty(request):
                 return web.json_response({"success": False, "error": "Заказ уже подтверждён, изменение недоступно"}, headers=cors_headers())
 
             if direction == "inc":
+                allowed_item = await db.fetchval(
+                    """SELECT 1 FROM menus
+                       WHERE id = $1 AND category != 'main' AND is_active = 1""",
+                    int(menu_id)
+                )
+                if not allowed_item:
+                    return web.json_response({
+                        "success": False,
+                        "error": "Эта позиция больше недоступна."
+                    }, headers=cors_headers())
                 payment_method = existing[0]["payment_method"] if existing else "balance"
                 await db.execute(
                     """INSERT INTO orders (user_id, menu_id, order_date, status, payment_method)
@@ -1266,7 +1291,8 @@ async def handle_webapp_autoorder_get(request):
 
             weekly_rows = await db.fetch(
                 """SELECT day_of_week, menu_item, category FROM weekly_orders
-                   WHERE user_id = $1 AND is_active = 1""",
+                   WHERE user_id = $1 AND is_active = 1
+                   AND category != 'main'""",
                 user["id"]
             )
 
@@ -1279,7 +1305,9 @@ async def handle_webapp_autoorder_get(request):
 
                 dish = await db.fetchrow(
                     """SELECT name, price FROM weekly_menu
-                       WHERE day_of_week = $1 AND item_number = $2 AND category = $3""",
+                       WHERE day_of_week = $1 AND item_number = $2
+                       AND category = $3 AND category != 'main'
+                       AND is_active = 1""",
                     day_num, item_number, category
                 )
                 if not dish:
@@ -1440,9 +1468,6 @@ async def handle_webapp_set_delivery_slot(request):
         user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
         if not user_data:
             return web.json_response({"success": False, "error": "Invalid auth"}, status=401, headers=cors_headers())
-
-        if not is_orders_open():
-            return web.json_response(sunday_closed_response(), headers=cors_headers())
 
         telegram_id = user_data.get("id")
         body = await request.json()
@@ -1731,6 +1756,7 @@ async def handle_webapp_weekly_menu_for_day(request):
             rows = await db.fetch(
                 """SELECT id, item_number, name, price, category, photo_id FROM menus
                    WHERE menu_date = $1::text AND is_active = 1
+                   AND category != 'main'
                    ORDER BY category, item_number""",
                 target_date
             )
@@ -1739,6 +1765,7 @@ async def handle_webapp_weekly_menu_for_day(request):
                 rows = await db.fetch(
                     """SELECT item_number, name, price, category, photo_id FROM weekly_menu
                        WHERE day_of_week = $1 AND is_active = 1
+                       AND category != 'main'
                        ORDER BY category, item_number""",
                     day_num
                 )
@@ -1770,6 +1797,11 @@ async def handle_webapp_settings_set_weekly(request):
         day_of_week = body.get("day_of_week")
         item_number = body.get("item_number")
         category = body.get("category", "second")
+        if category in HIDDEN_CLIENT_CATEGORIES:
+            return web.json_response({
+                "success": False,
+                "error": "Категория «Вторые блюда» временно недоступна."
+            }, headers=cors_headers())
 
         pool = await get_pool()
         async with pool.acquire() as db:
@@ -2106,4 +2138,3 @@ if __name__ == "__main__":
     app = loop.run_until_complete(create_app())
     logger.info(f"🚀 Webhook server starting on port {port}")
     web.run_app(app, host="0.0.0.0", port=port)
-
