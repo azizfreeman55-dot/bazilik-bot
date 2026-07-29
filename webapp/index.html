@@ -570,7 +570,7 @@
       cancelled_refund: "Отменено", payment_method_title: "Способ оплаты", to_pay: "К оплате",
       pay_balance: "С баланса", pay_cash: "Наличными при получении", pay_click: "Click",
       pay_balance_desc: "Доступно", pay_balance_insufficient: "Недостаточно средств (есть",
-      pay_cash_desc: "Оплатите курьеру наличными", pay_click_desc: "Пополнить баланс и оплатить сразу",
+      pay_cash_desc: "Оплатите курьеру наличными", pay_click_desc: "Оплатить и оформить заказ автоматически",
       cancel: "Отмена", where_are_you: "Где вы сейчас находитесь?",
       location_hint: "Это поможет курьеру точно найти вас при доставке. Локация обновит адрес доставки для всей компании.",
       share_location: "📍 Указать на карте", skip_location: "Пропустить, использовать прошлую локацию",
@@ -580,7 +580,7 @@
       location_gps_off: "Включите GPS (местоположение) на телефоне, чтобы отправить точную локацию. Заказ оформлен с прошлой локацией компании.",
       order_placed: "✅ Заказ оформлен!", insufficient_balance_cod: "Недостаточно баланса — оплата при получении",
       connection_error: "Ошибка соединения", order_error: "Ошибка оформления заказа",
-      opening_click: "Открываем Click для оплаты…", click_return_hint: "После оплаты в Click вернитесь сюда и нажмите 'Оформить заказ' ещё раз — баланс обновится автоматически.",
+      opening_click: "Открываем Click для оплаты…", click_return_hint: "После успешной оплаты заказ оформится автоматически. Повторно нажимать «Оформить заказ» не нужно.",
       cant_create_link: "Не удалось создать ссылку на оплату",
       delivered_status_cooking: "Готовится", delivered_status_transit: "В пути", delivered_status_done: "Доставлен",
       your_balance: "Ваш баланс", topup_via_click: "🔵 Пополнить через Click",
@@ -648,7 +648,7 @@
       cancelled_refund: "Bekor qilindi", payment_method_title: "To'lov usuli", to_pay: "To'lov uchun",
       pay_balance: "Hisobdan", pay_cash: "Yetkazib berishda naqd", pay_click: "Click",
       pay_balance_desc: "Mavjud", pay_balance_insufficient: "Mablag' yetarli emas (mavjud",
-      pay_cash_desc: "Kuryerga naqd to'lang", pay_click_desc: "Hisobni to'ldirib darhol to'lash",
+      pay_cash_desc: "Kuryerga naqd to'lang", pay_click_desc: "To'lash va buyurtmani avtomatik rasmiylashtirish",
       cancel: "Bekor qilish", where_are_you: "Hozir qayerdasiz?",
       location_hint: "Bu kuryerga sizni topishda yordam beradi. Joylashuv kompaniyaning yetkazib berish manzilini yangilaydi.",
       share_location: "📍 Xaritada belgilash", skip_location: "O'tkazib yuborish, oldingi joylashuvdan foydalanish",
@@ -658,7 +658,7 @@
       location_gps_off: "Aniq joylashuvni yuborish uchun telefonda GPS'ni yoqing. Buyurtma avvalgi kompaniya joylashuvi bilan rasmiylashtirildi.",
       order_placed: "✅ Buyurtma rasmiylashtirildi!", insufficient_balance_cod: "Hisobda mablag' yetarli emas — yetkazib berishda to'lov",
       connection_error: "Aloqa xatosi", order_error: "Buyurtmani rasmiylashtirishda xatolik",
-      opening_click: "Click ochilmoqda…", click_return_hint: "To'lovdan keyin bu yerga qaytib, 'Buyurtma berish' tugmasini yana bosing — hisob avtomatik yangilanadi.",
+      opening_click: "Click ochilmoqda…", click_return_hint: "Muvaffaqiyatli to'lovdan keyin buyurtma avtomatik rasmiylashtiriladi. Tugmani qayta bosish shart emas.",
       cant_create_link: "To'lov havolasini yaratib bo'lmadi",
       delivered_status_cooking: "Tayyorlanmoqda", delivered_status_transit: "Yo'lda", delivered_status_done: "Yetkazildi",
       your_balance: "Hisobingiz", topup_via_click: "🔵 Click orqali to'ldirish",
@@ -1447,11 +1447,21 @@
     showToast(T("opening_click"));
     try {
       const neededAmount = total - userBalance;
-      const result = await apiCall("/api/topup", { amount: neededAmount > 0 ? neededAmount : total });
+      const result = await apiCall("/api/topup", {
+        amount: neededAmount > 0 ? neededAmount : total,
+        order: {
+          items,
+          order_date: activeOrderDate,
+          delivery_slot: selectedDeliverySlot
+        }
+      });
+      if (result.balance_sufficient) {
+        await finalizeOrder(items, "balance");
+        return;
+      }
       if (result.click_link) {
-        // Сохраняем заказ "в ожидании" — он будет создан после успешного пополнения.
-        // Простой надёжный способ: открываем Click, просим пользователя вернуться
-        // в Mini App и нажать "Оформить" повторно — баланс уже обновится.
+        // Корзина уже сохранена на сервере. После callback Complete
+        // сервер сам создаст заказ и отправит уведомления.
         if (tg?.openLink) {
           tg.openLink(result.click_link);
         } else {
@@ -1464,6 +1474,7 @@
         }
       } else {
         showToast(result.error || T("cant_create_link"));
+        if (result.date_changed) await loadMenu();
       }
     } catch (e) {
       showToast(T("connection_error"));
