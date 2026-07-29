@@ -4,6 +4,7 @@ import hmac
 import json
 import logging
 import os
+import secrets
 from datetime import date, datetime, timedelta, timezone
 
 from aiohttp import web
@@ -105,33 +106,44 @@ async def get_pool():
 async def add_balance(user_db_id: int, amount: int, description: str, click_trans_id: str):
     pool = await get_pool()
     async with pool.acquire() as db:
-        existing = await db.fetchrow(
-            "SELECT id FROM balance_transactions WHERE description LIKE $1",
-            f"%click_trans:{click_trans_id}%"
-        )
-        if existing:
-            logger.warning(f"Duplicate click_trans_id={click_trans_id}, skipping")
-            return False
+        async with db.transaction():
+            # Click может отправить Complete повторно или одновременно. Advisory
+            # lock не позволяет дважды зачислить один и тот же платёж.
+            await db.execute(
+                "SELECT pg_advisory_xact_lock(hashtext($1))",
+                str(click_trans_id)
+            )
+            existing = await db.fetchrow(
+                "SELECT id FROM balance_transactions WHERE description LIKE $1",
+                f"%click_trans:{click_trans_id}"
+            )
+            if existing:
+                logger.warning(
+                    f"Duplicate click_trans_id={click_trans_id}, skipping"
+                )
+                return False
 
-        await db.execute(
-            """INSERT INTO user_balance (user_id, balance)
-               VALUES ($1, $2)
-               ON CONFLICT (user_id) DO UPDATE SET balance = user_balance.balance + $2,
-               updated_at = CURRENT_TIMESTAMP""",
-            user_db_id, amount
-        )
-        await db.execute(
-            """INSERT INTO balance_transactions (user_id, amount, type, description)
-               VALUES ($1, $2, 'credit', $3)""",
-            user_db_id, amount,
-            f"{description} | click_trans:{click_trans_id}"
-        )
+            await db.execute(
+                """INSERT INTO user_balance (user_id, balance)
+                   VALUES ($1, $2)
+                   ON CONFLICT (user_id) DO UPDATE
+                   SET balance = user_balance.balance + $2,
+                       updated_at = CURRENT_TIMESTAMP""",
+                user_db_id, amount
+            )
+            await db.execute(
+                """INSERT INTO balance_transactions
+                   (user_id, amount, type, description)
+                   VALUES ($1, $2, 'credit', $3)""",
+                user_db_id, amount,
+                f"{description} | click_trans:{click_trans_id}"
+            )
     return True
 
 
 async def notify_user(telegram_id: int, amount: int, lang: str = "ru"):
+    bot = Bot(token=BOT_TOKEN)
     try:
-        bot = Bot(token=BOT_TOKEN)
         # В системе используются lang='uz_latin' / 'uz_cyrillic' (см. langs.py),
         # а не просто 'uz'. Проверяем по префиксу, чтобы не дублировать рассинхрон
         # с функцией t() в langs.py, где простое 'uz' не существует как ключ
@@ -149,9 +161,80 @@ async def notify_user(telegram_id: int, amount: int, lang: str = "ru"):
                 f"Спасибо за оплату через Click! 🎉"
             )
         await bot.send_message(telegram_id, text, parse_mode="Markdown")
-        await bot.session.close()
     except Exception as e:
         logger.error(f"Notify error for telegram_id={telegram_id}: {e}")
+    finally:
+        await bot.session.close()
+
+
+def get_admin_ids():
+    return [
+        int(value.strip())
+        for value in os.getenv("ADMIN_IDS", "").split(",")
+        if value.strip()
+    ]
+
+
+async def ensure_pending_click_orders_table(db):
+    """Хранит корзину до подтверждения оплаты со стороны Click."""
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS pending_click_orders (
+            id BIGSERIAL PRIMARY KEY,
+            merchant_trans_id TEXT NOT NULL UNIQUE,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            order_date TEXT NOT NULL,
+            delivery_slot TEXT NOT NULL,
+            items_json JSONB NOT NULL,
+            total_amount BIGINT NOT NULL,
+            topup_amount BIGINT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'awaiting_payment',
+            click_trans_id TEXT UNIQUE,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            completed_at TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
+
+async def notify_admins_click_payment(
+    *,
+    telegram_id,
+    full_name,
+    phone,
+    company_name,
+    amount,
+    click_trans_id,
+    order_date=None,
+    order_total=None,
+):
+    """Отдельное уведомление администраторам о поступлении денег через Click."""
+    text = (
+        "💳 ОПЛАТА ЧЕРЕЗ CLICK\n\n"
+        f"👤 {full_name or 'Клиент'}\n"
+        f"🏢 {company_name or '—'}\n"
+        f"📱 {'+' + phone if phone else '—'}\n"
+        f"🆔 Telegram ID: {telegram_id}\n\n"
+        f"💰 Поступило: {amount:,} сум\n"
+        f"🔢 Click transaction: {click_trans_id}"
+    )
+    if order_date:
+        text += f"\n📅 Дата заказа: {order_date}"
+    if order_total is not None:
+        text += f"\n📦 Сумма заказа: {order_total:,} сум"
+
+    bot = Bot(token=BOT_TOKEN)
+    try:
+        for admin_id in get_admin_ids():
+            try:
+                await bot.send_message(admin_id, text)
+            except Exception as e:
+                logger.warning(
+                    f"Не удалось уведомить админа {admin_id} об оплате Click: {e}"
+                )
+    finally:
+        await bot.session.close()
 
 
 WEBHOOK_BASE_URL = "https://bazilik-webhook.onrender.com"
@@ -230,8 +313,31 @@ async def handle_click_prepare(request):
             return web.json_response({"error": -1, "error_note": "SIGN CHECK FAILED!"})
 
         parts = str(merchant_trans_id).split("_")
-        if len(parts) < 3 or parts[0] != "balance":
+        if len(parts) < 3 or parts[0] not in ("balance", "clickorder"):
             return web.json_response({"error": -5, "error_note": "User does not exist"})
+
+        if parts[0] == "clickorder":
+            pool = await get_pool()
+            async with pool.acquire() as db:
+                await ensure_pending_click_orders_table(db)
+                pending = await db.fetchrow(
+                    """SELECT topup_amount, status
+                       FROM pending_click_orders
+                       WHERE merchant_trans_id = $1""",
+                    merchant_trans_id
+                )
+            if not pending:
+                return web.json_response(
+                    {"error": -5, "error_note": "Order does not exist"}
+                )
+            if pending["status"] not in ("awaiting_payment", "completed"):
+                return web.json_response(
+                    {"error": -9, "error_note": "Order is not payable"}
+                )
+            if int(float(amount_raw)) != int(pending["topup_amount"]):
+                return web.json_response(
+                    {"error": -2, "error_note": "Incorrect amount"}
+                )
 
         # merchant_prepare_id должен быть ЧИСЛОМ (уникальный ID этой подготовки
         # платежа в нашей системе), а не строкой merchant_trans_id.
@@ -251,6 +357,234 @@ async def handle_click_prepare(request):
     except Exception as e:
         logger.error(f"[PREPARE] Exception: {e}")
         return web.json_response({"error": -9, "error_note": str(e)})
+
+
+async def complete_pending_click_order(merchant_trans_id, click_trans_id, amount_sum):
+    """
+    Атомарно зачисляет Click-платёж и создаёт сохранённый до оплаты заказ.
+    Повторный callback Click возвращает тот же результат без дублей.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        await ensure_pending_click_orders_table(db)
+        async with db.transaction():
+            pending = await db.fetchrow(
+                """SELECT * FROM pending_click_orders
+                   WHERE merchant_trans_id = $1
+                   FOR UPDATE""",
+                merchant_trans_id
+            )
+            if not pending:
+                return {"success": False, "error": -5, "error_note": "Order does not exist"}
+
+            if pending["status"] == "completed":
+                return {"success": True, "duplicate": True}
+            if pending["status"] != "awaiting_payment":
+                return {"success": False, "error": -9, "error_note": "Order is not payable"}
+            if int(pending["topup_amount"]) != int(amount_sum):
+                return {"success": False, "error": -2, "error_note": "Incorrect amount"}
+
+            existing_payment = await db.fetchrow(
+                """SELECT id FROM balance_transactions
+                   WHERE description LIKE $1""",
+                f"%click_trans:{click_trans_id}"
+            )
+            if existing_payment:
+                return {"success": False, "error": -4, "error_note": "Already paid"}
+
+            user = await db.fetchrow(
+                """SELECT u.id, u.telegram_id, u.lang, u.full_name, u.phone,
+                          u.company_id, u.total_orders, u.streak_days,
+                          u.last_order_date, u.last_streak_bonus,
+                          c.name AS company_name
+                   FROM users u
+                   LEFT JOIN companies c ON c.id = u.company_id
+                   WHERE u.id = $1
+                   FOR UPDATE OF u""",
+                pending["user_id"]
+            )
+            if not user:
+                return {"success": False, "error": -5, "error_note": "User does not exist"}
+
+            raw_items = pending["items_json"]
+            items = json.loads(raw_items) if isinstance(raw_items, str) else raw_items
+            if not isinstance(items, list) or not items:
+                return {"success": False, "error": -9, "error_note": "Saved order is empty"}
+
+            await db.execute(
+                """INSERT INTO user_balance (user_id, balance)
+                   VALUES ($1, $2)
+                   ON CONFLICT (user_id) DO UPDATE
+                   SET balance = user_balance.balance + $2,
+                       updated_at = CURRENT_TIMESTAMP""",
+                user["id"], amount_sum
+            )
+            await db.execute(
+                """INSERT INTO balance_transactions (user_id, amount, type, description)
+                   VALUES ($1, $2, 'credit', $3)""",
+                user["id"], amount_sum,
+                f"Оплата заказа через Click | click_trans:{click_trans_id}"
+            )
+
+            positions_created = 0
+            for item in items:
+                qty = int(item["qty"])
+                for _ in range(qty):
+                    await db.execute(
+                        """INSERT INTO orders
+                           (user_id, menu_id, order_date, status, payment_method)
+                           VALUES ($1, $2, $3::text, 'pending', 'balance')""",
+                        user["id"], int(item["menu_id"]), pending["order_date"]
+                    )
+                    positions_created += 1
+
+            if positions_created == 0:
+                raise RuntimeError("Saved Click order has no positions")
+
+            today_local = tashkent_now().date()
+            today_str = today_local.isoformat()
+            yesterday_str = (today_local - timedelta(days=1)).isoformat()
+            current_streak = user["streak_days"] or 0
+            if user["last_order_date"] == yesterday_str:
+                new_streak = current_streak + 1
+            elif user["last_order_date"] == today_str:
+                new_streak = current_streak
+            else:
+                new_streak = 1
+
+            await db.execute(
+                """UPDATE users
+                   SET total_orders = total_orders + 1,
+                       points = points + 5,
+                       last_order_date = $1,
+                       streak_days = $2
+                   WHERE id = $3""",
+                today_str, new_streak, user["id"]
+            )
+            if user["company_id"]:
+                await db.execute(
+                    "UPDATE companies SET total_orders = total_orders + 1 WHERE id = $1",
+                    user["company_id"]
+                )
+
+            streak_bonus = None
+            milestone_points = {5: 15, 10: 30, 20: 60, 50: 150}
+            last_bonus = user["last_streak_bonus"] or 0
+            for milestone in (5, 10, 20, 50):
+                if new_streak >= milestone and last_bonus < milestone:
+                    bonus = milestone_points[milestone]
+                    await db.execute(
+                        """UPDATE users
+                           SET points = points + $1, last_streak_bonus = $2
+                           WHERE id = $3""",
+                        bonus, milestone, user["id"]
+                    )
+                    streak_bonus = {"milestone": milestone, "points": bonus}
+                    break
+
+            await db.execute(
+                """UPDATE pending_click_orders
+                   SET status = 'completed',
+                       click_trans_id = $1,
+                       completed_at = CURRENT_TIMESTAMP,
+                       updated_at = CURRENT_TIMESTAMP
+                   WHERE id = $2""",
+                str(click_trans_id), pending["id"]
+            )
+
+            return {
+                "success": True,
+                "duplicate": False,
+                "telegram_id": user["telegram_id"],
+                "lang": user["lang"] or "ru",
+                "full_name": user["full_name"] or "Клиент",
+                "phone": user["phone"],
+                "company_name": user["company_name"] or "—",
+                "order_date": pending["order_date"],
+                "delivery_slot": pending["delivery_slot"],
+                "items": items,
+                "total_amount": int(pending["total_amount"]),
+                "topup_amount": int(pending["topup_amount"]),
+                "is_first_order": (user["total_orders"] or 0) == 0,
+                "streak_bonus": streak_bonus,
+            }
+
+
+async def notify_completed_click_order(result, click_trans_id):
+    """Уведомляет клиента и админов и об оплате, и о созданном заказе."""
+    if result.get("duplicate"):
+        return
+
+    items_text = "\n".join(
+        f"• {item['name']} x{item['qty']}" for item in result["items"]
+    )
+    delivery_day = (
+        "завтра"
+        if is_tomorrow_order(result["order_date"])
+        else "сегодня"
+    )
+
+    bot = Bot(token=BOT_TOKEN)
+    try:
+        client_text = (
+            "✅ *Оплата через Click принята!*\n\n"
+            f"💰 Поступило: *{result['topup_amount']:,} сум*\n"
+            "📦 Заказ оформлен автоматически:\n"
+            f"{items_text}\n\n"
+            f"🚀 Доставка {delivery_day} к {result['delivery_slot']}"
+        )
+        try:
+            await bot.send_message(
+                result["telegram_id"], client_text, parse_mode="Markdown"
+            )
+        except Exception as e:
+            logger.warning(
+                f"Не удалось уведомить клиента {result['telegram_id']} "
+                f"о Click-заказе: {e}"
+            )
+
+        title = (
+            "🎁 ПЕРВЫЙ ЗАКАЗ НОВОГО КЛИЕНТА"
+            if result["is_first_order"]
+            else "🆕 НОВЫЙ ЗАКАЗ"
+        )
+        admin_order_text = (
+            f"{title}\n\n"
+            f"👤 {result['full_name']}\n"
+            f"🏢 {result['company_name']}\n"
+            f"📱 {'+' + result['phone'] if result['phone'] else '—'}\n"
+            f"📅 Дата доставки: {result['order_date']}\n"
+            f"🕐 Время: {result['delivery_slot']}\n\n"
+            f"📦 Позиции:\n{items_text}\n\n"
+            f"💰 Сумма заказа: {result['total_amount']:,} сум\n"
+            f"💳 Оплачено через Click: {result['topup_amount']:,} сум"
+        )
+        if result["is_first_order"]:
+            admin_order_text += (
+                "\n\n🥤 Не забудьте положить компот 0,5 л в подарок!"
+            )
+
+        for admin_id in get_admin_ids():
+            try:
+                await bot.send_message(admin_id, admin_order_text)
+            except Exception as e:
+                logger.warning(
+                    f"Не удалось уведомить админа {admin_id} "
+                    f"о Click-заказе: {e}"
+                )
+    finally:
+        await bot.session.close()
+
+    await notify_admins_click_payment(
+        telegram_id=result["telegram_id"],
+        full_name=result["full_name"],
+        phone=result["phone"],
+        company_name=result["company_name"],
+        amount=result["topup_amount"],
+        click_trans_id=click_trans_id,
+        order_date=result["order_date"],
+        order_total=result["total_amount"],
+    )
 
 
 async def handle_click_complete(request):
@@ -280,6 +614,24 @@ async def handle_click_complete(request):
             return web.json_response({"error": -1, "error_note": "SIGN CHECK FAILED!"})
 
         if error < 0:
+            if str(merchant_trans_id).startswith("clickorder_"):
+                try:
+                    pool = await get_pool()
+                    async with pool.acquire() as db:
+                        await ensure_pending_click_orders_table(db)
+                        await db.execute(
+                            """UPDATE pending_click_orders
+                               SET status = 'cancelled',
+                                   updated_at = CURRENT_TIMESTAMP
+                               WHERE merchant_trans_id = $1
+                               AND status = 'awaiting_payment'""",
+                            merchant_trans_id
+                        )
+                except Exception as cancel_error:
+                    logger.error(
+                        f"[COMPLETE] Could not mark Click order cancelled: "
+                        f"{cancel_error}"
+                    )
             return web.json_response({
                 "click_trans_id": int(click_trans_id),
                 "merchant_trans_id": merchant_trans_id,
@@ -298,12 +650,44 @@ async def handle_click_complete(request):
                     pool = await get_pool()
                     async with pool.acquire() as db:
                         row = await db.fetchrow(
-                            "SELECT telegram_id, lang FROM users WHERE id = $1", user_db_id
+                            """SELECT u.telegram_id, u.lang, u.full_name, u.phone,
+                                      c.name AS company_name
+                               FROM users u
+                               LEFT JOIN companies c ON c.id = u.company_id
+                               WHERE u.id = $1""",
+                            user_db_id
                         )
                     if row:
                         await notify_user(row["telegram_id"], amount_sum, row.get("lang", "ru"))
+                        await notify_admins_click_payment(
+                            telegram_id=row["telegram_id"],
+                            full_name=row["full_name"],
+                            phone=row["phone"],
+                            company_name=row["company_name"],
+                            amount=amount_sum,
+                            click_trans_id=click_trans_id,
+                        )
                 except Exception as e:
                     logger.error(f"[COMPLETE] Notify error: {e}")
+        elif len(parts) >= 3 and parts[0] == "clickorder":
+            amount_sum = int(float(amount_raw))
+            completion = await complete_pending_click_order(
+                merchant_trans_id, click_trans_id, amount_sum
+            )
+            if not completion.get("success"):
+                return web.json_response({
+                    "click_trans_id": int(click_trans_id),
+                    "merchant_trans_id": merchant_trans_id,
+                    "merchant_confirm_id": 1,
+                    "error": completion.get("error", -9),
+                    "error_note": completion.get("error_note", "Order completion failed"),
+                })
+            try:
+                await notify_completed_click_order(completion, click_trans_id)
+            except Exception as e:
+                # Платёж и заказ уже сохранены атомарно. Ошибка Telegram не должна
+                # заставлять Click повторять финансовую операцию.
+                logger.error(f"[COMPLETE] Click order notify error: {e}")
         else:
             return web.json_response({"error": -5, "error_note": "User does not exist"})
 
@@ -1215,19 +1599,143 @@ async def handle_webapp_balance_history(request):
         return web.json_response({"error": str(e)}, status=500, headers=cors_headers())
 
 
+async def prepare_pending_click_order(db, user, order_payload):
+    """Проверяет корзину и сохраняет её до перехода клиента в Click."""
+    items = order_payload.get("items") or []
+    order_date, date_error = resolve_order_date(
+        order_payload.get("order_date"), require_active=True
+    )
+    if date_error:
+        return {"error": date_error, "date_changed": True}
+
+    delivery_slot = order_payload.get("delivery_slot")
+    slot_ok, slot_error = validate_delivery_slot(delivery_slot, order_date)
+    if not slot_ok:
+        return {"error": slot_error}
+    if not items:
+        return {"error": "Корзина пуста"}
+
+    normalized_items = []
+    total_amount = 0
+    expected_weekday = date.fromisoformat(order_date).weekday()
+
+    for entry in items:
+        try:
+            menu_id = entry.get("menu_id")
+            qty = int(entry.get("qty", 1))
+        except (TypeError, ValueError):
+            return {"error": "Неверное количество блюда"}
+        if qty < 1 or qty > 100:
+            return {"error": "Неверное количество блюда"}
+
+        if isinstance(menu_id, str) and menu_id.startswith("weekly_"):
+            try:
+                _, day_num, item_number, category = menu_id.split("_")
+                day_num = int(day_num)
+                item_number = int(item_number)
+            except (TypeError, ValueError):
+                return {"error": "Меню уже обновилось. Откройте его заново."}
+
+            if day_num != expected_weekday or category in HIDDEN_CLIENT_CATEGORIES:
+                return {"error": "Меню уже обновилось. Откройте его заново."}
+
+            weekly_item = await db.fetchrow(
+                """SELECT item_number, name, price, photo_id, category
+                   FROM weekly_menu
+                   WHERE day_of_week = $1 AND item_number = $2
+                   AND category = $3 AND category != 'main'
+                   AND is_active = 1""",
+                day_num, item_number, category
+            )
+            if not weekly_item:
+                return {"error": "Одна из позиций больше недоступна. Обновите меню."}
+
+            real_item = await db.fetchrow(
+                """INSERT INTO menus
+                   (menu_date, item_number, name, description, price, photo_id, category)
+                   VALUES ($1, $2, $3, '', $4, $5, $6)
+                   ON CONFLICT (menu_date, item_number, category)
+                   DO UPDATE SET name = EXCLUDED.name,
+                                 price = EXCLUDED.price,
+                                 photo_id = EXCLUDED.photo_id
+                   RETURNING id, name, price""",
+                order_date,
+                weekly_item["item_number"],
+                weekly_item["name"],
+                weekly_item["price"],
+                weekly_item["photo_id"],
+                weekly_item["category"],
+            )
+        else:
+            try:
+                numeric_menu_id = int(menu_id)
+            except (TypeError, ValueError):
+                return {"error": "Одна из позиций больше недоступна. Обновите меню."}
+            real_item = await db.fetchrow(
+                """SELECT id, name, price FROM menus
+                   WHERE id = $1 AND menu_date = $2::text
+                   AND category != 'main' AND is_active = 1""",
+                numeric_menu_id, order_date
+            )
+            if not real_item:
+                return {"error": "Одна из позиций больше недоступна. Обновите меню."}
+
+        normalized_items.append({
+            "menu_id": int(real_item["id"]),
+            "name": real_item["name"],
+            "price": int(real_item["price"]),
+            "qty": qty,
+        })
+        total_amount += int(real_item["price"]) * qty
+
+    if total_amount < 40000:
+        return {"error": "Минимальная сумма заказа — 40 000 сум"}
+
+    current_balance = await db.fetchval(
+        "SELECT balance FROM user_balance WHERE user_id = $1", user["id"]
+    ) or 0
+    topup_amount = max(total_amount - int(current_balance), 0)
+    if topup_amount < 100:
+        return {
+            "balance_sufficient": True,
+            "total_amount": total_amount,
+        }
+
+    await ensure_pending_click_orders_table(db)
+    merchant_trans_id = (
+        f"clickorder_{user['id']}_{secrets.token_hex(8)}"
+    )
+    await db.execute(
+        """INSERT INTO pending_click_orders
+           (merchant_trans_id, user_id, order_date, delivery_slot,
+            items_json, total_amount, topup_amount)
+           VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)""",
+        merchant_trans_id,
+        user["id"],
+        order_date,
+        delivery_slot,
+        json.dumps(normalized_items, ensure_ascii=False),
+        total_amount,
+        topup_amount,
+    )
+    return {
+        "merchant_trans_id": merchant_trans_id,
+        "amount": topup_amount,
+        "total_amount": total_amount,
+        "order_date": order_date,
+    }
+
+
 async def handle_webapp_topup(request):
-    """POST /api/topup — генерирует ссылку Click для пополнения баланса"""
+    """POST /api/topup — ссылка Click для баланса или сохранённого заказа."""
     try:
         init_data = await get_init_data_from_request(request)
         body = await request.json() if request.has_body else {}
-        amount = body.get("amount", 0)
+        order_payload = body.get("order")
 
         user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
         if not user_data:
             return web.json_response({"error": "Invalid auth"}, status=401, headers=cors_headers())
-
-        if not amount or amount < 100:
-            return web.json_response({"error": "Минимальная сумма — 100 сум"}, headers=cors_headers())
 
         telegram_id = user_data.get("id")
         pool = await get_pool()
@@ -1236,17 +1744,47 @@ async def handle_webapp_topup(request):
             if not user:
                 return web.json_response({"error": "User not registered"}, status=404, headers=cors_headers())
 
-        order_id = f"balance_{user['id']}_{amount}"
+            if isinstance(order_payload, dict):
+                async with db.transaction():
+                    prepared = await prepare_pending_click_order(
+                        db, user, order_payload
+                    )
+                if prepared.get("error"):
+                    return web.json_response(prepared, headers=cors_headers())
+                if prepared.get("balance_sufficient"):
+                    return web.json_response(prepared, headers=cors_headers())
+                merchant_trans_id = prepared["merchant_trans_id"]
+                amount = prepared["amount"]
+            else:
+                try:
+                    amount = int(body.get("amount", 0))
+                except (TypeError, ValueError):
+                    amount = 0
+                if amount < 100:
+                    return web.json_response(
+                        {"error": "Минимальная сумма — 100 сум"},
+                        headers=cors_headers()
+                    )
+                merchant_trans_id = f"balance_{user['id']}_{amount}"
+
+        from urllib.parse import urlencode
+        click_query = urlencode({
+            "service_id": CLICK_SERVICE_ID,
+            "merchant_id": CLICK_MERCHANT_ID,
+            "amount": amount,
+            "transaction_param": merchant_trans_id,
+            "return_url": "https://t.me/BazilikCateringBot",
+        })
         click_link = (
-            f"https://my.click.uz/services/pay?"
-            f"service_id={CLICK_SERVICE_ID}"
-            f"&merchant_id={CLICK_MERCHANT_ID}"
-            f"&amount={amount}"
-            f"&transaction_param={order_id}"
-            f"&return_url=https://t.me/BazilikCateringBot"
+            f"https://my.click.uz/services/pay?{click_query}"
         )
 
-        return web.json_response({"click_link": click_link}, headers=cors_headers())
+        return web.json_response({
+            "click_link": click_link,
+            "amount": amount,
+            "merchant_trans_id": merchant_trans_id,
+            "order_saved": isinstance(order_payload, dict),
+        }, headers=cors_headers())
     except Exception as e:
         logger.error(f"webapp_topup error: {e}")
         return web.json_response({"error": str(e)}, status=500, headers=cors_headers())
