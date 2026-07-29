@@ -563,8 +563,6 @@
       loading_stats: "Загружаем статистику…", loading_autoorder: "Загружаем автозаказ…",
       empty_category: "В этой категории пока пусто", empty_menu: "Меню на эту дату ещё не добавлено",
       add: "+ Добавить", checkout: "Оформить заказ", sending: "Отправляем…",
-      day_off: "Выходной",
-      sunday_closed: "Сегодня выходной. Заказы принимаются с понедельника по субботу.",
       positions_count: ["позиция", "позиции", "позиций"],
       order_total: "Итого", change_order: "Изменить заказ", cancel_order: "Отменить весь заказ",
       add_more_items: "➕ Добавить ещё блюда",
@@ -643,8 +641,6 @@
       loading_stats: "Statistika yuklanmoqda…", loading_autoorder: "Avtobuyurtma yuklanmoqda…",
       empty_category: "Bu kategoriyada hozircha bo'sh", empty_menu: "Bu sanaga menyu hali qo'shilmagan",
       add: "+ Qo'shish", checkout: "Buyurtma berish", sending: "Yuborilmoqda…",
-      day_off: "Dam olish kuni",
-      sunday_closed: "Bugun dam olish kuni. Buyurtmalar dushanbadan shanbagacha qabul qilinadi.",
       positions_count: ["pozitsiya", "pozitsiya", "pozitsiya"],
       order_total: "Jami", change_order: "Buyurtmani o'zgartirish", cancel_order: "Hammasini bekor qilish",
       add_more_items: "➕ Yana taom qo'shish",
@@ -789,6 +785,9 @@
   let cart = {};
   let userBalance = 0;
   let selectedDeliverySlot = localStorage.getItem("selectedDeliverySlot") || null;
+  let activeOrderDate = null;
+  let orderIsTomorrow = false;
+  let earliestDeliverySlot = "08:00";
   let currentPage = "menu";
 
   function fmt(n) { return Math.round(n).toLocaleString("ru-RU") + " сум"; }
@@ -864,8 +863,26 @@
         return;
       }
 
+      const previousOrderDate = activeOrderDate;
+      activeOrderDate = data.order_date || data.date_label || null;
+      orderIsTomorrow = Boolean(data.is_tomorrow);
+      earliestDeliverySlot = data.earliest_delivery_slot || "08:00";
+
+      if (previousOrderDate && previousOrderDate !== activeOrderDate) {
+        cart = {};
+        renderCart();
+      }
+      if (
+        localStorage.getItem("selectedDeliveryOrderDate") !== activeOrderDate
+      ) {
+        selectedDeliverySlot = null;
+        localStorage.removeItem("selectedDeliverySlot");
+        localStorage.removeItem("selectedDeliveryOrderDate");
+      }
+
       MENU = data.categories || {};
-      ordersOpen = data.orders_open !== false;
+      // «Вторые блюда» временно скрыты. Удаляем также ответ старого API/кэша.
+      delete MENU.main;
       userBalance = data.balance || 0;
       document.getElementById("balance-pill").textContent = fmt(userBalance);
 
@@ -877,33 +894,10 @@
       const existingClosedBanner = document.getElementById("orders-closed-banner");
       if (existingClosedBanner) existingClosedBanner.remove();
 
-      if (!ordersOpen) {
-        cart = {};
-        renderCart();
-        const closedBanner = document.createElement("div");
-        closedBanner.id = "orders-closed-banner";
-        closedBanner.style.cssText = `
-          margin: 0 0 8px;
-          background: #FFF1E8;
-          border: 1px solid #F2C6AA;
-          border-radius: 16px;
-          padding: 14px 16px;
-          color: #1C1C1C;
-          font-size: 14px;
-          line-height: 1.45;
-          font-weight: 600;
-        `;
-        closedBanner.textContent = `😌 ${T("sunday_closed")}`;
-        const header = document.querySelector(".header");
-        if (header) header.after(closedBanner);
-      }
-
       // ─── Баннер "Первый заказ — компот в подарок" ─────────────────────
       const existingGiftBanner = document.getElementById("first-order-banner");
       if (existingGiftBanner) existingGiftBanner.remove();
 
-      // Подарок за первый заказ показываем всегда, в том числе в воскресенье.
-      // Баннер выходного отдельно сообщает, что оформить заказ можно с понедельника.
       if (data.is_first_order) {
         const giftBanner = document.createElement("div");
         giftBanner.id = "first-order-banner";
@@ -1026,10 +1020,6 @@
 
   function renderStepper(item, qty) {
     const el = document.getElementById(`stepper-${item.id}`);
-    if (!ordersOpen) {
-      el.innerHTML = `<button class="step-plus add" disabled style="opacity:0.55;cursor:not-allowed;">${T("day_off")}</button>`;
-      return;
-    }
     if (qty === 0) {
       el.innerHTML = `<button class="step-plus add" data-id="${item.id}">${T("add")}</button>`;
     } else {
@@ -1045,10 +1035,6 @@
   }
 
   function handleStep(item, action) {
-    if (!ordersOpen) {
-      if (tg?.showAlert) tg.showAlert(T("sunday_closed")); else showToast(T("sunday_closed"));
-      return;
-    }
     if (!cart[item.id]) cart[item.id] = { item, qty: 0, category: currentCat };
     if (action === "inc") {
       cart[item.id].qty += 1;
@@ -1067,7 +1053,7 @@
     let count = 0, total = 0;
     Object.values(cart).forEach(c => { count += c.qty; total += c.qty * c.item.price; });
     const bar = document.getElementById("cart-bar");
-    if (!ordersOpen || count === 0 || currentPage !== "menu") { bar.classList.remove("visible"); return; }
+    if (count === 0 || currentPage !== "menu") { bar.classList.remove("visible"); return; }
     bar.classList.add("visible");
     document.getElementById("cart-count").textContent = `${count} ${pluralWord(count, "positions_count")}`;
     document.getElementById("cart-total").textContent = fmt(total);
@@ -1085,10 +1071,6 @@
   }
 
   function submitOrder() {
-    if (!ordersOpen) {
-      if (tg?.showAlert) tg.showAlert(T("sunday_closed")); else showToast(T("sunday_closed"));
-      return;
-    }
     const items = Object.values(cart).map(c => ({ menu_id: c.item.id, qty: c.qty, category: c.category }));
     if (items.length === 0) return;
 
@@ -1181,55 +1163,49 @@
 
   const DELIVERY_START_HOUR = 8;
   const DELIVERY_END_HOUR = 16;
-  const MIN_DELIVERY_DELAY_MINUTES = 60;
   const DELIVERY_STEP_MINUTES = 30;
 
-  function formatDeliveryTime(dateValue) {
-    return dateValue.toLocaleTimeString("ru-RU", {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false
-    });
+  function parseDeliveryMinutes(value) {
+    const match = /^(\d{2}):(\d{2})$/.exec(value || "");
+    if (!match) return null;
+    return Number(match[1]) * 60 + Number(match[2]);
   }
 
-  function generateDeliveryTimeOptions(now = new Date()) {
-    const opening = new Date(now);
-    opening.setHours(DELIVERY_START_HOUR, 0, 0, 0);
+  function formatDeliveryMinutes(totalMinutes) {
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+  }
 
-    const closing = new Date(now);
-    closing.setHours(DELIVERY_END_HOUR, 0, 0, 0);
+  function generateDeliveryTimeOptions() {
+    const openingMinutes = DELIVERY_START_HOUR * 60;
+    const closingMinutes = DELIVERY_END_HOUR * 60;
+    const earliestMinutes = Math.max(
+      openingMinutes,
+      parseDeliveryMinutes(earliestDeliverySlot) ?? openingMinutes
+    );
 
-    const fastest = new Date(now.getTime() + MIN_DELIVERY_DELAY_MINUTES * 60000);
-    fastest.setSeconds(0, 0);
-
-    if (fastest < opening) {
-      fastest.setTime(opening.getTime());
-    }
-    if (fastest > closing) {
+    if (earliestMinutes > closingMinutes) {
       return [];
     }
 
-    const options = [{ value: formatDeliveryTime(fastest), fast: true }];
-
-    const nextHalfHour = new Date(fastest);
-    const minutes = nextHalfHour.getMinutes();
-    const remainder = minutes % DELIVERY_STEP_MINUTES;
-    if (remainder === 0) {
-      nextHalfHour.setMinutes(minutes + DELIVERY_STEP_MINUTES, 0, 0);
-    } else {
-      nextHalfHour.setMinutes(
-        minutes + (DELIVERY_STEP_MINUTES - remainder), 0, 0
-      );
-    }
+    const options = [{
+      value: formatDeliveryMinutes(earliestMinutes),
+      fast: true
+    }];
+    const nextOption = (
+      Math.floor(earliestMinutes / DELIVERY_STEP_MINUTES) + 1
+    ) * DELIVERY_STEP_MINUTES;
 
     for (
-      let optionTime = nextHalfHour;
-      optionTime <= closing;
-      optionTime = new Date(
-        optionTime.getTime() + DELIVERY_STEP_MINUTES * 60000
-      )
+      let optionMinutes = nextOption;
+      optionMinutes <= closingMinutes;
+      optionMinutes += DELIVERY_STEP_MINUTES
     ) {
-      options.push({ value: formatDeliveryTime(optionTime), fast: false });
+      options.push({
+        value: formatDeliveryMinutes(optionMinutes),
+        fast: false
+      });
     }
 
     return options;
@@ -1240,8 +1216,8 @@
 
     if (deliveryOptions.length === 0) {
       const message = CURRENT_LANG === "uz"
-        ? "Bugungi yetkazib berish vaqti tugadi. Yetkazib berish 08:00 dan 16:00 gacha ishlaydi."
-        : "На сегодня свободного времени доставки уже нет. Доставка работает с 08:00 до 16:00.";
+        ? "Yetkazib berish vaqtini yangilash uchun menyuni qayta oching."
+        : "Обновите меню, чтобы получить актуальное время доставки.";
       if (tg?.showAlert) tg.showAlert(message); else showToast(message);
       return;
     }
@@ -1255,9 +1231,13 @@
     const title = CURRENT_LANG === "uz"
       ? "Yetkazib berish vaqtini tanlang"
       : "Выберите время доставки";
-    const subtitle = CURRENT_LANG === "uz"
-      ? "Eng tez yetkazib berish — kamida 60 daqiqadan keyin"
-      : "Самая быстрая доставка — не раньше чем через 60 минут";
+    const subtitle = orderIsTomorrow
+      ? (CURRENT_LANG === "uz"
+          ? "Ertaga yetkazib berish: 08:00 dan 16:00 gacha"
+          : "Доставка завтра с 08:00 до 16:00")
+      : (CURRENT_LANG === "uz"
+          ? "Eng tez yetkazib berish — kamida 60 daqiqadan keyin"
+          : "Самая быстрая доставка — не раньше чем через 60 минут");
     modal.innerHTML = `
       <div style="background: var(--cream-dark); border-radius: 20px 20px 0 0; padding: 20px 18px;
                   width: 100%; max-width: 420px; max-height: 80vh; overflow-y: auto;">
@@ -1274,8 +1254,8 @@
               ${option.fast ? "⚡" : "🕐"}
               ${option.fast
                 ? (CURRENT_LANG === "uz"
-                    ? `Eng tez — ${option.value}`
-                    : `Самое быстрое — ${option.value}`)
+                    ? `${orderIsTomorrow ? "Eng ertasi" : "Eng tez"} — ${option.value}`
+                    : `${orderIsTomorrow ? "Самое раннее" : "Самое быстрое"} — ${option.value}`)
                 : option.value}
             </button>
           `).join("")}
@@ -1290,14 +1270,25 @@
         const slot = btn.dataset.slot;
         btn.disabled = true;
         try {
-          const result = await apiCall("/api/set-delivery-slot", { slot });
+          const result = await apiCall("/api/set-delivery-slot", {
+            slot,
+            order_date: activeOrderDate
+          });
           if (result && result.success === false) {
             showToast(result.error || T("order_error"));
+            if (result.date_changed) {
+              document.body.removeChild(modal);
+              await loadMenu();
+              return;
+            }
             btn.disabled = false;
             return;
           }
           selectedDeliverySlot = slot;
           localStorage.setItem("selectedDeliverySlot", slot);
+          localStorage.setItem(
+            "selectedDeliveryOrderDate", activeOrderDate || ""
+          );
           document.body.removeChild(modal);
           showPaymentChoice(items);
         } catch (e) {
@@ -1430,7 +1421,8 @@
       const result = await apiCall("/api/order", {
         items,
         payment_method: paymentMethod,
-        delivery_slot: selectedDeliverySlot
+        delivery_slot: selectedDeliverySlot,
+        order_date: activeOrderDate
       });
       if (result.success) {
         cart = {};
@@ -1441,7 +1433,8 @@
         document.getElementById("cart-action").innerHTML = `${T("checkout")} <span>→</span>`;
         switchPage("order");
       } else {
-        showToast(result.error_code === "sunday_closed" ? T("sunday_closed") : (result.error || T("order_error")));
+        showToast(result.error || T("order_error"));
+        if (result.date_changed) await loadMenu();
         document.getElementById("cart-action").innerHTML = `${T("checkout")} <span>→</span>`;
       }
     } catch (e) {
@@ -1485,7 +1478,10 @@
     const el = document.getElementById("order-content");
     el.innerHTML = `<div class="loading">${T("loading_order")}</div>`;
     try {
-      const data = await apiCall("/api/my-order");
+      const data = await apiCall("/api/my-order", {
+        order_date: activeOrderDate
+      });
+      if (data.order_date) activeOrderDate = data.order_date;
       if (!data.items || data.items.length === 0) {
         const dl = data.date_label || (CURRENT_LANG === "uz" ? "bugun" : "сегодня");
         el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">📝</div><div class="empty-state-text">${T("no_order_yet")} ${dl}</div></div>`;
@@ -1509,7 +1505,9 @@
 
       let html = renderDeliveryStepper(bestStatus);
 
-      const deliveryLabel = CURRENT_LANG === "uz" ? "Yetkazib berish vaqti" : "Время доставки";
+      const deliveryLabel = CURRENT_LANG === "uz"
+        ? "Yetkazib berish sanasi va vaqti"
+        : "Дата и время доставки";
       const deliveryTime = data.delivery_slot
         || selectedDeliverySlot
         || localStorage.getItem("selectedDeliverySlot")
@@ -1518,7 +1516,7 @@
         <span style="font-size: 20px;">🕐</span>
         <div>
           <div style="font-size: 12px; color: var(--ink-soft);">${deliveryLabel}</div>
-          <div style="font-size: 14px; font-weight: 700;">${deliveryTime}</div>
+          <div style="font-size: 14px; font-weight: 700;">${data.date_label || "—"} · ${deliveryTime}</div>
         </div>
       </div>`;
 
@@ -1561,7 +1559,8 @@
           btn.disabled = true;
           const result = await apiCall("/api/update-order-qty", {
             menu_id: parseInt(btn.dataset.menuId),
-            direction: btn.dataset.direction
+            direction: btn.dataset.direction,
+            order_date: data.order_date || activeOrderDate
           });
           if (result.success) {
             loadMyOrder();
@@ -1623,7 +1622,9 @@
 
   async function doCancelOrder() {
     try {
-      const result = await apiCall("/api/cancel-order");
+      const result = await apiCall("/api/cancel-order", {
+        order_date: activeOrderDate
+      });
       if (result.success) {
         showToast(result.refund_amount > 0 ? `✅ ${T("cancelled_refund")}. +${fmt(result.refund_amount)}` : `✅ ${T("cancelled_refund")}`);
         loadMyOrder();
@@ -2503,7 +2504,7 @@
     el.innerHTML = `<div class="loading">${T("loading_menu")}</div>`;
     try {
       const data = await apiCall("/api/settings/weekly-menu", { day_of_week: dayOfWeek });
-      const items = data.items || [];
+      const items = (data.items || []).filter(item => item.category !== "main");
 
       // Что уже выбрано на этот день (по категориям)
       const currentSelections = {};
