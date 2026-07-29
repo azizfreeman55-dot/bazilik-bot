@@ -4,7 +4,7 @@ import hmac
 import json
 import logging
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from aiohttp import web
 from aiogram import Bot
@@ -19,10 +19,13 @@ CLICK_SERVICE_ID = os.getenv("CLICK_SERVICE_ID")
 CLICK_MERCHANT_ID = os.getenv("CLICK_MERCHANT_ID")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Онлайн-режим: заказы принимаются круглосуточно, доставка через 60 минут.
+# Заказы принимаются круглосуточно:
+# до 15:00 — на сегодня, с 15:00 — на следующий календарный день.
 DELIVERY_MINUTES = 60
 ORDER_OPEN_TIME  = "00:00"  # принимаем заказы круглосуточно
 ORDER_CLOSE_TIME = "23:59"
+ORDER_DAY_CUTOFF_HOUR = 15
+TASHKENT_TZ = timezone(timedelta(hours=5))
 
 # Категории, скрытые только от клиентов. Данные и управление в админ-панели
 # сохраняются, поэтому категорию можно будет вернуть без восстановления базы.
@@ -32,12 +35,58 @@ HIDDEN_CLIENT_CATEGORIES = {"main"}  # «Вторые блюда»
 def is_orders_open() -> bool:
     return True  # круглосуточно
 
-def get_delivery_time() -> str:
-    """Возвращает ожидаемое время доставки = сейчас + 60 минут (Ташкент UTC+5)"""
-    from datetime import datetime, timedelta, timezone
-    tz_tashkent = timezone(timedelta(hours=5))
-    delivery = datetime.now(tz_tashkent) + timedelta(minutes=DELIVERY_MINUTES)
-    return delivery.strftime("%H:%M")
+
+def tashkent_now() -> datetime:
+    return datetime.now(TASHKENT_TZ)
+
+
+def get_active_order_date(now=None) -> str:
+    """Дата нового заказа: сегодня до 15:00, после 15:00 — завтра."""
+    current = now or tashkent_now()
+    target = current.date()
+    if current.hour >= ORDER_DAY_CUTOFF_HOUR:
+        target += timedelta(days=1)
+    return target.isoformat()
+
+
+def is_tomorrow_order(order_date: str, now=None) -> bool:
+    current = now or tashkent_now()
+    return date.fromisoformat(order_date) > current.date()
+
+
+def get_delivery_time(order_date=None, now=None) -> str:
+    """Самое раннее время: через 60 минут сегодня или 08:00 завтра."""
+    current = now or tashkent_now()
+    target = order_date or get_active_order_date(current)
+    if is_tomorrow_order(target, current):
+        return "08:00"
+
+    earliest_minutes = max(
+        8 * 60,
+        current.hour * 60 + current.minute + DELIVERY_MINUTES,
+    )
+    return f"{earliest_minutes // 60:02d}:{earliest_minutes % 60:02d}"
+
+
+def resolve_order_date(value, *, require_active: bool = False):
+    """
+    Проверяет дату, полученную от Mini App.
+    Возвращает (дата, ошибка). Для нового заказа дата обязана совпасть
+    с актуальной датой, рассчитанной сервером по времени Ташкента.
+    """
+    active_date = get_active_order_date()
+    order_date = value or active_date
+    try:
+        parsed = date.fromisoformat(order_date)
+    except (TypeError, ValueError):
+        return None, "Недопустимая дата заказа"
+
+    today = tashkent_now().date()
+    if parsed not in (today, today + timedelta(days=1)):
+        return None, "Можно выбрать доставку только на сегодня или завтра"
+    if require_active and order_date != active_date:
+        return None, "Дата заказа изменилась. Обновите меню и выберите время заново."
+    return order_date, None
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -341,8 +390,8 @@ async def handle_webapp_menu(request):
                 "SELECT total_orders FROM users WHERE id = $1", user_db_id
             ) or 0
 
-            tomorrow = str(date.today())  # онлайн: сегодня
-            day_num = date.fromisoformat(tomorrow).weekday()
+            order_date = get_active_order_date()
+            day_num = date.fromisoformat(order_date).weekday()
 
             # Разовые позиции, которые уже реально существуют в menus на эту дату
             # (например, потому что кто-то уже сделал заказ — позиция автоматически
@@ -352,7 +401,7 @@ async def handle_webapp_menu(request):
                    FROM menus WHERE menu_date = $1::text AND is_active = 1
                    AND category != 'main'
                    ORDER BY category, item_number""",
-                tomorrow
+                order_date
             )
             existing_by_key = {(r["item_number"], r["category"]): r for r in menu_rows}
 
@@ -400,7 +449,10 @@ async def handle_webapp_menu(request):
         return web.json_response({
             "categories": categories,
             "balance": balance,
-            "date_label": str(date.today()),  # онлайн: сегодня
+            "date_label": order_date,
+            "order_date": order_date,
+            "is_tomorrow": is_tomorrow_order(order_date),
+            "earliest_delivery_slot": get_delivery_time(order_date),
             "orders_open": is_orders_open(),
             "order_close_time": ORDER_CLOSE_TIME,
             "is_first_order": total_orders == 0
@@ -416,7 +468,8 @@ async def handle_webapp_order(request):
         body = await request.json()
         items = body.get("items", [])
         payment_method = body.get("payment_method", "auto")
-        delivery_mode = body.get("delivery_mode", "today")  # "today" | "tomorrow"
+        requested_order_date = body.get("order_date")
+        selected_delivery_slot = body.get("delivery_slot")
 
         user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
         if not user_data:
@@ -427,8 +480,25 @@ async def handle_webapp_order(request):
         if not items:
             return web.json_response({"success": False, "error": "Корзина пуста"}, headers=cors_headers())
 
+        order_date, date_error = resolve_order_date(
+            requested_order_date, require_active=True
+        )
+        if date_error:
+            return web.json_response(
+                {"success": False, "error": date_error, "date_changed": True},
+                headers=cors_headers()
+            )
+
+        slot_is_valid, slot_error = validate_delivery_slot(
+            selected_delivery_slot, order_date
+        )
+        if not slot_is_valid:
+            return web.json_response(
+                {"success": False, "error": slot_error},
+                headers=cors_headers()
+            )
+
         pool = await get_pool()
-        tomorrow = str(date.today())  # онлайн: заказ на сегодня
 
         async with pool.acquire() as db:
             user = await db.fetchrow(
@@ -454,6 +524,11 @@ async def handle_webapp_order(request):
                 qty = entry.get("qty", 1)
                 if isinstance(menu_id, str) and menu_id.startswith("weekly_"):
                     _, day_num, item_number, cat = menu_id.split("_")
+                    if int(day_num) != date.fromisoformat(order_date).weekday():
+                        return web.json_response({
+                            "success": False,
+                            "error": "Меню уже обновилось. Откройте его заново."
+                        }, headers=cors_headers())
                     if cat in HIDDEN_CLIENT_CATEGORIES:
                         return web.json_response({
                             "success": False,
@@ -469,8 +544,9 @@ async def handle_webapp_order(request):
                 else:
                     price_row = await db.fetchrow(
                         """SELECT price FROM menus
-                           WHERE id = $1 AND category != 'main' AND is_active = 1""",
-                        int(menu_id)
+                           WHERE id = $1 AND menu_date = $2::text
+                           AND category != 'main' AND is_active = 1""",
+                        int(menu_id), order_date
                     )
                 if not price_row:
                     return web.json_response({
@@ -492,6 +568,8 @@ async def handle_webapp_order(request):
 
                 if isinstance(menu_id, str) and menu_id.startswith("weekly_"):
                     _, day_num, item_number, cat = menu_id.split("_")
+                    if int(day_num) != date.fromisoformat(order_date).weekday():
+                        continue
                     menu_item = await db.fetchrow(
                         """SELECT item_number, name, price, photo_id, category
                            FROM weekly_menu
@@ -507,7 +585,7 @@ async def handle_webapp_order(request):
                            VALUES ($1, $2, $3, '', $4, $5, $6)
                            ON CONFLICT (menu_date, item_number, category) DO UPDATE SET name = EXCLUDED.name
                            RETURNING id, name, price""",
-                        tomorrow, menu_item["item_number"], menu_item["name"],
+                        order_date, menu_item["item_number"], menu_item["name"],
                         menu_item["price"], menu_item["photo_id"], menu_item["category"]
                     )
                     real_menu_id = real_row["id"]
@@ -516,8 +594,9 @@ async def handle_webapp_order(request):
                 else:
                     menu_item = await db.fetchrow(
                         """SELECT id, name, price FROM menus
-                           WHERE id = $1 AND category != 'main' AND is_active = 1""",
-                        int(menu_id)
+                           WHERE id = $1 AND menu_date = $2::text
+                           AND category != 'main' AND is_active = 1""",
+                        int(menu_id), order_date
                     )
                     if not menu_item:
                         continue
@@ -529,7 +608,7 @@ async def handle_webapp_order(request):
                     await db.execute(
                         """INSERT INTO orders (user_id, menu_id, order_date, status, payment_method)
                            VALUES ($1, $2, $3::text, 'pending', $4)""",
-                        user_db_id, real_menu_id, tomorrow, payment_method
+                        user_db_id, real_menu_id, order_date, payment_method
                     )
                     orders_created += 1
 
@@ -540,8 +619,9 @@ async def handle_webapp_order(request):
             is_first_order = False
             if orders_created > 0:
                 from datetime import date as date_cls, timedelta as td_cls
-                today_str = str(date_cls.today())
-                yesterday_str = str(date_cls.today() - td_cls(days=1))
+                today_local = tashkent_now().date()
+                today_str = str(today_local)
+                yesterday_str = str(today_local - td_cls(days=1))
 
                 # Проверяем был ли это первый заказ ДО обновления total_orders
                 prev_total = await db.fetchval(
@@ -630,11 +710,15 @@ async def handle_webapp_order(request):
                     """SELECT ds.slot FROM delivery_slots ds
                        JOIN users u ON u.id = ds.user_id
                        WHERE u.telegram_id = $1 AND ds.order_date = $2::text""",
-                    telegram_id, tomorrow
+                    telegram_id, order_date
                 )
 
-            selected_slot = slot_row["slot"] if slot_row else get_delivery_time()
-            delivery_text = f"🚀 Доставка сегодня к {selected_slot}"
+            selected_slot = (
+                slot_row["slot"] if slot_row
+                else get_delivery_time(order_date)
+            )
+            delivery_day = "завтра" if is_tomorrow_order(order_date) else "сегодня"
+            delivery_text = f"🚀 Доставка {delivery_day} к {selected_slot}"
 
             # Ошибка отправки сообщения клиенту не должна блокировать
             # уведомление администраторов о новом заказе.
@@ -676,7 +760,7 @@ async def handle_webapp_order(request):
                         f"👤 {client_name}\n"
                         f"🏢 {company_name}\n"
                         f"📱 {phone}\n"
-                        f"📅 Дата доставки: {tomorrow}\n"
+                        f"📅 Дата доставки: {order_date}\n"
                         f"🕐 Время: {selected_slot}\n\n"
                         f"📦 Позиции:\n{items_text.strip()}\n\n"
                         f"💰 Сумма: {total_amount:,} сум\n"
@@ -714,15 +798,20 @@ async def handle_webapp_order(request):
 
 
 async def handle_webapp_my_order(request):
-    """POST /api/my-order — список позиций текущего заказа на завтра"""
+    """POST /api/my-order — позиции заказа на выбранную дату."""
     try:
         init_data = await get_init_data_from_request(request)
+        body = await request.json()
         user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
         if not user_data:
             return web.json_response({"error": "Invalid auth"}, status=401, headers=cors_headers())
 
         telegram_id = user_data.get("id")
-        tomorrow = str(date.today())  # онлайн: сегодня
+        order_date, date_error = resolve_order_date(body.get("order_date"))
+        if date_error:
+            return web.json_response(
+                {"error": date_error}, status=400, headers=cors_headers()
+            )
 
         pool = await get_pool()
         async with pool.acquire() as db:
@@ -734,13 +823,13 @@ async def handle_webapp_my_order(request):
                    WHERE u.telegram_id = $1 AND o.order_date = $2::text
                    AND o.status != 'cancelled'
                    ORDER BY m.category, m.item_number""",
-                telegram_id, tomorrow
+                telegram_id, order_date
             )
             slot_row = await db.fetchrow(
                 """SELECT ds.slot FROM delivery_slots ds
                    JOIN users u ON u.id = ds.user_id
                    WHERE u.telegram_id = $1 AND ds.order_date = $2::text""",
-                telegram_id, tomorrow
+                telegram_id, order_date
             )
 
         # Группируем по menu_id — несколько строк orders с одинаковым menu_id
@@ -767,7 +856,8 @@ async def handle_webapp_my_order(request):
         return web.json_response({
             "items": items,
             "total": total,
-            "date_label": str(date.today()),  # онлайн: сегодня
+            "date_label": order_date,
+            "order_date": order_date,
             "delivery_slot": slot_row["slot"] if slot_row else None
         }, headers=cors_headers())
     except Exception as e:
@@ -777,7 +867,7 @@ async def handle_webapp_my_order(request):
 
 async def handle_webapp_update_order_qty(request):
     """
-    POST /api/update-order-qty — изменяет количество одной позиции в заказе на завтра.
+    POST /api/update-order-qty — изменяет количество позиции на выбранную дату.
     direction: "inc" (добавить одну единицу) или "dec" (убрать одну единицу).
     Если после уменьшения остаётся 0 — позиция удаляется полностью (отменяется).
     """
@@ -791,6 +881,12 @@ async def handle_webapp_update_order_qty(request):
         body = await request.json()
         menu_id = body.get("menu_id")
         direction = body.get("direction")  # "inc" | "dec"
+        order_date, date_error = resolve_order_date(body.get("order_date"))
+        if date_error:
+            return web.json_response(
+                {"success": False, "error": date_error},
+                headers=cors_headers()
+            )
 
         if direction == "inc" and not is_orders_open():
             return web.json_response({
@@ -801,7 +897,6 @@ async def handle_webapp_update_order_qty(request):
         if direction not in ("inc", "dec") or not menu_id:
             return web.json_response({"success": False, "error": "Неверные параметры"}, headers=cors_headers())
 
-        tomorrow = str(date.today())  # онлайн: сегодня
         pool = await get_pool()
         async with pool.acquire() as db:
             user = await db.fetchrow("SELECT id FROM users WHERE telegram_id = $1", telegram_id)
@@ -814,7 +909,7 @@ async def handle_webapp_update_order_qty(request):
                 """SELECT id, status, payment_method FROM orders
                    WHERE user_id = $1 AND menu_id = $2 AND order_date = $3::text AND status != 'cancelled'
                    ORDER BY id""",
-                user_db_id, int(menu_id), tomorrow
+                user_db_id, int(menu_id), order_date
             )
             if existing and existing[0]["status"] != "pending":
                 return web.json_response({"success": False, "error": "Заказ уже подтверждён, изменение недоступно"}, headers=cors_headers())
@@ -822,8 +917,9 @@ async def handle_webapp_update_order_qty(request):
             if direction == "inc":
                 allowed_item = await db.fetchval(
                     """SELECT 1 FROM menus
-                       WHERE id = $1 AND category != 'main' AND is_active = 1""",
-                    int(menu_id)
+                       WHERE id = $1 AND menu_date = $2::text
+                       AND category != 'main' AND is_active = 1""",
+                    int(menu_id), order_date
                 )
                 if not allowed_item:
                     return web.json_response({
@@ -834,7 +930,7 @@ async def handle_webapp_update_order_qty(request):
                 await db.execute(
                     """INSERT INTO orders (user_id, menu_id, order_date, status, payment_method)
                        VALUES ($1, $2, $3::text, 'pending', $4)""",
-                    user_db_id, int(menu_id), tomorrow, payment_method
+                    user_db_id, int(menu_id), order_date, payment_method
                 )
                 await db.execute(
                     "UPDATE users SET total_orders = total_orders + 1, points = points + 5 WHERE id = $1",
@@ -856,15 +952,21 @@ async def handle_webapp_update_order_qty(request):
 
 
 async def handle_webapp_cancel_order(request):
-    """POST /api/cancel-order — отменить весь заказ на сегодня"""
+    """POST /api/cancel-order — отменить заказ на выбранную дату."""
     try:
         init_data = await get_init_data_from_request(request)
+        body = await request.json()
         user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
         if not user_data:
             return web.json_response({"success": False, "error": "Invalid auth"}, status=401, headers=cors_headers())
 
         telegram_id = user_data.get("id")
-        tomorrow = str(date.today())  # онлайн: сегодня
+        order_date, date_error = resolve_order_date(body.get("order_date"))
+        if date_error:
+            return web.json_response(
+                {"success": False, "error": date_error},
+                headers=cors_headers()
+            )
 
         pool = await get_pool()
         async with pool.acquire() as db:
@@ -888,7 +990,7 @@ async def handle_webapp_cancel_order(request):
                    AND o.status = 'pending'
                    GROUP BY m.id, m.name, m.price
                    ORDER BY m.name""",
-                user["id"], tomorrow
+                user["id"], order_date
             )
             cancelled_total = sum(
                 item["price"] * item["qty"] for item in cancelled_items
@@ -896,11 +998,11 @@ async def handle_webapp_cancel_order(request):
             delivery_slot = await db.fetchval(
                 """SELECT slot FROM delivery_slots
                    WHERE user_id = $1 AND order_date = $2::text""",
-                user["id"], tomorrow
+                user["id"], order_date
             )
 
-            debit_marker = f"|{tomorrow}"
-            refund_marker = f"REFUND|{tomorrow}"
+            debit_marker = f"|{order_date}"
+            refund_marker = f"REFUND|{order_date}"
 
             already_refunded = await db.fetchrow(
                 """SELECT id FROM balance_transactions
@@ -921,7 +1023,7 @@ async def handle_webapp_cancel_order(request):
                 """UPDATE orders SET status = 'cancelled'
                    WHERE user_id = $1 AND order_date = $2::text AND status = 'pending'
                    RETURNING id""",
-                user["id"], tomorrow
+                user["id"], order_date
             )
             cancelled_count = len(cancelled)
 
@@ -970,7 +1072,7 @@ async def handle_webapp_cancel_order(request):
                     f"👤 {user['full_name'] or 'Клиент'}\n"
                     f"🏢 {user['company_name'] or '—'}\n"
                     f"📱 {'+' + user['phone'] if user['phone'] else '—'}\n"
-                    f"📅 Дата доставки: {tomorrow}\n"
+                    f"📅 Дата доставки: {order_date}\n"
                     f"🕐 Время доставки: {delivery_slot or '—'}\n\n"
                     f"📦 Отменённые позиции:\n{items_text}\n\n"
                     f"💰 Сумма: {cancelled_total:,} сум"
@@ -1423,7 +1525,7 @@ DELIVERY_START_MINUTES = 8 * 60
 DELIVERY_END_MINUTES = 16 * 60
 
 
-def validate_delivery_slot(slot):
+def validate_delivery_slot(slot, order_date):
     """
     Проверяет выбранное время доставки.
 
@@ -1449,20 +1551,23 @@ def validate_delivery_slot(slot):
     if not DELIVERY_START_MINUTES <= selected_minutes <= DELIVERY_END_MINUTES:
         return False, "Доставка доступна с 08:00 до 16:00"
 
-    from datetime import datetime, timezone
-    tz_tashkent = timezone(timedelta(hours=5))
-    now = datetime.now(tz_tashkent)
-    earliest_minutes = now.hour * 60 + now.minute + DELIVERY_MINUTES
+    now = tashkent_now()
+    try:
+        target_date = date.fromisoformat(order_date)
+    except (TypeError, ValueError):
+        return False, "Недопустимая дата заказа"
 
-    # Сравниваем с точностью до минуты: Mini App также отправляет время без секунд.
-    if selected_minutes < earliest_minutes:
+    # Для завтрашнего заказа доступны все интервалы с 08:00.
+    # Правило «через 60 минут» применяется только к доставке сегодня.
+    earliest_minutes = now.hour * 60 + now.minute + DELIVERY_MINUTES
+    if target_date == now.date() and selected_minutes < earliest_minutes:
         return False, "Выберите время не раньше чем через 60 минут"
 
     return True, None
 
 
 async def handle_webapp_set_delivery_slot(request):
-    """POST /api/set-delivery-slot — сохраняет выбранное время доставки на сегодня"""
+    """POST /api/set-delivery-slot — сохраняет время на актуальную дату заказа."""
     try:
         init_data = await get_init_data_from_request(request)
         user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
@@ -1472,15 +1577,22 @@ async def handle_webapp_set_delivery_slot(request):
         telegram_id = user_data.get("id")
         body = await request.json()
         slot = body.get("slot")
+        order_date, date_error = resolve_order_date(
+            body.get("order_date"), require_active=True
+        )
+        if date_error:
+            return web.json_response(
+                {"success": False, "error": date_error, "date_changed": True},
+                headers=cors_headers()
+            )
 
-        is_valid, validation_error = validate_delivery_slot(slot)
+        is_valid, validation_error = validate_delivery_slot(slot, order_date)
         if not is_valid:
             return web.json_response(
                 {"success": False, "error": validation_error},
                 headers=cors_headers()
             )
 
-        tomorrow = str(date.today())  # онлайн: сегодня
         pool = await get_pool()
         async with pool.acquire() as db:
             user = await db.fetchrow("SELECT id FROM users WHERE telegram_id = $1", telegram_id)
@@ -1490,10 +1602,14 @@ async def handle_webapp_set_delivery_slot(request):
                 """INSERT INTO delivery_slots (user_id, order_date, slot)
                    VALUES ($1, $2, $3)
                    ON CONFLICT (user_id, order_date) DO UPDATE SET slot = $3""",
-                user["id"], tomorrow, slot
+                user["id"], order_date, slot
             )
 
-        return web.json_response({"success": True, "slot": slot}, headers=cors_headers())
+        return web.json_response({
+            "success": True,
+            "slot": slot,
+            "order_date": order_date
+        }, headers=cors_headers())
     except Exception as e:
         logger.error(f"webapp_set_delivery_slot error: {e}")
         return web.json_response({"success": False, "error": str(e)}, status=500, headers=cors_headers())
