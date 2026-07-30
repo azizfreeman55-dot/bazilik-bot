@@ -610,6 +610,7 @@ async def get_all_weekly_menu_summary() -> dict:
             rows = await db.fetch(
                 """SELECT category, COUNT(*) as cnt FROM weekly_menu
                    WHERE day_of_week = $1 AND is_active = 1
+                   AND category != 'main'
                    GROUP BY category""",
                 i
             )
@@ -621,7 +622,9 @@ async def delete_weekly_menu_day(day_of_week: int):
     pool = await get_pool()
     async with pool.acquire() as db:
         await db.execute(
-            "DELETE FROM weekly_menu WHERE day_of_week = $1", day_of_week
+            """DELETE FROM weekly_menu
+               WHERE day_of_week = $1 AND category != 'main'""",
+            day_of_week
         )
 
 
@@ -999,7 +1002,7 @@ async def get_daily_summary(order_date: str) -> dict:
             """SELECT m.name, m.item_number, m.category, COUNT(*) as count
                FROM orders o
                JOIN menus m ON o.menu_id = m.id
-               WHERE o.order_date = $1::text AND o.status IN ('confirmed', 'pending')
+               WHERE o.order_date = $1::text AND o.status != 'cancelled'
                GROUP BY m.id, m.name, m.item_number, m.category
                ORDER BY m.category, count DESC""",
             str(order_date)
@@ -1008,7 +1011,45 @@ async def get_daily_summary(order_date: str) -> dict:
             "SELECT COUNT(*) FROM orders WHERE order_date = $1::text AND status != 'cancelled'",
             str(order_date)
         )
-    return {"items": [dict(r) for r in items], "total": total, "date": order_date}
+        clients = await db.fetchval(
+            """SELECT COUNT(DISTINCT user_id)
+               FROM orders
+               WHERE order_date = $1::text AND status != 'cancelled'""",
+            str(order_date)
+        )
+        client_statuses = await db.fetchrow(
+            """WITH client_status AS (
+                   SELECT user_id,
+                          MAX(
+                              CASE status
+                                  WHEN 'delivered' THEN 4
+                                  WHEN 'in_transit' THEN 3
+                                  WHEN 'confirmed' THEN 2
+                                  WHEN 'pending' THEN 1
+                                  ELSE 0
+                              END
+                          ) AS status_rank
+                   FROM orders
+                   WHERE order_date = $1::text AND status != 'cancelled'
+                   GROUP BY user_id
+               )
+               SELECT
+                   COUNT(*) FILTER (WHERE status_rank = 4) AS delivered,
+                   COUNT(*) FILTER (WHERE status_rank = 3) AS in_transit,
+                   COUNT(*) FILTER (WHERE status_rank IN (1, 2)) AS waiting
+               FROM client_status""",
+            str(order_date)
+        )
+
+    return {
+        "items": [dict(r) for r in items],
+        "total": total or 0,
+        "clients": clients or 0,
+        "delivered": client_statuses["delivered"] or 0,
+        "in_transit": client_statuses["in_transit"] or 0,
+        "waiting": client_statuses["waiting"] or 0,
+        "date": order_date,
+    }
 
 
 async def get_all_users_for_notification() -> list:
@@ -1658,6 +1699,57 @@ async def mark_stop_delivered(stop_id: int, note: str = None):
         )
 
 
+async def mark_stop_problem(stop_id: int, note: str) -> dict:
+    """
+    Фиксирует проблему доставки, не отмечая заказ доставленным.
+
+    Позиции заказа не создаются и не меняются. Если маршрут уже был начат,
+    заказы компании возвращаются из in_transit в confirmed, чтобы эту же
+    доставку можно было повторить без добавления новых позиций.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as db:
+        async with db.transaction():
+            stop = await db.fetchrow(
+                """SELECT ds.id, ds.company_id, ds.route_id,
+                          c.name AS company_name, dr.delivery_date
+                   FROM delivery_stops ds
+                   JOIN companies c ON c.id = ds.company_id
+                   JOIN delivery_routes dr ON dr.id = ds.route_id
+                   WHERE ds.id = $1
+                   FOR UPDATE""",
+                stop_id
+            )
+            if not stop:
+                return {"success": False, "error": "Точка доставки не найдена"}
+
+            await db.execute(
+                """UPDATE delivery_stops
+                   SET status = 'problem',
+                       delivered_at = NULL,
+                       note = $2
+                   WHERE id = $1""",
+                stop_id, note
+            )
+            await db.execute(
+                """UPDATE orders
+                   SET status = 'confirmed', updated_at = NOW()
+                   WHERE order_date = $1::text
+                   AND status = 'in_transit'
+                   AND user_id IN (
+                       SELECT id FROM users WHERE company_id = $2
+                   )""",
+                stop["delivery_date"], stop["company_id"]
+            )
+
+            return {
+                "success": True,
+                "company_id": stop["company_id"],
+                "company_name": stop["company_name"],
+                "delivery_date": stop["delivery_date"]
+            }
+
+
 async def mark_route_started(route_id: int):
     pool = await get_pool()
     async with pool.acquire() as db:
@@ -1956,20 +2048,66 @@ async def get_unpaid_clients_for_company(company_id: int, order_date: str) -> li
 # ─── Рейтинг курьера ───────────────────────────────────────────────────────────
 
 async def save_courier_review(courier_id: int, user_id: int, delivery_route_id: int, rating: int) -> bool:
-    """Сохраняет оценку курьера от клиента. Возвращает False если уже оценено."""
+    """
+    Сохраняет оценку курьера от клиента.
+
+    Маршрут мог быть пересоздан после отправки кнопки клиенту. В таком случае
+    старого delivery_route_id уже нет, поэтому сохраняем оценку за курьером
+    без ссылки на удалённый маршрут.
+    """
     pool = await get_pool()
     async with pool.acquire() as db:
-        existing = await db.fetchrow(
-            "SELECT id FROM courier_reviews WHERE user_id = $1 AND delivery_route_id = $2",
-            user_id, delivery_route_id
-        )
-        if existing:
-            return False
-        await db.execute(
-            """INSERT INTO courier_reviews (courier_id, user_id, delivery_route_id, rating)
-               VALUES ($1, $2, $3, $4)""",
-            courier_id, user_id, delivery_route_id, rating
-        )
+        async with db.transaction():
+            # Блокируем запись клиента, чтобы два быстрых нажатия не создали
+            # два одинаковых отзыва.
+            user_exists = await db.fetchval(
+                "SELECT id FROM users WHERE id = $1 FOR UPDATE",
+                user_id
+            )
+            if not user_exists:
+                return False
+
+            courier_exists = await db.fetchval(
+                "SELECT id FROM couriers WHERE id = $1",
+                courier_id
+            )
+            if not courier_exists:
+                return False
+
+            route_exists = await db.fetchval(
+                """SELECT EXISTS(
+                       SELECT 1 FROM delivery_routes
+                       WHERE id = $1 AND courier_id = $2
+                   )""",
+                delivery_route_id, courier_id
+            )
+            route_reference = delivery_route_id if route_exists else None
+
+            if route_reference is not None:
+                existing = await db.fetchrow(
+                    """SELECT id FROM courier_reviews
+                       WHERE user_id = $1 AND delivery_route_id = $2""",
+                    user_id, route_reference
+                )
+            else:
+                existing = await db.fetchrow(
+                    """SELECT id FROM courier_reviews
+                       WHERE user_id = $1
+                       AND courier_id = $2
+                       AND delivery_route_id IS NULL
+                       AND created_at::date = CURRENT_DATE""",
+                    user_id, courier_id
+                )
+
+            if existing:
+                return False
+
+            await db.execute(
+                """INSERT INTO courier_reviews
+                   (courier_id, user_id, delivery_route_id, rating)
+                   VALUES ($1, $2, $3, $4)""",
+                courier_id, user_id, route_reference, rating
+            )
     return True
 
 
