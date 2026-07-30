@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+from html import escape
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
@@ -10,7 +11,9 @@ from database.db import (
     get_daily_summary, get_all_users_for_notification,
     close_orders_for_date, get_pool, set_menu,
     set_weekly_menu, get_all_weekly_menu_summary,
-    delete_weekly_menu_day, get_weekly_menu_categories
+    delete_weekly_menu_day, get_weekly_menu_categories,
+    get_clients_balances, get_client_balance_details,
+    admin_debit_client_balance
 )
 from keyboards.keyboards import admin_keyboard
 from config import ADMIN_IDS
@@ -26,6 +29,9 @@ CATEGORIES = {
     "dessert": {"ru": "🍰 Десерты",          "uz": "🍰 Desertlar"},
     "drink":   {"ru": "🥤 Напитки",          "uz": "🥤 Ichimliklar"},
 }
+
+# Категории, скрытые из управления меню, но сохранённые в базе.
+HIDDEN_ADMIN_CATEGORIES = {"main"}  # «Вторые блюда»
 
 DAYS_RU = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
 DAYS_SHORT = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
@@ -48,6 +54,14 @@ class AddMenu(StatesGroup):
 
 class Broadcast(StatesGroup):
     waiting_message = State()
+
+
+class AdminBalanceDebit(StatesGroup):
+    waiting_amount = State()
+    confirming = State()
+
+
+BALANCE_PAGE_SIZE = 8
 
 
 # ─── Главный экран меню — 7 дней недели со статусами ─────────────────────────
@@ -73,7 +87,6 @@ async def admin_menu_home(callback: CallbackQuery):
             icons = ""
             if "breakfast" in cats: icons += "🌅"
             if "first" in cats: icons += "🍲"
-            if "main" in cats: icons += "🍛"
             if "second" in cats: icons += "🍱"
             if "salad" in cats: icons += "🥗"
             if "dessert" in cats: icons += "🍰"
@@ -115,6 +128,7 @@ async def menu_day_detail(callback: CallbackQuery):
         rows = await db.fetch(
             """SELECT category, COUNT(*) as cnt FROM weekly_menu
                WHERE day_of_week = $1 AND is_active = 1
+               AND category != 'main'
                GROUP BY category""",
             day_num
         )
@@ -123,6 +137,8 @@ async def menu_day_detail(callback: CallbackQuery):
     text = f"📅 *{day_name}*\n\n"
     builder = InlineKeyboardBuilder()
     for key, names in CATEGORIES.items():
+        if key in HIDDEN_ADMIN_CATEGORIES:
+            continue
         cnt = filled_cats.get(key)
         if cnt:
             text += f"✅ {names['ru']}: {cnt} позиций\n"
@@ -182,6 +198,7 @@ async def menu_copy_confirm(callback: CallbackQuery):
         src_items = await db.fetch(
             """SELECT item_number, name, description, price, photo_id, category
                FROM weekly_menu WHERE day_of_week = $1 AND is_active = 1
+               AND category != 'main'
                ORDER BY category, item_number""",
             src_day
         )
@@ -196,7 +213,9 @@ async def menu_copy_confirm(callback: CallbackQuery):
                 continue
             # Удаляем старое меню целевого дня
             await db.execute(
-                "DELETE FROM weekly_menu WHERE day_of_week = $1", target_day
+                """DELETE FROM weekly_menu
+                   WHERE day_of_week = $1 AND category != 'main'""",
+                target_day
             )
             # Копируем позиции
             for item in src_items:
@@ -230,6 +249,9 @@ async def menu_category_list(callback: CallbackQuery):
     parts = callback.data.replace("menylist_", "").split("_")
     day_num = int(parts[0])
     category = parts[1]
+    if category in HIDDEN_ADMIN_CATEGORIES:
+        await callback.answer("Категория скрыта", show_alert=True)
+        return
     day_name = DAYS_RU[day_num]
     cat_name = CATEGORIES[category]["ru"]
 
@@ -428,6 +450,9 @@ async def menu_add_one_item(callback: CallbackQuery, state: FSMContext):
     parts = callback.data.replace("menyaddone_", "").split("_")
     day_num = int(parts[0])
     category = parts[1]
+    if category in HIDDEN_ADMIN_CATEGORIES:
+        await callback.answer("Категория скрыта", show_alert=True)
+        return
 
     pool = await get_pool()
     async with pool.acquire() as db:
@@ -459,6 +484,9 @@ async def menu_day_edit_category(callback: CallbackQuery, state: FSMContext):
     parts = callback.data.replace("menyedit_", "").split("_")
     day_num = int(parts[0])
     category = parts[1]
+    if category in HIDDEN_ADMIN_CATEGORIES:
+        await callback.answer("Категория скрыта", show_alert=True)
+        return
     day_name = DAYS_RU[day_num]
     cat_name = CATEGORIES[category]["ru"]
 
@@ -690,6 +718,8 @@ async def menu_special_date_category(callback: CallbackQuery, state: FSMContext)
 
     builder = InlineKeyboardBuilder()
     for key, names in CATEGORIES.items():
+        if key in HIDDEN_ADMIN_CATEGORIES:
+            continue
         builder.button(text=names["ru"], callback_data=f"menu_cat_{key}")
     builder.adjust(2)
 
@@ -704,6 +734,9 @@ async def menu_special_date_category(callback: CallbackQuery, state: FSMContext)
 @router.callback_query(F.data.startswith("menu_cat_"), AddMenu.waiting_category)
 async def admin_category_selected(callback: CallbackQuery, state: FSMContext):
     category = callback.data.replace("menu_cat_", "")
+    if category in HIDDEN_ADMIN_CATEGORIES:
+        await callback.answer("Категория скрыта", show_alert=True)
+        return
     cat_name = CATEGORIES.get(category, {}).get("ru", category)
     await state.update_data(category=category, items=[], item_number=1)
     await state.set_state(AddMenu.waiting_photo)
@@ -801,6 +834,342 @@ async def process_broadcast(message: Message, state: FSMContext):
 
 
 # ─── Пользователи ─────────────────────────────────────────────────────────────
+
+@router.callback_query(F.data == "admin_balances")
+@router.callback_query(F.data.startswith("admin_balances_page_"))
+async def admin_balances(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+
+    await state.clear()
+    if callback.data == "admin_balances":
+        page = 0
+    else:
+        try:
+            page = max(0, int(callback.data.rsplit("_", 1)[1]))
+        except (TypeError, ValueError):
+            page = 0
+
+    data = await get_clients_balances(
+        limit=BALANCE_PAGE_SIZE,
+        offset=page * BALANCE_PAGE_SIZE
+    )
+    total_clients = data["total_clients"]
+    max_page = max(0, (total_clients - 1) // BALANCE_PAGE_SIZE)
+    if page > max_page:
+        page = max_page
+        data = await get_clients_balances(
+            limit=BALANCE_PAGE_SIZE,
+            offset=page * BALANCE_PAGE_SIZE
+        )
+
+    text = (
+        "💳 <b>Балансы клиентов</b>\n\n"
+        f"👥 Клиентов: <b>{total_clients}</b>\n"
+        f"💰 Общий баланс: <b>{data['total_balance']:,} сум</b>\n"
+        f"📄 Страница: <b>{page + 1}/{max_page + 1}</b>\n\n"
+        "Выберите клиента:"
+    )
+
+    builder = InlineKeyboardBuilder()
+    for user in data["users"]:
+        name = (user.get("full_name") or "Без имени").strip()
+        if len(name) > 24:
+            name = name[:23] + "…"
+        builder.button(
+            text=f"{name} — {user['balance']:,} сум",
+            callback_data=f"admin_balance_user_{user['id']}_{page}"
+        )
+
+    navigation = []
+    if page > 0:
+        navigation.append((
+            "◀️",
+            f"admin_balances_page_{page - 1}"
+        ))
+    if page < max_page:
+        navigation.append((
+            "▶️",
+            f"admin_balances_page_{page + 1}"
+        ))
+    for label, callback_data in navigation:
+        builder.button(text=label, callback_data=callback_data)
+    builder.button(text="◀️ Назад в админ-панель", callback_data="back_admin")
+    row_sizes = [1] * len(data["users"])
+    if navigation:
+        row_sizes.append(len(navigation))
+    row_sizes.append(1)
+    builder.adjust(*row_sizes)
+
+    await callback.answer()
+    await callback.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=builder.as_markup()
+    )
+
+
+@router.callback_query(F.data.startswith("admin_balance_user_"))
+async def admin_balance_user(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+
+    await state.clear()
+    try:
+        suffix = callback.data.replace("admin_balance_user_", "", 1)
+        user_id_text, page_text = suffix.rsplit("_", 1)
+        user_id = int(user_id_text)
+        page = max(0, int(page_text))
+    except (TypeError, ValueError):
+        await callback.answer("Клиент не найден", show_alert=True)
+        return
+
+    user = await get_client_balance_details(user_id)
+    if not user:
+        await callback.answer("Клиент не найден", show_alert=True)
+        return
+
+    phone = f"+{user['phone']}" if user.get("phone") else "—"
+    text = (
+        "💳 <b>Баланс клиента</b>\n\n"
+        f"👤 <b>{escape(user.get('full_name') or 'Без имени')}</b>\n"
+        f"📱 {escape(phone)}\n"
+        f"🏢 {escape(user.get('company_name') or '—')}\n"
+        f"🆔 Telegram ID: <code>{user['telegram_id']}</code>\n\n"
+        f"💰 Текущий баланс: <b>{user['balance']:,} сум</b>"
+    )
+
+    builder = InlineKeyboardBuilder()
+    if user["balance"] > 0:
+        builder.button(
+            text="➖ Списать деньги",
+            callback_data=f"admin_balance_start_{user_id}_{page}"
+        )
+    builder.button(
+        text="◀️ К списку",
+        callback_data=f"admin_balances_page_{page}"
+    )
+    builder.adjust(1)
+
+    await callback.answer()
+    await callback.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=builder.as_markup()
+    )
+
+
+@router.callback_query(F.data.startswith("admin_balance_start_"))
+async def admin_balance_debit_start(
+    callback: CallbackQuery,
+    state: FSMContext
+):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+
+    try:
+        suffix = callback.data.replace("admin_balance_start_", "", 1)
+        user_id_text, page_text = suffix.rsplit("_", 1)
+        user_id = int(user_id_text)
+        page = max(0, int(page_text))
+    except (TypeError, ValueError):
+        await callback.answer("Клиент не найден", show_alert=True)
+        return
+
+    user = await get_client_balance_details(user_id)
+    if not user:
+        await callback.answer("Клиент не найден", show_alert=True)
+        return
+    if user["balance"] <= 0:
+        await callback.answer("На балансе нет денег", show_alert=True)
+        return
+
+    await state.set_state(AdminBalanceDebit.waiting_amount)
+    await state.update_data(
+        balance_user_id=user_id,
+        balance_page=page
+    )
+
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="❌ Отмена",
+        callback_data="admin_balance_debit_cancel"
+    )
+    await callback.answer()
+    await callback.message.edit_text(
+        "➖ <b>Списание с баланса</b>\n\n"
+        f"👤 {escape(user.get('full_name') or 'Клиент')}\n"
+        f"💰 Доступно: <b>{user['balance']:,} сум</b>\n\n"
+        "Отправьте сумму списания целым числом.\n"
+        "Например: <code>50000</code>",
+        parse_mode="HTML",
+        reply_markup=builder.as_markup()
+    )
+
+
+@router.message(AdminBalanceDebit.waiting_amount)
+async def admin_balance_debit_amount(message: Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        await state.clear()
+        return
+
+    raw_amount = (message.text or "").replace(" ", "").replace(",", "")
+    try:
+        amount = int(raw_amount)
+    except ValueError:
+        await message.answer("❌ Введите сумму целым числом, например: 50000")
+        return
+    if amount <= 0:
+        await message.answer("❌ Сумма должна быть больше нуля")
+        return
+
+    state_data = await state.get_data()
+    user_id = state_data.get("balance_user_id")
+    user = await get_client_balance_details(user_id)
+    if not user:
+        await state.clear()
+        await message.answer("❌ Клиент не найден", reply_markup=admin_keyboard())
+        return
+    if amount > user["balance"]:
+        await message.answer(
+            f"❌ Недостаточно средств.\n"
+            f"Доступно: {user['balance']:,} сум"
+        )
+        return
+
+    await state.update_data(balance_amount=amount)
+    await state.set_state(AdminBalanceDebit.confirming)
+
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text=f"✅ Да, списать {amount:,} сум",
+        callback_data="admin_balance_debit_confirm"
+    )
+    builder.button(
+        text="❌ Отмена",
+        callback_data="admin_balance_debit_cancel"
+    )
+    builder.adjust(1)
+
+    await message.answer(
+        "⚠️ <b>Подтвердите списание</b>\n\n"
+        f"👤 {escape(user.get('full_name') or 'Клиент')}\n"
+        f"💰 Сейчас: <b>{user['balance']:,} сум</b>\n"
+        f"➖ Списать: <b>{amount:,} сум</b>\n"
+        f"💳 Останется: <b>{user['balance'] - amount:,} сум</b>",
+        parse_mode="HTML",
+        reply_markup=builder.as_markup()
+    )
+
+
+@router.callback_query(
+    AdminBalanceDebit.confirming,
+    F.data == "admin_balance_debit_confirm"
+)
+async def admin_balance_debit_confirm(
+    callback: CallbackQuery,
+    state: FSMContext
+):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        await state.clear()
+        return
+
+    state_data = await state.get_data()
+    user_id = state_data.get("balance_user_id")
+    page = int(state_data.get("balance_page", 0))
+    amount = state_data.get("balance_amount")
+
+    result = await admin_debit_client_balance(
+        user_id=user_id,
+        amount=amount,
+        admin_telegram_id=callback.from_user.id
+    )
+    await state.clear()
+
+    if not result["success"]:
+        builder = InlineKeyboardBuilder()
+        builder.button(
+            text="◀️ К клиенту",
+            callback_data=f"admin_balance_user_{user_id}_{page}"
+        )
+        await callback.answer("Списание не выполнено", show_alert=True)
+        await callback.message.edit_text(
+            f"❌ {escape(result['error'])}",
+            parse_mode="HTML",
+            reply_markup=builder.as_markup()
+        )
+        return
+
+    try:
+        await callback.bot.send_message(
+            result["telegram_id"],
+            "💳 С вашего баланса списано "
+            f"{result['amount']:,} сум.\n"
+            f"Текущий баланс: {result['new_balance']:,} сум."
+        )
+    except Exception:
+        # Списание уже сохранено. Недоступность Telegram клиента не должна
+        # откатывать финансовую операцию.
+        pass
+
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="◀️ К клиенту",
+        callback_data=f"admin_balance_user_{user_id}_{page}"
+    )
+    builder.button(
+        text="💳 Все балансы",
+        callback_data=f"admin_balances_page_{page}"
+    )
+    builder.adjust(1)
+
+    await callback.answer("✅ Деньги списаны")
+    await callback.message.edit_text(
+        "✅ <b>Списание выполнено</b>\n\n"
+        f"👤 {escape(result['full_name'])}\n"
+        f"➖ Списано: <b>{result['amount']:,} сум</b>\n"
+        f"💰 Новый баланс: <b>{result['new_balance']:,} сум</b>\n\n"
+        "Операция сохранена в истории баланса.",
+        parse_mode="HTML",
+        reply_markup=builder.as_markup()
+    )
+
+
+@router.callback_query(F.data == "admin_balance_debit_cancel")
+async def admin_balance_debit_cancel(
+    callback: CallbackQuery,
+    state: FSMContext
+):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+
+    state_data = await state.get_data()
+    user_id = state_data.get("balance_user_id")
+    page = int(state_data.get("balance_page", 0))
+    await state.clear()
+
+    await callback.answer("Списание отменено")
+    builder = InlineKeyboardBuilder()
+    if user_id:
+        builder.button(
+            text="◀️ Вернуться к клиенту",
+            callback_data=f"admin_balance_user_{user_id}_{page}"
+        )
+    else:
+        builder.button(
+            text="◀️ Вернуться к балансам",
+            callback_data=f"admin_balances_page_{page}"
+        )
+    await callback.message.edit_text(
+        "❌ Списание отменено.",
+        reply_markup=builder.as_markup()
+    )
+
 
 @router.callback_query(F.data == "admin_users")
 async def admin_users(callback: CallbackQuery):
