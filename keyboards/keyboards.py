@@ -99,6 +99,7 @@ def admin_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="🍽️ Управление меню", callback_data="admin_add_menu")
     builder.button(text="📨 Рассылка", callback_data="admin_broadcast")
     builder.button(text="👥 Все пользователи", callback_data="admin_users")
+    builder.button(text="💳 Балансы клиентов", callback_data="admin_balances")
     builder.adjust(2)
     return builder.as_markup()
 
