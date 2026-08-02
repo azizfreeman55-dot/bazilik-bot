@@ -463,6 +463,26 @@
     width: 100%; background: var(--coral); color: var(--on-accent); border: none;
     border-radius: 12px; padding: 13px; font-size: 14px; font-weight: 700; cursor: pointer; margin-top: 10px;
   }
+  .referral-hero {
+    background: linear-gradient(135deg, #315f2f, #1e3e28); border: 1px solid rgba(182,232,75,.32);
+    border-radius: 20px; padding: 18px; margin-bottom: 12px;
+  }
+  .referral-hero-title { font-size: 19px; font-weight: 900; line-height: 1.25; }
+  .referral-hero-sub { color: rgba(245,245,240,.7); font-size: 11.5px; line-height: 1.45; margin-top: 6px; }
+  .referral-bonus-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 15px; }
+  .referral-bonus { background: rgba(0,0,0,.2); border-radius: 13px; padding: 11px; }
+  .referral-bonus strong { display: block; color: var(--green-600); font-size: 18px; }
+  .referral-bonus span { display: block; color: rgba(245,245,240,.68); font-size: 10px; margin-top: 2px; }
+  .referral-code-card { background: var(--white); border: 1px solid var(--line); border-radius: 17px; padding: 15px; margin-bottom: 12px; }
+  .referral-code-line { display: flex; align-items: center; gap: 9px; margin-top: 9px; }
+  .referral-code-modern { flex: 1; background: var(--cream-dark); border-radius: 12px; padding: 12px; font-size: 18px; font-weight: 900; letter-spacing: 1.6px; text-align: center; }
+  .referral-copy-btn { width: 44px; height: 44px; border: none; border-radius: 12px; background: var(--green-600); color: var(--on-accent); font-size: 19px; cursor: pointer; }
+  .referral-steps { background: var(--white); border: 1px solid var(--line); border-radius: 17px; padding: 15px; margin-bottom: 12px; }
+  .referral-step { display: flex; align-items: flex-start; gap: 11px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .referral-step:last-child { border-bottom: none; }
+  .referral-step-num { width: 28px; height: 28px; border-radius: 10px; background: rgba(182,232,75,.14); color: var(--green-600); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 900; flex-shrink: 0; }
+  .referral-step-title { font-size: 12.5px; font-weight: 800; }
+  .referral-step-sub { color: var(--ink-soft); font-size: 10.5px; line-height: 1.4; margin-top: 3px; }
 
   .setting-row {
     display: flex; justify-content: space-between; align-items: center;
@@ -826,6 +846,13 @@
       referral_hint: "За каждого друга вы получаете +5 баллов, друг получает +10 баллов при регистрации",
       share_friend: "Поделиться с другом", join_text: "Присоединяйся к Bazilik Catering!",
       link_copied: "Ссылка скопирована!", referral_not_loaded: "Не удалось загрузить данные",
+      referral_hero_title: "Обедать вместе выгоднее",
+      referral_hero_sub: "Пригласите коллегу в Bazilik — бонусные баллы получите вы оба.",
+      referral_your_bonus: "вам за приглашение", referral_friend_bonus: "коллеге после регистрации",
+      referral_how_title: "Как это работает", referral_step1_title: "Отправьте приглашение",
+      referral_step1_sub: "Поделитесь персональной ссылкой с коллегой.", referral_step2_title: "Коллега регистрируется",
+      referral_step2_sub: "При регистрации используется ваш код приглашения.", referral_step3_title: "Получите баллы",
+      referral_step3_sub: "Бонусы начисляются автоматически после регистрации.", copy_code: "Скопировать код",
       settings_not_loaded: "Не удалось загрузить настройки", name_label: "Имя", phone_label: "Телефон",
       save: "Сохранить", profile_updated: "✅ Профиль обновлён", birthday_label: "Дата рождения",
       birthday_gift_hint: "🎁 В день рождения мы начислим вам +50 баллов!", choose_date: "Выберите дату",
@@ -966,6 +993,13 @@
       referral_hint: "Har bir do'st uchun +5 ball olasiz, do'stingiz ro'yxatdan o'tganda +10 ball oladi",
       share_friend: "Do'stga ulashish", join_text: "Bazilik Catering'ga qo'shiling!",
       link_copied: "Havola nusxalandi!", referral_not_loaded: "Ma'lumotlarni yuklab bo'lmadi",
+      referral_hero_title: "Birga tushlik qilish foydaliroq",
+      referral_hero_sub: "Hamkasbingizni Bazilik'ka taklif qiling — bonus ballarni ikkalangiz ham olasiz.",
+      referral_your_bonus: "taklif uchun sizga", referral_friend_bonus: "ro'yxatdan o'tgach hamkasbga",
+      referral_how_title: "Bu qanday ishlaydi", referral_step1_title: "Taklif yuboring",
+      referral_step1_sub: "Shaxsiy havolangizni hamkasbingizga yuboring.", referral_step2_title: "Hamkasb ro'yxatdan o'tadi",
+      referral_step2_sub: "Ro'yxatdan o'tishda sizning taklif kodingiz ishlatiladi.", referral_step3_title: "Ball oling",
+      referral_step3_sub: "Bonuslar ro'yxatdan o'tgach avtomatik beriladi.", copy_code: "Kodni nusxalash",
       settings_not_loaded: "Sozlamalarni yuklab bo'lmadi", name_label: "Ism", phone_label: "Telefon",
       save: "Saqlash", profile_updated: "✅ Profil yangilandi", birthday_label: "Tug'ilgan kun",
       birthday_gift_hint: "🎁 Tug'ilgan kuningizda sizga +50 ball beramiz!", choose_date: "Sanani tanlang",
@@ -2853,17 +2887,35 @@
       const shareLink = `https://t.me/${data.bot_username}?start=${data.referral_code}`;
 
       el.innerHTML = `
-        <div class="referral-code-box">
-          <div style="font-size: 12px; opacity: 0.8;">${T("invite_code_title")}</div>
-          <div class="referral-code-value">${data.referral_code}</div>
+        <div class="referral-hero">
+          <div class="referral-hero-title">👥 ${T("referral_hero_title")}</div>
+          <div class="referral-hero-sub">${T("referral_hero_sub")}</div>
+          <div class="referral-bonus-grid">
+            <div class="referral-bonus"><strong>+5</strong><span>${T("referral_your_bonus")}</span></div>
+            <div class="referral-bonus"><strong>+10</strong><span>${T("referral_friend_bonus")}</span></div>
+          </div>
         </div>
-        <div class="profile-card">
-          <div style="font-size: 13px; color: var(--ink-soft);">${T("invited_friends")}</div>
-          <div style="font-size: 22px; font-weight: 700; margin-top: 2px;">${data.invited_count}</div>
-          <div style="font-size: 12px; color: var(--ink-soft); margin-top: 8px;">${T("referral_hint")}</div>
+        <div class="profile-metric-grid" style="grid-template-columns:1fr 1fr;">
+          <div class="profile-metric"><div class="profile-metric-value">${Number(data.invited_count || 0)}</div><div class="profile-metric-label">${T("invited_friends")}</div></div>
+          <div class="profile-metric"><div class="profile-metric-value">${Number(data.invited_count || 0) * 5}</div><div class="profile-metric-label">${T("points_count")}</div></div>
+        </div>
+        <div class="referral-code-card">
+          <div style="font-size:11px;color:var(--ink-soft);font-weight:700;">${T("invite_code_title")}</div>
+          <div class="referral-code-line"><div class="referral-code-modern">${escapeHtml(data.referral_code || "—")}</div><button class="referral-copy-btn" id="copy-referral-code" aria-label="${T("copy_code")}">⧉</button></div>
+        </div>
+        <div class="referral-steps">
+          <div class="gift-name">${T("referral_how_title")}</div>
+          <div class="referral-step"><div class="referral-step-num">1</div><div><div class="referral-step-title">${T("referral_step1_title")}</div><div class="referral-step-sub">${T("referral_step1_sub")}</div></div></div>
+          <div class="referral-step"><div class="referral-step-num">2</div><div><div class="referral-step-title">${T("referral_step2_title")}</div><div class="referral-step-sub">${T("referral_step2_sub")}</div></div></div>
+          <div class="referral-step"><div class="referral-step-num">3</div><div><div class="referral-step-title">${T("referral_step3_title")}</div><div class="referral-step-sub">${T("referral_step3_sub")}</div></div></div>
         </div>
         <button class="share-btn" id="share-referral-btn">${T("share_friend")}</button>
       `;
+
+      document.getElementById("copy-referral-code").onclick = async () => {
+        try { await navigator.clipboard.writeText(data.referral_code || ""); } catch (e) {}
+        showToast(T("link_copied"));
+      };
 
       document.getElementById("share-referral-btn").onclick = () => {
         if (tg?.openTelegramLink) {
