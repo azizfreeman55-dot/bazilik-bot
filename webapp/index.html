@@ -86,6 +86,44 @@
   .page { padding: 16px 18px; display: none; }
   .page.active { display: block; }
 
+  .sales-blocks { margin-bottom: 6px; }
+  .sales-card {
+    background: var(--white); border: 1px solid var(--line); border-radius: 16px;
+    padding: 14px; margin-bottom: 10px;
+  }
+  .sales-card-title { font-size: 14px; font-weight: 800; }
+  .sales-card-sub { font-size: 12px; color: var(--ink-soft); margin-top: 3px; line-height: 1.4; }
+  .repeat-order-btn {
+    width: 100%; margin-top: 10px; border: none; border-radius: 12px;
+    padding: 12px; background: var(--green-600); color: var(--on-accent);
+    font-size: 13px; font-weight: 800; cursor: pointer;
+  }
+  .gift-progress-track {
+    height: 8px; border-radius: 999px; background: var(--cream-dark);
+    overflow: hidden; margin-top: 10px;
+  }
+  .gift-progress-fill { height: 100%; background: var(--green-600); border-radius: inherit; }
+  .popular-strip {
+    display: flex; gap: 9px; overflow-x: auto; margin-top: 10px;
+    padding-bottom: 2px; scrollbar-width: none;
+  }
+  .popular-strip::-webkit-scrollbar { display: none; }
+  .popular-mini-card {
+    width: 132px; flex: 0 0 132px; background: var(--cream-dark);
+    border-radius: 13px; overflow: hidden; border: 1px solid var(--line);
+  }
+  .popular-mini-photo { width: 100%; height: 78px; object-fit: cover; display: block; }
+  .popular-mini-placeholder { height: 78px; display: flex; align-items: center; justify-content: center; font-size: 28px; }
+  .popular-mini-body { padding: 9px; }
+  .popular-mini-name { font-size: 12px; font-weight: 700; line-height: 1.25; min-height: 30px; }
+  .popular-mini-bottom { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 6px; }
+  .popular-mini-price { color: var(--ink-soft); font-size: 10px; }
+  .popular-add-btn {
+    width: 27px; height: 27px; border: none; border-radius: 9px;
+    background: var(--green-600); color: var(--on-accent); font-size: 18px;
+    font-weight: 700; cursor: pointer;
+  }
+
   .tabs {
     display: flex; gap: 6px; padding: 16px 18px 4px;
     overflow-x: auto; -ms-overflow-style: none; scrollbar-width: none;
@@ -426,6 +464,7 @@
 
   <!-- MENU PAGE -->
   <div class="page active" id="page-menu">
+    <div id="sales-blocks" class="sales-blocks"></div>
     <div id="tabs" class="tabs"></div>
     <div id="menu-list" class="list">
       <div class="loading">Загружаем меню…</div>
@@ -629,6 +668,25 @@
       no_ratings: "нет оценок", routes_word: "маршрутов", points_word_label: "точек",
       min_per_route: "мин/маршрут", dashboard_not_loaded: "Не удалось загрузить статистику",
       reviewed_thanks: "Спасибо!",
+      repeat_title: "🔄 Повторить последний заказ",
+      repeat_subtitle: "Доступные блюда из заказа за",
+      repeat_button: "Добавить в корзину",
+      repeat_added: "✅ Последний заказ добавлен в корзину",
+      popular_title: "🔥 Хиты продаж",
+      popular_subtitle: "Чаще всего заказывают за последние 30 дней",
+      added_to_cart: "Добавлено в корзину",
+      bonus_progress_title: "🎯 Ваши бонусы",
+      bonus_until: "До следующего подарка",
+      bonus_left: "осталось",
+      bonus_all_done: "VIP-уровень достигнут",
+      gift_drink: "напиток",
+      gift_dessert: "десерт",
+      gift_lunch: "бесплатный обед",
+      gift_vip: "VIP-статус",
+      recommendations_title: "🥤 С этим часто заказывают",
+      recommendations_subtitle: "Добавьте дополнение к обеду",
+      continue_checkout: "Продолжить оформление",
+      recommendation_added: "Добавлено",
     },
     uz: {
       menu: "Menyu", order: "Buyurtma", auto: "Avto", balance: "Hisob", more: "Yana",
@@ -707,6 +765,25 @@
       no_ratings: "baho yo'q", routes_word: "marshrut", points_word_label: "nuqta",
       min_per_route: "daq/marshrut", dashboard_not_loaded: "Statistikani yuklab bo'lmadi",
       reviewed_thanks: "Rahmat!",
+      repeat_title: "🔄 Oxirgi buyurtmani takrorlash",
+      repeat_subtitle: "Shu sanadagi mavjud taomlar:",
+      repeat_button: "Savatga qo'shish",
+      repeat_added: "✅ Oxirgi buyurtma savatga qo'shildi",
+      popular_title: "🔥 Eng ko'p buyurtma qilinadi",
+      popular_subtitle: "So'nggi 30 kundagi mashhur taomlar",
+      added_to_cart: "Savatga qo'shildi",
+      bonus_progress_title: "🎯 Bonuslaringiz",
+      bonus_until: "Keyingi sovg'agacha",
+      bonus_left: "qoldi",
+      bonus_all_done: "VIP darajaga erishildi",
+      gift_drink: "ichimlik",
+      gift_dessert: "desert",
+      gift_lunch: "bepul tushlik",
+      gift_vip: "VIP status",
+      recommendations_title: "🥤 Bu bilan ko'p buyurtma qilinadi",
+      recommendations_subtitle: "Tushlikka qo'shimcha qo'shing",
+      continue_checkout: "Rasmiylashtirishni davom ettirish",
+      recommendation_added: "Qo'shildi",
     }
   };
 
@@ -789,6 +866,12 @@
   let orderIsTomorrow = false;
   let earliestDeliverySlot = "08:00";
   let currentPage = "menu";
+  let lastOrderItems = [];
+  let lastOrderDate = null;
+  let popularItems = [];
+  let recommendations = [];
+  let giftProgress = null;
+  let recommendationOfferSeen = false;
 
   function fmt(n) { return Math.round(n).toLocaleString("ru-RU") + " сум"; }
 
@@ -884,6 +967,11 @@
       // «Вторые блюда» временно скрыты. Удаляем также ответ старого API/кэша.
       delete MENU.main;
       userBalance = data.balance || 0;
+      lastOrderItems = data.last_order_items || [];
+      lastOrderDate = data.last_order_date || null;
+      popularItems = data.popular_items || [];
+      recommendations = data.recommendations || [];
+      giftProgress = data.gift_progress || null;
       document.getElementById("balance-pill").textContent = fmt(userBalance);
 
       const dateLabel = data.date_label || (CURRENT_LANG === "uz" ? "bugun" : "сегодня");
@@ -934,12 +1022,107 @@
       }
 
       currentCat = availableCats.includes("second") ? "second" : availableCats[0];
+      renderSalesBlocks();
       renderTabs(availableCats);
       renderMenuList();
     } catch (e) {
       document.getElementById("menu-list").innerHTML =
         `<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">${T("loading_menu")}</div></div>`;
     }
+  }
+
+  function giftName(giftId) {
+    const key = `gift_${giftId || "vip"}`;
+    return T(key);
+  }
+
+  function addItemToCart(item, category, qty = 1) {
+    if (!item || !item.id) return;
+    if (!cart[item.id]) {
+      cart[item.id] = { item, qty: 0, category: category || item.category || "second" };
+    }
+    cart[item.id].qty += qty;
+    recommendationOfferSeen = false;
+  }
+
+  function renderSalesBlocks() {
+    const el = document.getElementById("sales-blocks");
+    if (!el) return;
+
+    let html = "";
+    if (lastOrderItems.length > 0) {
+      const totalQty = lastOrderItems.reduce((sum, item) => sum + Number(item.qty || 1), 0);
+      const preview = lastOrderItems.slice(0, 2).map(item => item.name).join(" · ");
+      const extra = lastOrderItems.length > 2 ? ` +${lastOrderItems.length - 2}` : "";
+      html += `
+        <div class="sales-card">
+          <div class="sales-card-title">${T("repeat_title")}</div>
+          <div class="sales-card-sub">${T("repeat_subtitle")} ${lastOrderDate}: ${preview}${extra} · ${totalQty} ${pluralWord(totalQty, "positions_count")}</div>
+          <button class="repeat-order-btn" id="repeat-last-order-btn">${T("repeat_button")}</button>
+        </div>`;
+    }
+
+    if (giftProgress) {
+      const percent = giftProgress.completed
+        ? 100
+        : Math.max(0, Math.min(100, Math.round((giftProgress.points / giftProgress.target) * 100)));
+      const progressText = giftProgress.completed
+        ? `${giftProgress.emoji} ${T("bonus_all_done")}`
+        : `${T("bonus_until")} «${giftName(giftProgress.gift_id)}» ${giftProgress.emoji} — ${T("bonus_left")} ${giftProgress.remaining}`;
+      html += `
+        <div class="sales-card">
+          <div class="sales-card-title">${T("bonus_progress_title")}: ${giftProgress.points} ${T("points_count")}</div>
+          <div class="sales-card-sub">${progressText}</div>
+          <div class="gift-progress-track"><div class="gift-progress-fill" style="width:${percent}%"></div></div>
+        </div>`;
+    }
+
+    if (popularItems.length > 0) {
+      html += `
+        <div class="sales-card">
+          <div class="sales-card-title">${T("popular_title")}</div>
+          <div class="sales-card-sub">${T("popular_subtitle")}</div>
+          <div class="popular-strip">
+            ${popularItems.map((item, index) => `
+              <div class="popular-mini-card">
+                ${item.photo_url
+                  ? `<img class="popular-mini-photo" src="${item.photo_url}" alt="${item.name}" loading="lazy">`
+                  : `<div class="popular-mini-placeholder">${getCategoryMeta()[item.category]?.icon || "🍽️"}</div>`}
+                <div class="popular-mini-body">
+                  <div class="popular-mini-name">${item.name}</div>
+                  <div class="popular-mini-bottom">
+                    <span class="popular-mini-price">${fmt(item.price)}</span>
+                    <button class="popular-add-btn" data-popular-index="${index}">+</button>
+                  </div>
+                </div>
+              </div>`).join("")}
+          </div>
+        </div>`;
+    }
+
+    el.innerHTML = html;
+
+    const repeatBtn = document.getElementById("repeat-last-order-btn");
+    if (repeatBtn) {
+      repeatBtn.onclick = () => {
+        lastOrderItems.forEach(item => addItemToCart(item, item.category, Number(item.qty || 1)));
+        renderMenuList();
+        renderCart();
+        showToast(T("repeat_added"));
+        if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred("success");
+      };
+    }
+
+    el.querySelectorAll(".popular-add-btn").forEach(btn => {
+      btn.onclick = () => {
+        const item = popularItems[Number(btn.dataset.popularIndex)];
+        addItemToCart(item, item.category, 1);
+        renderMenuList();
+        renderCart();
+        showToast(T("added_to_cart"));
+        if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred("light");
+      };
+    });
   }
 
   function renderTabs(cats) {
@@ -1036,6 +1219,7 @@
 
   function handleStep(item, action) {
     if (!cart[item.id]) cart[item.id] = { item, qty: 0, category: currentCat };
+    recommendationOfferSeen = false;
     if (action === "inc") {
       cart[item.id].qty += 1;
       if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred("light");
@@ -1084,7 +1268,72 @@
       return;
     }
 
+    const availableRecommendations = recommendations.filter(item => !cart[item.id]);
+    if (!recommendationOfferSeen && availableRecommendations.length > 0) {
+      showRecommendationOffer(availableRecommendations);
+      return;
+    }
+
     showDeliverySlotPicker(items);
+  }
+
+  function showRecommendationOffer(availableItems) {
+    const modal = document.createElement("div");
+    modal.id = "recommendation-modal";
+    modal.style.cssText = `
+      position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 300;
+      display: flex; align-items: flex-end; justify-content: center;
+    `;
+    modal.innerHTML = `
+      <div style="background: var(--cream-dark); border-radius: 20px 20px 0 0; padding: 20px 18px;
+                  width: 100%; max-width: 420px; max-height: 82vh; overflow-y: auto;">
+        <div style="font-size: 16px; font-weight: 800; margin-bottom: 4px;">${T("recommendations_title")}</div>
+        <div style="font-size: 12px; color: var(--ink-soft); margin-bottom: 14px;">${T("recommendations_subtitle")}</div>
+        ${availableItems.map((item, index) => `
+          <div style="display:flex; align-items:center; gap:10px; padding:10px; margin-bottom:8px;
+                      background:var(--white); border:1px solid var(--line); border-radius:13px;">
+            ${item.photo_url
+              ? `<img src="${item.photo_url}" alt="${item.name}" style="width:54px;height:54px;object-fit:cover;border-radius:10px;">`
+              : `<div style="width:54px;height:54px;display:flex;align-items:center;justify-content:center;
+                            background:var(--cream-dark);border-radius:10px;font-size:24px;">${getCategoryMeta()[item.category]?.icon || "🍽️"}</div>`}
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:13px;font-weight:700;line-height:1.3;">${item.name}</div>
+              <div style="font-size:12px;color:var(--ink-soft);margin-top:2px;">${fmt(item.price)}</div>
+            </div>
+            <button class="recommend-add-btn" data-recommend-index="${index}"
+              style="border:none;border-radius:10px;background:var(--green-600);color:var(--on-accent);
+                     padding:9px 12px;font-size:12px;font-weight:800;cursor:pointer;">+ ${T("add").replace("+ ", "")}</button>
+          </div>`).join("")}
+        <button class="btn-primary" id="recommend-continue-btn">${T("continue_checkout")}</button>
+        <button class="btn-danger" id="recommend-cancel-btn">${T("cancel")}</button>
+      </div>`;
+    document.body.appendChild(modal);
+
+    modal.querySelectorAll(".recommend-add-btn").forEach(btn => {
+      btn.onclick = () => {
+        const item = availableItems[Number(btn.dataset.recommendIndex)];
+        addItemToCart(item, item.category, 1);
+        renderMenuList();
+        renderCart();
+        btn.textContent = `✓ ${T("recommendation_added")}`;
+        btn.disabled = true;
+        if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred("light");
+      };
+    });
+
+    document.getElementById("recommend-continue-btn").onclick = () => {
+      recommendationOfferSeen = true;
+      document.body.removeChild(modal);
+      const updatedItems = Object.values(cart).map(c => ({
+        menu_id: c.item.id,
+        qty: c.qty,
+        category: c.category
+      }));
+      showDeliverySlotPicker(updatedItems);
+    };
+    document.getElementById("recommend-cancel-btn").onclick = () => {
+      document.body.removeChild(modal);
+    };
   }
 
   function showPaymentChoice(items) {
@@ -1426,6 +1675,7 @@
       });
       if (result.success) {
         cart = {};
+        recommendationOfferSeen = false;
         renderCart();
         if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred("success");
         showToast(T("order_placed"));
