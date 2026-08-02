@@ -336,8 +336,18 @@
     align-items: center; justify-content: center; background: var(--cream-dark);
     font-size: 19px; margin-bottom: 12px;
   }
-  .more-tile-title { font-size: 13px; font-weight: 800; }
-  .more-tile-sub { font-size: 10.5px; color: var(--ink-soft); margin-top: 3px; line-height: 1.3; }
+  .more-tile > span:last-child { display: block; width: 100%; }
+  .more-tile-copy {
+    width: 100%; display: flex; flex-direction: column; align-items: flex-start;
+    gap: 8px;
+  }
+  .more-tile-title {
+    display: block; font-size: 13px; font-weight: 800; line-height: 1.3;
+  }
+  .more-tile-sub {
+    display: block; font-size: 10.5px; color: var(--ink-soft);
+    margin-top: 7px; line-height: 1.45;
+  }
   .more-admin-tile { grid-column: 1 / -1; min-height: 76px; flex-direction: row; align-items: center; gap: 12px; }
   .more-admin-tile .more-tile-icon { margin: 0; }
 
@@ -400,6 +410,15 @@
   }
   .gift-badge.unlocked { background: var(--green-600); color: var(--on-accent); }
   .gift-badge.locked { background: var(--cream-dark); color: var(--ink-soft); }
+  .gift-claim-btn {
+    width: 100%; border: none; border-radius: 11px; padding: 10px 12px;
+    background: var(--green-600); color: var(--on-accent); font-size: 12px;
+    font-weight: 800; cursor: pointer; margin-top: 9px;
+  }
+  .gift-claim-btn:disabled { background: var(--cream-dark); color: var(--ink-soft); cursor: default; }
+  .loyalty-rules { background: var(--white); border: 1px solid var(--line); border-radius: 16px; padding: 15px; margin-top: 14px; }
+  .loyalty-rule { display: flex; gap: 9px; color: var(--ink-soft); font-size: 11.5px; line-height: 1.45; margin-top: 9px; }
+  .loyalty-rule:first-of-type { margin-top: 11px; }
 
   .referral-code-box {
     background: var(--green-600); color: var(--cream); border-radius: 16px;
@@ -761,6 +780,12 @@
       points_word: "баллов!", company_rank: "Место в рейтинге:", company_rank_hint: "Компания-лидер месяца получает +",
       company_rank_hint2: "баллов каждому сотруднику — заказывайте чаще, чтобы подняться выше! 💪",
       gifts_section_title: "Подарки за баллы",
+      gifts_available_title: "Доступно сейчас", gifts_locked_title: "Следующие награды",
+      gift_claim: "Получить подарок", gift_pending: "Заявка отправлена",
+      gift_claim_sent: "✅ Заявка отправлена администратору", gift_claim_error: "Не удалось отправить заявку",
+      loyalty_rules_title: "Как работают баллы", loyalty_rule_order: "Баллы начисляются после выполненного заказа.",
+      loyalty_rule_review: "За оценку блюда и доставки можно получить дополнительные баллы.",
+      loyalty_rule_claim: "При выборе подарка администратор подтверждает заявку и сообщает, как его получить.",
       rating_empty: "Рейтинг пока пуст", rating_orders: "зак.", rating_not_loaded: "Не удалось загрузить рейтинг",
       referral_title: "Ваш код приглашения", invited_friends: "Приглашено друзей",
       referral_hint: "За каждого друга вы получаете +5 баллов, друг получает +10 баллов при регистрации",
@@ -790,6 +815,8 @@
       times_word: "раз", couriers_title: "🚚 Курьеры", no_courier_data: "Нет данных о курьерах",
       no_ratings: "нет оценок", routes_word: "маршрутов", points_word_label: "точек",
       min_per_route: "мин/маршрут", dashboard_not_loaded: "Не удалось загрузить статистику",
+      gift_claims_admin: "🎁 Заявки на подарки", no_gift_claims: "Новых заявок нет",
+      approve: "Подтвердить", reject: "Отклонить", claim_processed: "✅ Заявка обработана",
       reviewed_thanks: "Спасибо!",
       repeat_title: "🔄 Повторить последний заказ",
       repeat_subtitle: "Доступные блюда из заказа за",
@@ -892,6 +919,12 @@
       points_word: "ball oladi!", company_rank: "Reytingdagi o'rin:", company_rank_hint: "Oy g'olibi kompaniyasi har bir xodimga +",
       company_rank_hint2: "ball oladi — yuqoriroq ko'tarilish uchun ko'proq buyurtma bering! 💪",
       gifts_section_title: "Ball uchun sovg'alar",
+      gifts_available_title: "Hozir mavjud", gifts_locked_title: "Keyingi mukofotlar",
+      gift_claim: "Sovg'ani olish", gift_pending: "Ariza yuborildi",
+      gift_claim_sent: "✅ Ariza administratorga yuborildi", gift_claim_error: "Arizani yuborib bo'lmadi",
+      loyalty_rules_title: "Ballar qanday ishlaydi", loyalty_rule_order: "Ballar bajarilgan buyurtmadan keyin beriladi.",
+      loyalty_rule_review: "Taom va yetkazib berish bahosi uchun qo'shimcha ball olish mumkin.",
+      loyalty_rule_claim: "Sovg'a tanlanganda administrator arizani tasdiqlaydi va uni qanday olishni aytadi.",
       rating_empty: "Reyting hali bo'sh", rating_orders: "buyurtma", rating_not_loaded: "Reytingni yuklab bo'lmadi",
       referral_title: "Sizning taklif kodingiz", invited_friends: "Taklif qilingan do'stlar",
       referral_hint: "Har bir do'st uchun +5 ball olasiz, do'stingiz ro'yxatdan o'tganda +10 ball oladi",
@@ -921,6 +954,8 @@
       times_word: "marta", couriers_title: "🚚 Kuryerlar", no_courier_data: "Kuryerlar haqida ma'lumot yo'q",
       no_ratings: "baho yo'q", routes_word: "marshrut", points_word_label: "nuqta",
       min_per_route: "daq/marshrut", dashboard_not_loaded: "Statistikani yuklab bo'lmadi",
+      gift_claims_admin: "🎁 Sovg'a arizalari", no_gift_claims: "Yangi arizalar yo'q",
+      approve: "Tasdiqlash", reject: "Rad etish", claim_processed: "✅ Ariza ko'rib chiqildi",
       reviewed_thanks: "Rahmat!",
       repeat_title: "🔄 Oxirgi buyurtmani takrorlash",
       repeat_subtitle: "Shu sanadagi mavjud taomlar:",
@@ -2333,7 +2368,10 @@
       const tile = (page, icon, title, hint, extra = "") => `
         <button class="more-tile ${extra}" data-page="${page}">
           <span class="more-tile-icon">${icon}</span>
-          <span><span class="more-tile-title">${T(title)}</span><span class="more-tile-sub">${T(hint)}</span></span>
+          <div class="more-tile-copy">
+            <div class="more-tile-title">${T(title)}</div>
+            <div class="more-tile-sub">${T(hint)}</div>
+          </div>
         </button>`;
 
       el.innerHTML = `
@@ -2698,21 +2736,44 @@
       }
 
       // ─── Подарки за баллы ───
-      html += `<div class="section-heading">${T("gifts_section_title")}</div>`;
-      data.gifts.forEach(g => {
-        html += `
-          <div class="gift-card ${g.unlocked ? "" : "locked"}">
-            <div class="gift-emoji">${g.emoji}</div>
-            <div class="gift-info">
-              <div class="gift-name">${g.name}</div>
-              <div class="gift-desc">${g.desc}</div>
-              <div class="gift-points">${g.points} ${T("points_count")}</div>
-            </div>
-            <div class="gift-badge ${g.unlocked ? "unlocked" : "locked"}">${g.unlocked ? T("gift_unlocked") : T("gift_locked")}</div>
-          </div>
-        `;
-      });
+      const giftCard = g => `<div class="gift-card ${g.unlocked ? "" : "locked"}">
+        <div class="gift-emoji">${g.emoji}</div>
+        <div class="gift-info">
+          <div class="gift-name">${escapeHtml(g.name)}</div>
+          <div class="gift-desc">${escapeHtml(g.desc)}</div>
+          <div class="gift-points">${g.points} ${T("points_count")}</div>
+          ${g.unlocked ? `<button class="gift-claim-btn" data-gift-id="${g.id}" ${g.pending ? "disabled" : ""}>${g.pending ? T("gift_pending") : T("gift_claim")}</button>` : ""}
+        </div>
+        <div class="gift-badge ${g.unlocked ? "unlocked" : "locked"}">${g.unlocked ? "✓" : T("gift_locked")}</div>
+      </div>`;
+      const availableGifts = (data.gifts || []).filter(g => g.unlocked);
+      const lockedGifts = (data.gifts || []).filter(g => !g.unlocked);
+      if (availableGifts.length) {
+        html += `<div class="section-heading">${T("gifts_available_title")}</div>${availableGifts.map(giftCard).join("")}`;
+      }
+      if (lockedGifts.length) {
+        html += `<div class="section-heading">${T("gifts_locked_title")}</div>${lockedGifts.map(giftCard).join("")}`;
+      }
+      html += `<div class="loyalty-rules"><div class="gift-name">${T("loyalty_rules_title")}</div>
+        <div class="loyalty-rule"><span>1</span><span>${T("loyalty_rule_order")}</span></div>
+        <div class="loyalty-rule"><span>2</span><span>${T("loyalty_rule_review")}</span></div>
+        <div class="loyalty-rule"><span>3</span><span>${T("loyalty_rule_claim")}</span></div>
+      </div>`;
       el.innerHTML = html;
+      el.querySelectorAll(".gift-claim-btn:not(:disabled)").forEach(btn => {
+        btn.onclick = async () => {
+          btn.disabled = true;
+          try {
+            const result = await apiCall("/api/claim-gift", { gift_id: btn.dataset.giftId });
+            if (!result.success) throw new Error(result.error || T("gift_claim_error"));
+            btn.textContent = T("gift_pending");
+            showToast(result.already_pending ? T("gift_pending") : T("gift_claim_sent"));
+          } catch (e) {
+            btn.disabled = false;
+            showToast(e.message || T("gift_claim_error"));
+          }
+        };
+      });
     } catch (e) {
       el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">${T("gifts_not_loaded")}</div></div>`;
     }
@@ -3169,6 +3230,24 @@
       }
       html += `</div>`;
 
+      const giftClaims = data.gift_claims || [];
+      html += `<div class="profile-card"><div style="font-size:13px;font-weight:700;margin-bottom:8px;">${T("gift_claims_admin")}</div>`;
+      if (!giftClaims.length) {
+        html += `<div style="font-size:13px;color:var(--ink-soft);padding:8px 0;">${T("no_gift_claims")}</div>`;
+      } else {
+        giftClaims.forEach(claim => {
+          html += `<div style="padding:11px 0;border-bottom:1px solid var(--line);">
+            <div style="font-size:13px;font-weight:800;">${claim.gift_emoji} ${escapeHtml(claim.gift_name)} · ${claim.points_required} ${T("points_count")}</div>
+            <div style="font-size:11px;color:var(--ink-soft);margin-top:3px;line-height:1.45;">${escapeHtml(claim.full_name || "—")} · ${escapeHtml(claim.company_name || "—")}<br>${claim.phone ? "+" + escapeHtml(claim.phone) : "—"} · ${escapeHtml(claim.created_at || "")}</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:9px;">
+              <button class="gift-admin-action btn-primary" data-claim-id="${claim.id}" data-action="approve" style="margin:0;padding:10px;">${T("approve")}</button>
+              <button class="gift-admin-action btn-danger" data-claim-id="${claim.id}" data-action="reject" style="margin:0;padding:10px;">${T("reject")}</button>
+            </div>
+          </div>`;
+        });
+      }
+      html += `</div>`;
+
       html += `<div class="profile-card">
         <div style="font-size: 13px; font-weight: 700; margin-bottom: 4px;">${T("couriers_title")}</div>`;
 
@@ -3193,6 +3272,24 @@
       html += `</div>`;
 
       el.innerHTML = html;
+
+      el.querySelectorAll(".gift-admin-action").forEach(btn => {
+        btn.onclick = async () => {
+          const rowButtons = btn.parentElement.querySelectorAll("button");
+          rowButtons.forEach(x => x.disabled = true);
+          try {
+            const result = await apiCall("/api/admin/process-gift-claim", {
+              claim_id: Number(btn.dataset.claimId), action: btn.dataset.action
+            });
+            if (!result.success) throw new Error(result.error || T("load_error"));
+            showToast(T("claim_processed"));
+            loadDashboard();
+          } catch (e) {
+            rowButtons.forEach(x => x.disabled = false);
+            showToast(e.message || T("connection_error"));
+          }
+        };
+      });
 
       // Рисуем столбики графика
       const maxCount = Math.max(...data.daily_stats.map(d => d.count), 1);
