@@ -177,6 +177,28 @@ def get_admin_ids():
     ]
 
 
+GIFT_CATALOG = {
+    "drink": {"points": 50, "emoji": "🥤", "name": "Напиток"},
+    "dessert": {"points": 100, "emoji": "🍰", "name": "Десерт"},
+    "lunch": {"points": 200, "emoji": "🍱", "name": "Бесплатный обед"},
+    "vip": {"points": 500, "emoji": "👑", "name": "Статус VIP"},
+}
+
+
+async def ensure_gift_claims_table(db):
+    await db.execute(
+        """CREATE TABLE IF NOT EXISTS gift_claims (
+               id BIGSERIAL PRIMARY KEY,
+               user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+               gift_id TEXT NOT NULL,
+               points_required INTEGER NOT NULL,
+               status TEXT NOT NULL DEFAULT 'pending',
+               created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+               processed_at TIMESTAMP NULL
+           )"""
+    )
+
+
 async def ensure_pending_click_orders_table(db):
     """Хранит корзину до подтверждения оплаты со стороны Click."""
     await db.execute(
@@ -2228,7 +2250,7 @@ async def handle_webapp_gifts(request):
         pool = await get_pool()
         async with pool.acquire() as db:
             user = await db.fetchrow(
-                """SELECT u.points, u.streak_days, u.last_streak_bonus, u.company_id,
+                """SELECT u.id, u.points, u.streak_days, u.last_streak_bonus, u.company_id,
                    c.name as company_name
                    FROM users u LEFT JOIN companies c ON u.company_id = c.id
                    WHERE u.telegram_id = $1""",
@@ -2236,6 +2258,13 @@ async def handle_webapp_gifts(request):
             )
             if not user:
                 return web.json_response({"error": "User not registered"}, status=404, headers=cors_headers())
+
+            await ensure_gift_claims_table(db)
+            pending_gifts = await db.fetch(
+                "SELECT gift_id FROM gift_claims WHERE user_id = $1 AND status = 'pending'",
+                user["id"],
+            )
+            pending_gift_ids = {row["gift_id"] for row in pending_gifts}
 
             # Текущее место компании пользователя в рейтинге месяца
             company_rank = None
@@ -2261,18 +2290,16 @@ async def handle_webapp_gifts(request):
         streak = user["streak_days"] or 0
         last_milestone = user["last_streak_bonus"] or 0
 
-        gifts = [
-            {"id": "drink", "points": 50, "emoji": "🥤", "name": "Напиток",
-             "desc": "Освежающий напиток на выбор к вашему обеду!"},
-            {"id": "dessert", "points": 100, "emoji": "🍰", "name": "Десерт",
-             "desc": "Вкусный десерт — сладкое завершение обеда!"},
-            {"id": "lunch", "points": 200, "emoji": "🍱", "name": "Бесплатный обед",
-             "desc": "Полноценный обед абсолютно бесплатно!"},
-            {"id": "vip", "points": 500, "emoji": "👑", "name": "Статус VIP",
-             "desc": "Особый статус с приоритетной доставкой и эксклюзивными бонусами!"},
-        ]
+        gift_descriptions = {
+            "drink": "Освежающий напиток на выбор к вашему обеду!",
+            "dessert": "Вкусный десерт — сладкое завершение обеда!",
+            "lunch": "Полноценный обед абсолютно бесплатно!",
+            "vip": "Особый статус с приоритетной доставкой и эксклюзивными бонусами!",
+        }
+        gifts = [dict({"id": gift_id, **gift}, desc=gift_descriptions[gift_id]) for gift_id, gift in GIFT_CATALOG.items()]
         for g in gifts:
             g["unlocked"] = points >= g["points"]
+            g["pending"] = g["id"] in pending_gift_ids
 
         streak_milestones = [
             {"days": 5, "bonus": 15},
@@ -2334,6 +2361,79 @@ async def handle_webapp_referral(request):
         }, headers=cors_headers())
     except Exception as e:
         logger.error(f"webapp_referral error: {e}")
+        return web.json_response({"error": str(e)}, status=500, headers=cors_headers())
+
+
+async def handle_webapp_claim_gift(request):
+    """POST /api/claim-gift — заявка клиента на доступный подарок."""
+    try:
+        init_data = await get_init_data_from_request(request)
+        user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
+        if not user_data:
+            return web.json_response({"error": "Invalid auth"}, status=401, headers=cors_headers())
+
+        payload = await request.json()
+        gift_id = str(payload.get("gift_id") or "").strip().lower()
+        gift = GIFT_CATALOG.get(gift_id)
+        if not gift:
+            return web.json_response({"error": "Подарок не найден"}, status=400, headers=cors_headers())
+
+        telegram_id = user_data.get("id")
+        pool = await get_pool()
+        async with pool.acquire() as db:
+            await ensure_gift_claims_table(db)
+            async with db.transaction():
+                user = await db.fetchrow(
+                    """SELECT u.id, u.points, u.full_name, u.phone, c.name AS company_name
+                       FROM users u LEFT JOIN companies c ON c.id = u.company_id
+                       WHERE u.telegram_id = $1 FOR UPDATE OF u""",
+                    telegram_id,
+                )
+                if not user:
+                    return web.json_response({"error": "User not registered"}, status=404, headers=cors_headers())
+                if int(user["points"] or 0) < gift["points"]:
+                    return web.json_response({"error": "Недостаточно баллов"}, status=400, headers=cors_headers())
+
+                existing = await db.fetchval(
+                    """SELECT id FROM gift_claims
+                       WHERE user_id = $1 AND gift_id = $2 AND status = 'pending'
+                       ORDER BY created_at DESC LIMIT 1""",
+                    user["id"], gift_id,
+                )
+                if existing:
+                    return web.json_response({"success": True, "already_pending": True}, headers=cors_headers())
+
+                claim_id = await db.fetchval(
+                    """INSERT INTO gift_claims (user_id, gift_id, points_required)
+                       VALUES ($1, $2, $3) RETURNING id""",
+                    user["id"], gift_id, gift["points"],
+                )
+
+        notice = (
+            "🎁 ЗАЯВКА НА ПОДАРОК\n\n"
+            f"Заявка №{claim_id}\n"
+            f"Подарок: {gift['emoji']} {gift['name']}\n"
+            f"Стоимость: {gift['points']} баллов\n\n"
+            f"Клиент: {user['full_name'] or '—'}\n"
+            f"Компания: {user['company_name'] or '—'}\n"
+            f"Телефон: {'+' + user['phone'] if user['phone'] else '—'}\n"
+            f"Telegram ID: {telegram_id}\n\n"
+            "Баллы пока не списаны. Подтвердите подарок клиенту вручную."
+        )
+        if BOT_TOKEN:
+            bot = Bot(token=BOT_TOKEN)
+            try:
+                for admin_id in get_admin_ids():
+                    try:
+                        await bot.send_message(admin_id, notice)
+                    except Exception as exc:
+                        logger.warning("Не удалось уведомить админа %s о подарке: %s", admin_id, exc)
+            finally:
+                await bot.session.close()
+
+        return web.json_response({"success": True, "claim_id": claim_id}, headers=cors_headers())
+    except Exception as e:
+        logger.error("webapp_claim_gift error: %s", e)
         return web.json_response({"error": str(e)}, status=500, headers=cors_headers())
 
 
@@ -3169,6 +3269,28 @@ async def handle_webapp_dashboard(request):
                     "review_count": r["review_count"] or 0
                 })
 
+            await ensure_gift_claims_table(db)
+            gift_claim_rows = await db.fetch(
+                """SELECT gc.id, gc.gift_id, gc.points_required, gc.created_at,
+                          u.full_name, u.phone, c.name AS company_name
+                   FROM gift_claims gc
+                   JOIN users u ON u.id = gc.user_id
+                   LEFT JOIN companies c ON c.id = u.company_id
+                   WHERE gc.status = 'pending'
+                   ORDER BY gc.created_at ASC LIMIT 50"""
+            )
+            gift_claims = [{
+                "id": row["id"],
+                "gift_id": row["gift_id"],
+                "gift_name": GIFT_CATALOG.get(row["gift_id"], {}).get("name", row["gift_id"]),
+                "gift_emoji": GIFT_CATALOG.get(row["gift_id"], {}).get("emoji", "🎁"),
+                "points_required": row["points_required"],
+                "full_name": row["full_name"],
+                "phone": row["phone"],
+                "company_name": row["company_name"],
+                "created_at": row["created_at"].strftime("%d.%m.%Y %H:%M") if row["created_at"] else "",
+            } for row in gift_claim_rows]
+
         return web.json_response({
             "daily_stats": daily_stats,
             "total_orders_week": total_orders_week,
@@ -3179,10 +3301,85 @@ async def handle_webapp_dashboard(request):
             "total_all_orders": total_all_orders,
             "avg_rating": round(float(avg_rating), 1) if avg_rating else None,
             "couriers_stats": couriers_stats,
+            "gift_claims": gift_claims,
             "now_stats": now_stats
         }, headers=cors_headers())
     except Exception as e:
         logger.error(f"webapp_dashboard error: {e}")
+        return web.json_response({"error": str(e)}, status=500, headers=cors_headers())
+
+
+async def handle_webapp_process_gift_claim(request):
+    """POST /api/admin/process-gift-claim — подтверждение или отклонение подарка."""
+    try:
+        init_data = await get_init_data_from_request(request)
+        user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
+        if not user_data or user_data.get("id") not in get_admin_ids():
+            return web.json_response({"error": "Доступ только для администраторов"}, status=403, headers=cors_headers())
+
+        payload = await request.json()
+        try:
+            claim_id = int(payload.get("claim_id"))
+        except (TypeError, ValueError):
+            return web.json_response({"error": "Некорректная заявка"}, status=400, headers=cors_headers())
+        action = str(payload.get("action") or "").lower()
+        if action not in {"approve", "reject"}:
+            return web.json_response({"error": "Некорректное действие"}, status=400, headers=cors_headers())
+
+        pool = await get_pool()
+        async with pool.acquire() as db:
+            await ensure_gift_claims_table(db)
+            async with db.transaction():
+                claim = await db.fetchrow(
+                    """SELECT gc.*, u.telegram_id, u.points, u.full_name
+                       FROM gift_claims gc JOIN users u ON u.id = gc.user_id
+                       WHERE gc.id = $1 FOR UPDATE OF gc, u""",
+                    claim_id,
+                )
+                if not claim or claim["status"] != "pending":
+                    return web.json_response({"error": "Заявка уже обработана или не найдена"}, status=409, headers=cors_headers())
+
+                if action == "approve":
+                    if int(claim["points"] or 0) < int(claim["points_required"]):
+                        return web.json_response({"error": "У клиента уже недостаточно баллов"}, status=409, headers=cors_headers())
+                    await db.execute(
+                        "UPDATE users SET points = points - $1 WHERE id = $2",
+                        claim["points_required"], claim["user_id"],
+                    )
+                    new_status = "approved"
+                else:
+                    new_status = "rejected"
+                await db.execute(
+                    "UPDATE gift_claims SET status = $1, processed_at = CURRENT_TIMESTAMP WHERE id = $2",
+                    new_status, claim_id,
+                )
+
+        gift = GIFT_CATALOG.get(claim["gift_id"], {"emoji": "🎁", "name": "Подарок"})
+        if action == "approve":
+            text = (
+                f"✅ Ваша заявка на подарок подтверждена!\n\n"
+                f"{gift['emoji']} {gift['name']}\n"
+                f"Списано: {claim['points_required']} баллов.\n\n"
+                "Администратор сообщит детали получения подарка."
+            )
+        else:
+            text = (
+                f"❌ Заявка на подарок отклонена\n\n"
+                f"{gift['emoji']} {gift['name']}\n"
+                "Баллы не списаны. За подробностями обратитесь к администратору."
+            )
+        if BOT_TOKEN:
+            bot = Bot(token=BOT_TOKEN)
+            try:
+                await bot.send_message(claim["telegram_id"], text)
+            except Exception as exc:
+                logger.warning("Не удалось уведомить клиента о заявке %s: %s", claim_id, exc)
+            finally:
+                await bot.session.close()
+
+        return web.json_response({"success": True, "status": new_status}, headers=cors_headers())
+    except Exception as e:
+        logger.error("webapp_process_gift_claim error: %s", e)
         return web.json_response({"error": str(e)}, status=500, headers=cors_headers())
 
 
@@ -3260,6 +3457,7 @@ async def create_app():
     app.router.add_post("/api/balance-history", handle_webapp_balance_history)
     app.router.add_post("/api/topup", handle_webapp_topup)
     app.router.add_post("/api/gifts", handle_webapp_gifts)
+    app.router.add_post("/api/claim-gift", handle_webapp_claim_gift)
     app.router.add_post("/api/referral", handle_webapp_referral)
     app.router.add_post("/api/support-request", handle_webapp_support_request)
     app.router.add_post("/api/settings", handle_webapp_settings_get)
@@ -3267,6 +3465,7 @@ async def create_app():
     app.router.add_post("/api/settings/weekly-menu", handle_webapp_weekly_menu_for_day)
     app.router.add_post("/api/settings/set-weekly", handle_webapp_settings_set_weekly)
     app.router.add_post("/api/dashboard", handle_webapp_dashboard)
+    app.router.add_post("/api/admin/process-gift-claim", handle_webapp_process_gift_claim)
     app.router.add_post("/api/autoorder", handle_webapp_autoorder_get)
     app.router.add_post("/api/full-settings", handle_webapp_full_settings)
     app.router.add_post("/api/update-profile", handle_webapp_update_profile)
@@ -3281,9 +3480,9 @@ async def create_app():
     for path in ["/api/menu", "/api/toggle-favorite", "/api/corporate-request",
                  "/api/order", "/api/my-order", "/api/cancel-order",
                  "/api/profile", "/api/rating", "/api/balance-history", "/api/topup",
-                 "/api/gifts", "/api/referral", "/api/support-request", "/api/settings",
+                 "/api/gifts", "/api/claim-gift", "/api/referral", "/api/support-request", "/api/settings",
                  "/api/settings/toggle-auto", "/api/settings/weekly-menu", "/api/settings/set-weekly",
-                 "/api/dashboard", "/api/autoorder", "/api/full-settings", "/api/update-profile",
+                 "/api/dashboard", "/api/admin/process-gift-claim", "/api/autoorder", "/api/full-settings", "/api/update-profile",
                  "/api/update-company-address", "/api/update-birthday", "/api/update-lang",
                  "/api/toggle-notification", "/api/update-order-location", "/api/set-delivery-slot",
                  "/api/update-order-qty"]:
