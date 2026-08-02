@@ -770,9 +770,11 @@ async def handle_webapp_menu(request):
             )
             balance = balance_row["balance"] if balance_row else 0
 
-            total_orders = await db.fetchval(
-                "SELECT total_orders FROM users WHERE id = $1", user_db_id
-            ) or 0
+            user_stats = await db.fetchrow(
+                "SELECT total_orders, points FROM users WHERE id = $1", user_db_id
+            )
+            total_orders = user_stats["total_orders"] or 0
+            user_points = user_stats["points"] or 0
 
             order_date = get_active_order_date()
             day_num = date.fromisoformat(order_date).weekday()
@@ -830,6 +832,111 @@ async def handle_webapp_menu(request):
                         "photo_url": build_photo_url(row["photo_id"])
                     })
 
+            # Индекс текущего каталога нужен для безопасного повтора заказа:
+            # в корзину попадают только блюда, которые действительно доступны
+            # на активную дату. Старые menu_id напрямую не переиспользуем.
+            catalog_by_key = {}
+            for cat, items in categories.items():
+                for item in items:
+                    catalog_by_key[(cat, item["item_number"])] = item
+
+            last_order_date = await db.fetchval(
+                """SELECT MAX(order_date)
+                   FROM orders
+                   WHERE user_id = $1
+                     AND status != 'cancelled'
+                     AND order_date < $2::text""",
+                user_db_id, order_date
+            )
+            last_order_items = []
+            if last_order_date:
+                last_rows = await db.fetch(
+                    """SELECT m.item_number, m.category, COUNT(o.id)::int AS qty
+                       FROM orders o
+                       JOIN menus m ON m.id = o.menu_id
+                       WHERE o.user_id = $1
+                         AND o.order_date = $2::text
+                         AND o.status != 'cancelled'
+                         AND m.category != 'main'
+                       GROUP BY m.item_number, m.category
+                       ORDER BY m.category, m.item_number""",
+                    user_db_id, last_order_date
+                )
+                for row in last_rows:
+                    current_item = catalog_by_key.get(
+                        (row["category"], row["item_number"])
+                    )
+                    if current_item:
+                        last_order_items.append({
+                            **current_item,
+                            "category": row["category"],
+                            "qty": row["qty"],
+                        })
+
+            # Хиты считаются по реальным заказам за последние 30 дней, но в
+            # ответ включаются только позиции, доступные в текущем меню.
+            popular_rows = await db.fetch(
+                """SELECT m.item_number, m.category, COUNT(o.id)::int AS order_count
+                   FROM orders o
+                   JOIN menus m ON m.id = o.menu_id
+                   WHERE o.status != 'cancelled'
+                     AND o.order_date >= $1::text
+                     AND m.category != 'main'
+                   GROUP BY m.item_number, m.category
+                   ORDER BY order_count DESC
+                   LIMIT 30""",
+                (date.fromisoformat(order_date) - timedelta(days=30)).isoformat()
+            )
+            popular_items = []
+            popular_count_by_key = {}
+            for row in popular_rows:
+                key = (row["category"], row["item_number"])
+                popular_count_by_key[key] = row["order_count"]
+                current_item = catalog_by_key.get(key)
+                if current_item and len(popular_items) < 6:
+                    popular_items.append({
+                        **current_item,
+                        "category": row["category"],
+                        "order_count": row["order_count"],
+                    })
+
+            # Дополнения для блока «С этим заказывают»: сначала самые
+            # популярные напитки/салаты/десерты, затем доступные позиции меню.
+            complementary_categories = ("drink", "salad", "dessert")
+            recommendation_candidates = []
+            for cat in complementary_categories:
+                for item in categories.get(cat, []):
+                    key = (cat, item["item_number"])
+                    recommendation_candidates.append((
+                        popular_count_by_key.get(key, 0), cat, item
+                    ))
+            recommendation_candidates.sort(
+                key=lambda value: (-value[0], complementary_categories.index(value[1]))
+            )
+            recommendations = [
+                {**item, "category": cat}
+                for _, cat, item in recommendation_candidates[:3]
+            ]
+
+            gift_levels = [
+                (50, "drink", "🥤"),
+                (100, "dessert", "🍰"),
+                (200, "lunch", "🍱"),
+                (500, "vip", "👑"),
+            ]
+            next_gift = next(
+                (level for level in gift_levels if user_points < level[0]),
+                gift_levels[-1]
+            )
+            gift_progress = {
+                "points": user_points,
+                "target": next_gift[0],
+                "remaining": max(0, next_gift[0] - user_points),
+                "gift_id": next_gift[1],
+                "emoji": next_gift[2],
+                "completed": user_points >= gift_levels[-1][0],
+            }
+
         return web.json_response({
             "categories": categories,
             "balance": balance,
@@ -839,7 +946,12 @@ async def handle_webapp_menu(request):
             "earliest_delivery_slot": get_delivery_time(order_date),
             "orders_open": is_orders_open(),
             "order_close_time": ORDER_CLOSE_TIME,
-            "is_first_order": total_orders == 0
+            "is_first_order": total_orders == 0,
+            "last_order_date": last_order_date,
+            "last_order_items": last_order_items,
+            "popular_items": popular_items,
+            "recommendations": recommendations,
+            "gift_progress": gift_progress,
         }, headers=cors_headers())
     except Exception as e:
         logger.error(f"webapp_menu error: {e}")
