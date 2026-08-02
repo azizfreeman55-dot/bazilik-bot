@@ -93,6 +93,11 @@
   }
   .sales-card-title { font-size: 14px; font-weight: 800; }
   .sales-card-sub { font-size: 12px; color: var(--ink-soft); margin-top: 3px; line-height: 1.4; }
+  .greeting-card {
+    background: linear-gradient(135deg, rgba(182,232,75,0.18), rgba(182,232,75,0.05));
+    border-color: rgba(182,232,75,0.32);
+  }
+  .greeting-title { font-size: 18px; font-weight: 800; line-height: 1.25; }
   .repeat-order-btn {
     width: 100%; margin-top: 10px; border: none; border-radius: 12px;
     padding: 12px; background: var(--green-600); color: var(--on-accent);
@@ -725,6 +730,12 @@
       request_sent: "✅ Заявка принята! Менеджер свяжется с вами.",
       request_already_sent: "✅ Ваша заявка уже принята. Менеджер скоро свяжется.",
       invalid_employees: "Укажите количество сотрудников от 2",
+      greeting_morning: "Доброе утро",
+      greeting_day: "Добрый день",
+      greeting_evening: "Добрый вечер",
+      greeting_night: "Здравствуйте",
+      greeting_today_sub: "Что выберете сегодня на обед?",
+      greeting_tomorrow_sub: "Выберите обед на завтра — мы доставим в удобное время.",
     },
     uz: {
       menu: "Menyu", order: "Buyurtma", auto: "Avto", balance: "Hisob", more: "Yana",
@@ -840,6 +851,12 @@
       request_sent: "✅ Ariza qabul qilindi! Menejer siz bilan bog'lanadi.",
       request_already_sent: "✅ Arizangiz qabul qilingan. Menejer tez orada bog'lanadi.",
       invalid_employees: "Xodimlar sonini 2 dan boshlab kiriting",
+      greeting_morning: "Xayrli tong",
+      greeting_day: "Xayrli kun",
+      greeting_evening: "Xayrli kech",
+      greeting_night: "Assalomu alaykum",
+      greeting_today_sub: "Bugun tushlikka nimani tanlaysiz?",
+      greeting_tomorrow_sub: "Ertangi tushlikni tanlang — qulay vaqtda yetkazib beramiz.",
     }
   };
 
@@ -929,8 +946,19 @@
   let recommendations = [];
   let giftProgress = null;
   let recommendationOfferSeen = false;
+  let greetingName = "";
+  let greetingHour = 12;
 
   function fmt(n) { return Math.round(n).toLocaleString("ru-RU") + " сум"; }
+
+  function escapeHtml(value) {
+    return String(value || "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
 
   function showToast(text) {
     const toast = document.getElementById("toast");
@@ -1030,6 +1058,8 @@
       personalItems = data.personal_items || [];
       recommendations = data.recommendations || [];
       giftProgress = data.gift_progress || null;
+      greetingName = data.display_name || "";
+      greetingHour = Number.isInteger(data.tashkent_hour) ? data.tashkent_hour : 12;
       document.getElementById("balance-pill").textContent = fmt(userBalance);
 
       const dateLabel = data.date_label || (CURRENT_LANG === "uz" ? "bugun" : "сегодня");
@@ -1177,6 +1207,18 @@
     if (!el) return;
 
     let html = "";
+    if (greetingName) {
+      let greetingKey = "greeting_night";
+      if (greetingHour >= 5 && greetingHour < 12) greetingKey = "greeting_morning";
+      else if (greetingHour >= 12 && greetingHour < 18) greetingKey = "greeting_day";
+      else if (greetingHour >= 18 && greetingHour < 23) greetingKey = "greeting_evening";
+      const greetingSub = orderIsTomorrow ? T("greeting_tomorrow_sub") : T("greeting_today_sub");
+      html += `
+        <div class="sales-card greeting-card">
+          <div class="greeting-title">${T(greetingKey)}, ${escapeHtml(greetingName)}! 👋</div>
+          <div class="sales-card-sub">${greetingSub}</div>
+        </div>`;
+    }
     if (lastOrderItems.length > 0) {
       const totalQty = lastOrderItems.reduce((sum, item) => sum + Number(item.qty || 1), 0);
       const preview = lastOrderItems.slice(0, 2).map(item => item.name).join(" · ");
