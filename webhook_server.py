@@ -93,6 +93,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 _pool = None
+_sales_tables_ready = False
+_sales_tables_lock = asyncio.Lock()
 
 
 async def get_pool():
@@ -196,6 +198,42 @@ async def ensure_pending_click_orders_table(db):
         )
         """
     )
+
+
+async def ensure_sales_features_tables(db):
+    """Таблицы второго пакета: избранное и заявки организаций."""
+    global _sales_tables_ready
+    if _sales_tables_ready:
+        return
+    async with _sales_tables_lock:
+        if _sales_tables_ready:
+            return
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_favorites (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                item_name TEXT NOT NULL,
+                category TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, item_name, category)
+            )
+            """
+        )
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS corporate_requests (
+                id BIGSERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                employees INTEGER NOT NULL,
+                preferred_time TEXT,
+                comment TEXT,
+                status TEXT NOT NULL DEFAULT 'new',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        _sales_tables_ready = True
 
 
 async def notify_admins_click_payment(
@@ -764,6 +802,17 @@ async def handle_webapp_menu(request):
                     status=404, headers=cors_headers()
                 )
             user_db_id = user["id"]
+            await ensure_sales_features_tables(db)
+
+            favorite_rows = await db.fetch(
+                """SELECT item_name, category
+                   FROM user_favorites
+                   WHERE user_id = $1""",
+                user_db_id
+            )
+            favorite_keys = {
+                (row["item_name"], row["category"]) for row in favorite_rows
+            }
 
             balance_row = await db.fetchrow(
                 "SELECT balance FROM user_balance WHERE user_id = $1", user_db_id
@@ -812,12 +861,15 @@ async def handle_webapp_menu(request):
                     cat = row["category"] or "second"
                     key = (row["item_number"], cat)
                     existing = existing_by_key.get(key)
+                    item_name = existing["name"] if existing else row["name"]
                     categories.setdefault(cat, []).append({
                         "id": existing["id"] if existing else f"weekly_{day_num}_{row['item_number']}_{cat}",
                         "item_number": row["item_number"],
-                        "name": existing["name"] if existing else row["name"],
+                        "name": item_name,
                         "price": existing["price"] if existing else row["price"],
-                        "photo_url": build_photo_url(existing["photo_id"] if existing else row["photo_id"])
+                        "photo_url": build_photo_url(existing["photo_id"] if existing else row["photo_id"]),
+                        "category": cat,
+                        "is_favorite": (item_name, cat) in favorite_keys,
                     })
             else:
                 # Нет постоянного меню на этот день недели вообще — показываем
@@ -829,7 +881,9 @@ async def handle_webapp_menu(request):
                         "item_number": row["item_number"],
                         "name": row["name"],
                         "price": row["price"],
-                        "photo_url": build_photo_url(row["photo_id"])
+                        "photo_url": build_photo_url(row["photo_id"]),
+                        "category": cat,
+                        "is_favorite": (row["name"], cat) in favorite_keys,
                     })
 
             # Индекс текущего каталога нужен для безопасного повтора заказа:
@@ -900,6 +954,34 @@ async def handle_webapp_menu(request):
                         "order_count": row["order_count"],
                     })
 
+            # Персональная подборка строится только по истории этого клиента.
+            # Если знакомое блюдо сегодня недоступно, оно не показывается.
+            personal_rows = await db.fetch(
+                """SELECT m.item_number, m.category, COUNT(o.id)::int AS order_count
+                   FROM orders o
+                   JOIN menus m ON m.id = o.menu_id
+                   WHERE o.user_id = $1
+                     AND o.status != 'cancelled'
+                     AND o.order_date >= $2::text
+                     AND m.category != 'main'
+                   GROUP BY m.item_number, m.category
+                   ORDER BY order_count DESC
+                   LIMIT 20""",
+                user_db_id,
+                (date.fromisoformat(order_date) - timedelta(days=90)).isoformat()
+            )
+            personal_items = []
+            for row in personal_rows:
+                current_item = catalog_by_key.get(
+                    (row["category"], row["item_number"])
+                )
+                if current_item and len(personal_items) < 4:
+                    personal_items.append({
+                        **current_item,
+                        "category": row["category"],
+                        "order_count": row["order_count"],
+                    })
+
             # Дополнения для блока «С этим заказывают»: сначала самые
             # популярные напитки/салаты/десерты, затем доступные позиции меню.
             complementary_categories = ("drink", "salad", "dessert")
@@ -950,12 +1032,207 @@ async def handle_webapp_menu(request):
             "last_order_date": last_order_date,
             "last_order_items": last_order_items,
             "popular_items": popular_items,
+            "personal_items": personal_items,
             "recommendations": recommendations,
             "gift_progress": gift_progress,
         }, headers=cors_headers())
     except Exception as e:
         logger.error(f"webapp_menu error: {e}")
         return web.json_response({"error": str(e)}, status=500, headers=cors_headers())
+
+
+async def handle_webapp_toggle_favorite(request):
+    """Добавляет блюдо в избранное или удаляет его."""
+    try:
+        init_data = await get_init_data_from_request(request)
+        user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
+        if not user_data:
+            return web.json_response(
+                {"success": False, "error": "Invalid auth"},
+                status=401, headers=cors_headers()
+            )
+
+        body = await request.json()
+        item_name = str(body.get("item_name") or "").strip()
+        category = str(body.get("category") or "").strip()
+        is_favorite = bool(body.get("is_favorite"))
+        if not item_name or len(item_name) > 200 or not category:
+            return web.json_response(
+                {"success": False, "error": "Неверные данные блюда"},
+                status=400, headers=cors_headers()
+            )
+        if category in HIDDEN_CLIENT_CATEGORIES:
+            return web.json_response(
+                {"success": False, "error": "Категория недоступна"},
+                status=400, headers=cors_headers()
+            )
+
+        pool = await get_pool()
+        async with pool.acquire() as db:
+            user_id = await db.fetchval(
+                "SELECT id FROM users WHERE telegram_id = $1",
+                user_data["id"]
+            )
+            if not user_id:
+                return web.json_response(
+                    {"success": False, "error": "User not found"},
+                    status=404, headers=cors_headers()
+                )
+            await ensure_sales_features_tables(db)
+
+            item_exists = await db.fetchval(
+                """SELECT 1
+                   WHERE EXISTS (
+                       SELECT 1 FROM menus
+                       WHERE name = $1 AND category = $2 AND is_active = 1
+                   ) OR EXISTS (
+                       SELECT 1 FROM weekly_menu
+                       WHERE name = $1 AND category = $2 AND is_active = 1
+                   )""",
+                item_name, category
+            )
+            if not item_exists:
+                return web.json_response(
+                    {"success": False, "error": "Блюдо больше недоступно"},
+                    status=400, headers=cors_headers()
+                )
+
+            if is_favorite:
+                await db.execute(
+                    """INSERT INTO user_favorites (user_id, item_name, category)
+                       VALUES ($1, $2, $3)
+                       ON CONFLICT (user_id, item_name, category) DO NOTHING""",
+                    user_id, item_name, category
+                )
+            else:
+                await db.execute(
+                    """DELETE FROM user_favorites
+                       WHERE user_id = $1 AND item_name = $2 AND category = $3""",
+                    user_id, item_name, category
+                )
+
+        return web.json_response(
+            {"success": True, "is_favorite": is_favorite},
+            headers=cors_headers()
+        )
+    except Exception as e:
+        logger.error(f"webapp_toggle_favorite error: {e}")
+        return web.json_response(
+            {"success": False, "error": str(e)},
+            status=500, headers=cors_headers()
+        )
+
+
+async def handle_webapp_corporate_request(request):
+    """Сохраняет заявку на корпоративное питание и уведомляет администраторов."""
+    try:
+        init_data = await get_init_data_from_request(request)
+        user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
+        if not user_data:
+            return web.json_response(
+                {"success": False, "error": "Invalid auth"},
+                status=401, headers=cors_headers()
+            )
+
+        body = await request.json()
+        try:
+            employees = int(body.get("employees"))
+        except (TypeError, ValueError):
+            employees = 0
+        preferred_time = str(body.get("preferred_time") or "").strip()
+        comment = str(body.get("comment") or "").strip()[:500]
+        allowed_times = {
+            f"{hour:02d}:{minute:02d}"
+            for hour in range(8, 17)
+            for minute in (0, 30)
+            if not (hour == 16 and minute == 30)
+        }
+        if employees < 2 or employees > 10000:
+            return web.json_response(
+                {"success": False, "error": "Укажите количество сотрудников от 2 до 10000"},
+                status=400, headers=cors_headers()
+            )
+        if preferred_time not in allowed_times:
+            return web.json_response(
+                {"success": False, "error": "Выберите корректное время доставки"},
+                status=400, headers=cors_headers()
+            )
+
+        pool = await get_pool()
+        async with pool.acquire() as db:
+            await ensure_sales_features_tables(db)
+            client = await db.fetchrow(
+                """SELECT u.id, u.full_name, u.phone, c.name AS company_name,
+                          COALESCE(c.maps_link, c.address) AS company_address
+                   FROM users u
+                   LEFT JOIN companies c ON c.id = u.company_id
+                   WHERE u.telegram_id = $1""",
+                user_data["id"]
+            )
+            if not client:
+                return web.json_response(
+                    {"success": False, "error": "User not found"},
+                    status=404, headers=cors_headers()
+                )
+
+            recent_id = await db.fetchval(
+                """SELECT id FROM corporate_requests
+                   WHERE user_id = $1
+                     AND created_at > CURRENT_TIMESTAMP - INTERVAL '10 minutes'
+                   ORDER BY created_at DESC
+                   LIMIT 1""",
+                client["id"]
+            )
+            if recent_id:
+                return web.json_response(
+                    {"success": True, "already_received": True},
+                    headers=cors_headers()
+                )
+
+            request_id = await db.fetchval(
+                """INSERT INTO corporate_requests
+                   (user_id, employees, preferred_time, comment)
+                   VALUES ($1, $2, $3, $4)
+                   RETURNING id""",
+                client["id"], employees, preferred_time, comment or None
+            )
+
+        admin_text = (
+            "🏢 НОВАЯ ЗАЯВКА НА КОРПОРАТИВНОЕ ПИТАНИЕ\n\n"
+            f"🔢 Заявка №{request_id}\n"
+            f"👤 {client['full_name'] or 'Клиент'}\n"
+            f"🏢 {client['company_name'] or '—'}\n"
+            f"📱 {'+' + str(client['phone']) if client['phone'] else '—'}\n"
+            f"👥 Сотрудников: {employees}\n"
+            f"🕐 Желаемое время: {preferred_time}\n"
+            f"📍 Адрес: {client['company_address'] or '—'}"
+        )
+        if comment:
+            admin_text += f"\n💬 Комментарий: {comment}"
+
+        bot = Bot(token=BOT_TOKEN)
+        try:
+            for admin_id in get_admin_ids():
+                try:
+                    await bot.send_message(admin_id, admin_text)
+                except Exception as e:
+                    logger.warning(
+                        f"Не удалось уведомить админа {admin_id} "
+                        f"о корпоративной заявке {request_id}: {e}"
+                    )
+        finally:
+            await bot.session.close()
+
+        return web.json_response(
+            {"success": True, "request_id": request_id},
+            headers=cors_headers()
+        )
+    except Exception as e:
+        logger.error(f"webapp_corporate_request error: {e}")
+        return web.json_response(
+            {"success": False, "error": str(e)},
+            status=500, headers=cors_headers()
+        )
 
 
 async def handle_webapp_order(request):
@@ -2855,6 +3132,8 @@ async def create_app():
     app.router.add_post("/click/complete", handle_click_complete)
 
     app.router.add_post("/api/menu", handle_webapp_menu)
+    app.router.add_post("/api/toggle-favorite", handle_webapp_toggle_favorite)
+    app.router.add_post("/api/corporate-request", handle_webapp_corporate_request)
     app.router.add_post("/api/order", handle_webapp_order)
     app.router.add_post("/api/my-order", handle_webapp_my_order)
     app.router.add_post("/api/cancel-order", handle_webapp_cancel_order)
@@ -2880,7 +3159,8 @@ async def create_app():
     app.router.add_post("/api/set-delivery-slot", handle_webapp_set_delivery_slot)
     app.router.add_post("/api/update-order-qty", handle_webapp_update_order_qty)
 
-    for path in ["/api/menu", "/api/order", "/api/my-order", "/api/cancel-order",
+    for path in ["/api/menu", "/api/toggle-favorite", "/api/corporate-request",
+                 "/api/order", "/api/my-order", "/api/cancel-order",
                  "/api/profile", "/api/rating", "/api/balance-history", "/api/topup",
                  "/api/gifts", "/api/referral", "/api/settings",
                  "/api/settings/toggle-auto", "/api/settings/weekly-menu", "/api/settings/set-weekly",
