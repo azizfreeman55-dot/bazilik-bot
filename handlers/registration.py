@@ -260,6 +260,16 @@ async def process_location(message: Message, state: FSMContext):
         bonus_text = "\n🎁 *+10 баллов* за приглашение друга!"
 
     is_admin = message.from_user.id in ADMIN_IDS
+    if lang.startswith("uz"):
+        sales_text = (
+            "🎁 *Birinchi buyurtmangizga 0,5 l kompot sovg'a!*\n"
+            "🔥 Bugungi menyuni oching va tushligingizni tanlang 👇"
+        )
+    else:
+        sales_text = (
+            "🎁 *На первый заказ — компот 0,5 л в подарок!*\n"
+            "🔥 Откройте сегодняшнее меню и выберите обед 👇"
+        )
     await state.clear()
     await message.answer(
         f"{t(lang, 'reg_done')}\n\n"
@@ -270,6 +280,7 @@ async def process_location(message: Message, state: FSMContext):
         f"{t(lang, 'code_label')}: `{referral_code}`\n"
         f"{t(lang, 'points_label')}: {user['points']}"
         f"{bonus_text}\n\n"
+        f"{sales_text}\n\n"
         f"{t(lang, 'daily_info')}",
         parse_mode="Markdown",
         reply_markup=open_app_keyboard(lang)
