@@ -1925,6 +1925,7 @@ async def handle_webapp_profile(request):
             "status": user["status"],
             "balance": balance,
             "referral_code": user["referral_code"],
+            "is_admin": telegram_id in get_admin_ids(),
         }, headers=cors_headers())
     except Exception as e:
         logger.error(f"webapp_profile error: {e}")
@@ -1934,19 +1935,44 @@ async def handle_webapp_profile(request):
 async def handle_webapp_rating(request):
     """POST /api/rating — топ компаний за месяц"""
     try:
+        init_data = await get_init_data_from_request(request)
+        user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
+        if not user_data:
+            return web.json_response({"error": "Invalid auth"}, status=401, headers=cors_headers())
+
+        telegram_id = user_data.get("id")
         pool = await get_pool()
         async with pool.acquire() as db:
+            current_user = await db.fetchrow(
+                "SELECT company_id FROM users WHERE telegram_id = $1", telegram_id
+            )
             rows = await db.fetch(
-                """SELECT c.name, c.total_orders,
+                """SELECT c.id, c.name, c.total_orders,
                    (SELECT COUNT(*) FROM orders o
                     JOIN users u ON o.user_id = u.id
                     WHERE u.company_id = c.id
-                    AND to_char(o.created_at, 'YYYY-MM') = to_char(NOW(), 'YYYY-MM')) as month_orders
+                    AND to_char(o.created_at, 'YYYY-MM') = to_char(NOW(), 'YYYY-MM')
+                    AND o.status != 'cancelled') as month_orders
                    FROM companies c
-                   ORDER BY month_orders DESC LIMIT 10"""
+                   ORDER BY month_orders DESC, c.name ASC"""
             )
+        companies = [dict(r) for r in rows[:10]]
+        current_company = None
+        company_id = current_user["company_id"] if current_user else None
+        if company_id:
+            for index, row in enumerate(rows):
+                if row["id"] == company_id:
+                    previous_orders = rows[index - 1]["month_orders"] if index > 0 else row["month_orders"]
+                    current_company = {
+                        "name": row["name"],
+                        "rank": index + 1,
+                        "month_orders": row["month_orders"],
+                        "orders_to_next": max(0, previous_orders - row["month_orders"] + (1 if index > 0 else 0)),
+                    }
+                    break
         return web.json_response({
-            "companies": [dict(r) for r in rows]
+            "companies": companies,
+            "current_company": current_company,
         }, headers=cors_headers())
     except Exception as e:
         logger.error(f"webapp_rating error: {e}")
@@ -2308,6 +2334,87 @@ async def handle_webapp_referral(request):
         }, headers=cors_headers())
     except Exception as e:
         logger.error(f"webapp_referral error: {e}")
+        return web.json_response({"error": str(e)}, status=500, headers=cors_headers())
+
+
+async def handle_webapp_support_request(request):
+    """POST /api/support-request — обращение клиента администратору."""
+    try:
+        init_data = await get_init_data_from_request(request)
+        user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
+        if not user_data:
+            return web.json_response({"error": "Invalid auth"}, status=401, headers=cors_headers())
+
+        payload = await request.json()
+        topic = str(payload.get("topic") or "other").strip().lower()
+        message = str(payload.get("message") or "").strip()
+        if topic not in {"order", "payment", "delivery", "other"}:
+            topic = "other"
+        if len(message) < 5 or len(message) > 1000:
+            return web.json_response({"error": "Сообщение должно содержать от 5 до 1000 символов"}, status=400, headers=cors_headers())
+
+        telegram_id = user_data.get("id")
+        pool = await get_pool()
+        async with pool.acquire() as db:
+            user = await db.fetchrow(
+                """SELECT u.id, u.full_name, u.phone, c.name AS company_name
+                   FROM users u LEFT JOIN companies c ON c.id = u.company_id
+                   WHERE u.telegram_id = $1""",
+                telegram_id,
+            )
+            if not user:
+                return web.json_response({"error": "User not registered"}, status=404, headers=cors_headers())
+            await db.execute(
+                """CREATE TABLE IF NOT EXISTS support_requests (
+                       id BIGSERIAL PRIMARY KEY,
+                       user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                       topic TEXT NOT NULL,
+                       message TEXT NOT NULL,
+                       status TEXT NOT NULL DEFAULT 'new',
+                       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                   )"""
+            )
+            duplicate = await db.fetchval(
+                """SELECT EXISTS(
+                       SELECT 1 FROM support_requests
+                       WHERE user_id = $1 AND topic = $2 AND message = $3
+                       AND created_at > NOW() - INTERVAL '5 minutes'
+                   )""",
+                user["id"], topic, message,
+            )
+            if not duplicate:
+                await db.execute(
+                    "INSERT INTO support_requests (user_id, topic, message) VALUES ($1, $2, $3)",
+                    user["id"], topic, message,
+                )
+
+        topic_names = {
+            "order": "📦 Заказ", "payment": "💳 Оплата",
+            "delivery": "🚚 Доставка", "other": "💬 Другое",
+        }
+        notice = (
+            "🆘 НОВОЕ ОБРАЩЕНИЕ\n\n"
+            f"Тема: {topic_names[topic]}\n"
+            f"Клиент: {user['full_name'] or '—'}\n"
+            f"Компания: {user['company_name'] or '—'}\n"
+            f"Телефон: {'+' + user['phone'] if user['phone'] else '—'}\n"
+            f"Telegram ID: {telegram_id}\n\n"
+            f"{message}"
+        )
+        if not duplicate and BOT_TOKEN:
+            bot = Bot(token=BOT_TOKEN)
+            try:
+                for admin_id in get_admin_ids():
+                    try:
+                        await bot.send_message(admin_id, notice)
+                    except Exception as exc:
+                        logger.warning("Не удалось отправить обращение админу %s: %s", admin_id, exc)
+            finally:
+                await bot.session.close()
+
+        return web.json_response({"success": True, "duplicate": bool(duplicate)}, headers=cors_headers())
+    except Exception as e:
+        logger.error("webapp_support_request error: %s", e)
         return web.json_response({"error": str(e)}, status=500, headers=cors_headers())
 
 
@@ -3154,6 +3261,7 @@ async def create_app():
     app.router.add_post("/api/topup", handle_webapp_topup)
     app.router.add_post("/api/gifts", handle_webapp_gifts)
     app.router.add_post("/api/referral", handle_webapp_referral)
+    app.router.add_post("/api/support-request", handle_webapp_support_request)
     app.router.add_post("/api/settings", handle_webapp_settings_get)
     app.router.add_post("/api/settings/toggle-auto", handle_webapp_settings_toggle_auto)
     app.router.add_post("/api/settings/weekly-menu", handle_webapp_weekly_menu_for_day)
@@ -3173,7 +3281,7 @@ async def create_app():
     for path in ["/api/menu", "/api/toggle-favorite", "/api/corporate-request",
                  "/api/order", "/api/my-order", "/api/cancel-order",
                  "/api/profile", "/api/rating", "/api/balance-history", "/api/topup",
-                 "/api/gifts", "/api/referral", "/api/settings",
+                 "/api/gifts", "/api/referral", "/api/support-request", "/api/settings",
                  "/api/settings/toggle-auto", "/api/settings/weekly-menu", "/api/settings/set-weekly",
                  "/api/dashboard", "/api/autoorder", "/api/full-settings", "/api/update-profile",
                  "/api/update-company-address", "/api/update-birthday", "/api/update-lang",
