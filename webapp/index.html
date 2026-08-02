@@ -298,6 +298,88 @@
   }
   .more-link:last-child { border-bottom: none; }
 
+  .page-toolbar {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 14px;
+  }
+  .page-toolbar .back-link {
+    width: 38px; height: 38px; padding: 0; border-radius: 12px;
+    background: var(--cream-dark); display: flex; align-items: center;
+    justify-content: center; font-size: 20px;
+  }
+  .page-title { font-size: 19px; font-weight: 800; }
+  .more-hero {
+    background: linear-gradient(135deg, rgba(182,232,75,.22), rgba(182,232,75,.06));
+    border: 1px solid rgba(182,232,75,.3); border-radius: 20px;
+    padding: 18px; margin-bottom: 14px;
+  }
+  .more-hero-top { display: flex; align-items: center; gap: 12px; }
+  .more-avatar {
+    width: 46px; height: 46px; border-radius: 15px; background: var(--green-600);
+    color: var(--on-accent); display: flex; align-items: center; justify-content: center;
+    font-size: 20px; font-weight: 900; flex-shrink: 0;
+  }
+  .more-hero-name { font-size: 17px; font-weight: 800; }
+  .more-hero-company { color: var(--ink-soft); font-size: 12px; margin-top: 2px; }
+  .more-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
+  .more-stat { background: rgba(0,0,0,.16); border-radius: 12px; padding: 10px 12px; }
+  .more-stat strong { color: var(--green-600); font-size: 17px; display: block; }
+  .more-stat span { color: var(--ink-soft); font-size: 10px; }
+  .more-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .more-tile {
+    min-height: 112px; padding: 14px; border-radius: 17px; border: 1px solid var(--line);
+    background: var(--white); color: var(--ink); text-align: left; cursor: pointer;
+    display: flex; flex-direction: column; align-items: flex-start;
+  }
+  .more-tile:active { transform: scale(.98); }
+  .more-tile-icon {
+    width: 38px; height: 38px; border-radius: 12px; display: flex;
+    align-items: center; justify-content: center; background: var(--cream-dark);
+    font-size: 19px; margin-bottom: 12px;
+  }
+  .more-tile-title { font-size: 13px; font-weight: 800; }
+  .more-tile-sub { font-size: 10.5px; color: var(--ink-soft); margin-top: 3px; line-height: 1.3; }
+  .more-admin-tile { grid-column: 1 / -1; min-height: 76px; flex-direction: row; align-items: center; gap: 12px; }
+  .more-admin-tile .more-tile-icon { margin: 0; }
+
+  .reward-hero {
+    background: linear-gradient(135deg, var(--green-600), #7eab25); color: var(--on-accent);
+    border-radius: 20px; padding: 20px; margin-bottom: 12px;
+  }
+  .reward-points { font-size: 34px; font-weight: 900; line-height: 1; }
+  .reward-label { font-size: 12px; opacity: .75; margin-top: 4px; }
+  .reward-track { height: 9px; border-radius: 999px; background: rgba(0,0,0,.18); overflow: hidden; margin-top: 14px; }
+  .reward-fill { height: 100%; border-radius: inherit; background: var(--on-accent); }
+  .reward-next { font-size: 11px; margin-top: 7px; font-weight: 700; }
+  .section-heading { font-size: 14px; font-weight: 800; margin: 16px 0 9px; }
+
+  .rating-me {
+    border-radius: 18px; padding: 16px; margin-bottom: 12px;
+    background: linear-gradient(135deg, rgba(182,232,75,.2), rgba(182,232,75,.04));
+    border: 1px solid rgba(182,232,75,.3);
+  }
+  .rating-me-rank { color: var(--green-600); font-size: 28px; font-weight: 900; }
+  .rating-me-name { font-size: 14px; font-weight: 800; }
+  .rating-me-hint { font-size: 11px; color: var(--ink-soft); margin-top: 4px; }
+  .rating-podium { display: grid; grid-template-columns: 1fr 1.12fr 1fr; gap: 7px; align-items: end; margin: 12px 0 16px; }
+  .podium-card { background: var(--white); border: 1px solid var(--line); border-radius: 15px; padding: 12px 7px; text-align: center; }
+  .podium-card.first { padding-top: 20px; border-color: rgba(182,232,75,.42); }
+  .podium-medal { font-size: 23px; }
+  .podium-name { font-size: 11px; font-weight: 800; margin-top: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .podium-orders { font-size: 10px; color: var(--ink-soft); margin-top: 3px; }
+
+  .achievement-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .achievement-card { background: var(--white); border: 1px solid var(--line); border-radius: 16px; padding: 14px; min-height: 135px; }
+  .achievement-card.locked { opacity: .48; filter: grayscale(.75); }
+  .achievement-icon { font-size: 27px; }
+  .achievement-name { font-size: 13px; font-weight: 800; margin-top: 10px; }
+  .achievement-desc { font-size: 10.5px; color: var(--ink-soft); margin-top: 4px; line-height: 1.35; }
+  .achievement-state { color: var(--green-600); font-size: 10px; font-weight: 800; margin-top: 8px; }
+
+  .support-topic-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0; }
+  .support-topic { padding: 12px 8px; border-radius: 13px; border: 1px solid var(--line); background: var(--cream-dark); color: var(--ink); font-weight: 700; cursor: pointer; }
+  .support-topic.active { border-color: var(--green-600); background: rgba(182,232,75,.12); }
+  .support-textarea { width: 100%; min-height: 112px; resize: vertical; border: 1px solid var(--line); border-radius: 14px; padding: 13px; background: var(--cream-dark); color: var(--ink); font: inherit; outline: none; }
+
   .back-link {
     background: none; border: none; color: var(--green-600); font-size: 13px;
     font-weight: 600; padding: 4px 0 12px; cursor: pointer;
@@ -503,6 +585,7 @@
 
   <!-- PROFILE PAGE -->
   <div class="page" id="page-profile">
+    <div class="page-toolbar"><button class="back-link" onclick="goBack()">‹</button><div class="page-title" data-title="profile">Профиль</div></div>
     <div id="profile-content"><div class="loading">Загружаем профиль…</div></div>
   </div>
 
@@ -513,36 +596,41 @@
 
   <!-- RATING PAGE -->
   <div class="page" id="page-rating">
+    <div class="page-toolbar"><button class="back-link" onclick="goBack()">‹</button><div class="page-title" data-title="rating">Рейтинг компаний</div></div>
     <div id="rating-content"><div class="loading">Загружаем рейтинг…</div></div>
   </div>
 
   <!-- MORE MENU PAGE -->
   <div class="page" id="page-more">
-    <div class="profile-card" style="padding: 8px;">
-      <button class="more-link" data-page="profile">👤 <span id="more-label-profile">Профиль</span></button>
-      <button class="more-link" data-page="rating">🏆 <span id="more-label-rating">Рейтинг компаний</span></button>
-      <button class="more-link" data-page="gifts">🎁 <span id="more-label-gifts">Подарки и награды</span></button>
-      <button class="more-link" data-page="referral">👥 <span id="more-label-referral">Пригласить коллегу</span></button>
-      <button class="more-link" data-page="settings">⚙️ <span id="more-label-settings">Настройки</span></button>
-      <button class="more-link" data-page="dashboard">📊 <span id="more-label-dashboard">Дашборд (админ)</span></button>
-    </div>
+    <div id="more-content"><div class="loading">Загружаем…</div></div>
   </div>
 
   <!-- GIFTS PAGE -->
   <div class="page" id="page-gifts">
-    <button class="back-link" onclick="switchPage('more')">← Назад</button>
+    <div class="page-toolbar"><button class="back-link" onclick="goBack()">‹</button><div class="page-title" data-title="gifts">Подарки и награды</div></div>
     <div id="gifts-content"><div class="loading">Загружаем подарки…</div></div>
   </div>
 
   <!-- REFERRAL PAGE -->
   <div class="page" id="page-referral">
-    <button class="back-link" onclick="switchPage('more')">← Назад</button>
+    <div class="page-toolbar"><button class="back-link" onclick="goBack()">‹</button><div class="page-title" data-title="referral">Пригласить коллегу</div></div>
     <div id="referral-content"><div class="loading">Загружаем…</div></div>
   </div>
 
   <!-- SETTINGS PAGE -->
   <div class="page" id="page-settings">
+    <div class="page-toolbar"><button class="back-link" onclick="goBack()">‹</button><div class="page-title" data-title="settings">Настройки</div></div>
     <div id="settings-content"><div class="loading">Загружаем настройки…</div></div>
+  </div>
+
+  <div class="page" id="page-achievements">
+    <div class="page-toolbar"><button class="back-link" onclick="goBack()">‹</button><div class="page-title" data-title="achievements">Достижения</div></div>
+    <div id="achievements-content"><div class="loading">Загружаем…</div></div>
+  </div>
+
+  <div class="page" id="page-support">
+    <div class="page-toolbar"><button class="back-link" onclick="goBack()">‹</button><div class="page-title" data-title="support">Помощь</div></div>
+    <div id="support-content"></div>
   </div>
 
   <!-- AUTOORDER PAGE -->
@@ -552,7 +640,7 @@
 
   <!-- DASHBOARD PAGE (admin only) -->
   <div class="page" id="page-dashboard">
-    <button class="back-link" onclick="switchPage('more')">← Назад</button>
+    <div class="page-toolbar"><button class="back-link" onclick="goBack()">‹</button><div class="page-title" data-title="dashboard">Дашборд</div></div>
     <div id="dashboard-content"><div class="loading">Загружаем статистику…</div></div>
   </div>
 
@@ -620,6 +708,16 @@
       menu: "Меню", order: "Заказ", auto: "Авто", balance: "Баланс", more: "Ещё",
       profile: "Профиль", rating: "Рейтинг компаний", gifts: "Подарки и награды",
       referral: "Пригласить коллегу", settings: "Настройки", dashboard: "Дашборд (админ)",
+      achievements: "Достижения", support: "Помощь",
+      more_points_hint: "Баллы и доступные подарки", more_rating_hint: "Место вашей компании",
+      more_referral_hint: "Получайте баллы вместе", more_profile_hint: "Данные и статистика",
+      more_settings_hint: "Язык и уведомления", more_achievements_hint: "Ваши личные результаты",
+      more_support_hint: "Написать администратору", more_dashboard_hint: "Статистика и управление",
+      achievement_done: "Получено", achievement_locked: "Ещё впереди",
+      support_intro: "Опишите вопрос — администратор получит сообщение вместе с вашими контактами.",
+      support_order: "Заказ", support_payment: "Оплата", support_delivery: "Доставка", support_other: "Другое",
+      support_placeholder: "Кратко опишите, что произошло…", support_send: "Отправить обращение",
+      support_sent: "✅ Обращение отправлено", support_short: "Напишите сообщение подробнее",
       menu_for: "Меню на", loading_menu: "Загружаем меню…", loading_order: "Загружаем заказ…",
       loading_profile: "Загружаем профиль…", loading_balance: "Загружаем баланс…",
       loading_rating: "Загружаем рейтинг…", loading_gifts: "Загружаем подарки…",
@@ -741,6 +839,16 @@
       menu: "Menyu", order: "Buyurtma", auto: "Avto", balance: "Hisob", more: "Yana",
       profile: "Profil", rating: "Kompaniyalar reytingi", gifts: "Sovg'alar va mukofotlar",
       referral: "Hamkasbni taklif qilish", settings: "Sozlamalar", dashboard: "Boshqaruv paneli (admin)",
+      achievements: "Yutuqlar", support: "Yordam",
+      more_points_hint: "Ballar va mavjud sovg'alar", more_rating_hint: "Kompaniyangiz o'rni",
+      more_referral_hint: "Birga ball to'plang", more_profile_hint: "Ma'lumot va statistika",
+      more_settings_hint: "Til va bildirishnomalar", more_achievements_hint: "Shaxsiy natijalaringiz",
+      more_support_hint: "Administratorga yozish", more_dashboard_hint: "Statistika va boshqaruv",
+      achievement_done: "Olindi", achievement_locked: "Hali oldinda",
+      support_intro: "Savolingizni yozing — administrator aloqa ma'lumotlaringiz bilan xabar oladi.",
+      support_order: "Buyurtma", support_payment: "To'lov", support_delivery: "Yetkazish", support_other: "Boshqa",
+      support_placeholder: "Nima bo'lganini qisqacha yozing…", support_send: "Murojaat yuborish",
+      support_sent: "✅ Murojaat yuborildi", support_short: "Xabarni batafsilroq yozing",
       menu_for: "Menyu", loading_menu: "Menyu yuklanmoqda…", loading_order: "Buyurtma yuklanmoqda…",
       loading_profile: "Profil yuklanmoqda…", loading_balance: "Hisob yuklanmoqda…",
       loading_rating: "Reyting yuklanmoqda…", loading_gifts: "Sovg'alar yuklanmoqda…",
@@ -891,6 +999,9 @@
       const el = document.getElementById(id);
       if (el) el.textContent = T(key);
     }
+    document.querySelectorAll("[data-title]").forEach(el => {
+      el.textContent = T(el.dataset.title);
+    });
   }
 
   async function applyUserLang() {
@@ -939,6 +1050,7 @@
   let orderIsTomorrow = false;
   let earliestDeliverySlot = "08:00";
   let currentPage = "menu";
+  let pageHistory = [];
   let lastOrderItems = [];
   let lastOrderDate = null;
   let popularItems = [];
@@ -982,13 +1094,18 @@
 
   // ─── Navigation ────────────────────────────────────────────────────────────
 
-  function switchPage(page) {
+  function switchPage(page, remember = true) {
+    if (!document.getElementById(`page-${page}`)) return;
+    if (remember && page !== currentPage) {
+      pageHistory.push(currentPage);
+      if (pageHistory.length > 20) pageHistory.shift();
+    }
     currentPage = page;
     document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
     document.getElementById(`page-${page}`).classList.add("active");
     document.querySelectorAll(".nav-btn").forEach(b => {
       const navPage = b.dataset.page;
-      const isMoreGroup = ["more", "rating", "gifts", "referral", "settings", "dashboard", "profile"].includes(page);
+      const isMoreGroup = ["more", "rating", "gifts", "referral", "settings", "dashboard", "profile", "achievements", "support"].includes(page);
       b.classList.toggle("active", navPage === page || (navPage === "more" && isMoreGroup));
     });
 
@@ -1004,18 +1121,23 @@
     if (page === "profile") loadProfile();
     if (page === "balance") loadBalance();
     if (page === "rating") loadRating();
+    if (page === "more") loadMore();
     if (page === "gifts") loadGifts();
     if (page === "referral") loadReferral();
     if (page === "settings") loadSettings();
     if (page === "dashboard") loadDashboard();
+    if (page === "achievements") loadAchievements();
+    if (page === "support") loadSupport();
     if (page === "autoorder") loadAutoorder();
   }
 
-  document.querySelectorAll(".nav-btn").forEach(btn => {
-    btn.addEventListener("click", () => switchPage(btn.dataset.page));
-  });
+  function goBack(fallback = "more") {
+    let target = pageHistory.pop() || fallback;
+    while (target === currentPage && pageHistory.length) target = pageHistory.pop();
+    switchPage(target, false);
+  }
 
-  document.querySelectorAll(".more-link").forEach(btn => {
+  document.querySelectorAll(".nav-btn").forEach(btn => {
     btn.addEventListener("click", () => switchPage(btn.dataset.page));
   });
 
@@ -2200,6 +2322,113 @@
 
   // ─── PROFILE PAGE ───────────────────────────────────────────────────────────
 
+  async function loadMore() {
+    const el = document.getElementById("more-content");
+    el.innerHTML = `<div class="loading">${T("loading_profile")}</div>`;
+    try {
+      const data = await apiCall("/api/profile");
+      if (data.error) throw new Error(data.error);
+      const name = escapeHtml(data.full_name || "—");
+      const initial = escapeHtml((data.full_name || "B").trim().charAt(0).toUpperCase());
+      const tile = (page, icon, title, hint, extra = "") => `
+        <button class="more-tile ${extra}" data-page="${page}">
+          <span class="more-tile-icon">${icon}</span>
+          <span><span class="more-tile-title">${T(title)}</span><span class="more-tile-sub">${T(hint)}</span></span>
+        </button>`;
+
+      el.innerHTML = `
+        <div class="more-hero">
+          <div class="more-hero-top">
+            <div class="more-avatar">${initial}</div>
+            <div><div class="more-hero-name">${name}</div><div class="more-hero-company">${escapeHtml(data.company_name || T("company_not_set"))} · ${escapeHtml(data.status || "")}</div></div>
+          </div>
+          <div class="more-stats">
+            <div class="more-stat"><strong>${Number(data.points || 0)}</strong><span>${T("points_count")}</span></div>
+            <div class="more-stat"><strong>${Number(data.total_orders || 0)}</strong><span>${T("orders_count")}</span></div>
+          </div>
+        </div>
+        <div class="more-grid">
+          ${tile("gifts", "🎁", "gifts", "more_points_hint")}
+          ${tile("rating", "🏆", "rating", "more_rating_hint")}
+          ${tile("achievements", "🏅", "achievements", "more_achievements_hint")}
+          ${tile("referral", "👥", "referral", "more_referral_hint")}
+          ${tile("profile", "👤", "profile", "more_profile_hint")}
+          ${tile("settings", "⚙️", "settings", "more_settings_hint")}
+          ${tile("support", "💬", "support", "more_support_hint")}
+          ${data.is_admin ? tile("dashboard", "📊", "dashboard", "more_dashboard_hint", "more-admin-tile") : ""}
+        </div>`;
+      el.querySelectorAll("[data-page]").forEach(btn => btn.onclick = () => switchPage(btn.dataset.page));
+    } catch (e) {
+      el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">${T("profile_loading_err")}</div></div>`;
+    }
+  }
+
+  async function loadAchievements() {
+    const el = document.getElementById("achievements-content");
+    el.innerHTML = `<div class="loading">${T("loading_profile")}</div>`;
+    try {
+      const [profile, gifts] = await Promise.all([apiCall("/api/profile"), apiCall("/api/gifts")]);
+      if (profile.error || gifts.error) throw new Error(profile.error || gifts.error);
+      const orders = Number(profile.total_orders || 0);
+      const points = Number(profile.points || 0);
+      const streak = Number(gifts.streak?.current || 0);
+      const achievements = CURRENT_LANG === "uz" ? [
+        ["🌱", "Birinchi buyurtma", "Bazilik bilan birinchi tushlik", orders >= 1],
+        ["🍽️", "Doimiy mehmon", "5 ta buyurtma bering", orders >= 5],
+        ["⭐", "Tajribali mijoz", "10 ta buyurtma bering", orders >= 10],
+        ["🏆", "Tushlik ustasi", "20 ta buyurtma bering", orders >= 20],
+        ["🔥", "5 kunlik seriya", "5 kun ketma-ket buyurtma", streak >= 5],
+        ["💚", "50 ball", "50 bonus ball to'plang", points >= 50]
+      ] : [
+        ["🌱", "Первый заказ", "Первый обед вместе с Bazilik", orders >= 1],
+        ["🍽️", "Постоянный гость", "Сделать 5 заказов", orders >= 5],
+        ["⭐", "Опытный клиент", "Сделать 10 заказов", orders >= 10],
+        ["🏆", "Мастер обедов", "Сделать 20 заказов", orders >= 20],
+        ["🔥", "Серия 5 дней", "Заказывать 5 дней подряд", streak >= 5],
+        ["💚", "50 баллов", "Накопить 50 бонусных баллов", points >= 50]
+      ];
+      const unlocked = achievements.filter(a => a[3]).length;
+      el.innerHTML = `<div class="profile-card"><div class="profile-name">${unlocked} / ${achievements.length}</div><div class="profile-sub">${CURRENT_LANG === "uz" ? "Yutuqlar ochildi" : "достижений открыто"}</div></div><div class="achievement-grid">${achievements.map(a => `
+        <div class="achievement-card ${a[3] ? "" : "locked"}">
+          <div class="achievement-icon">${a[0]}</div><div class="achievement-name">${a[1]}</div>
+          <div class="achievement-desc">${a[2]}</div><div class="achievement-state">${T(a[3] ? "achievement_done" : "achievement_locked")}</div>
+        </div>`).join("")}</div>`;
+    } catch (e) {
+      el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">${T("load_error")}</div></div>`;
+    }
+  }
+
+  function loadSupport() {
+    const el = document.getElementById("support-content");
+    el.innerHTML = `<div class="profile-card"><div class="profile-name">💬 ${T("support")}</div><div class="profile-sub">${T("support_intro")}</div>
+      <div class="support-topic-grid">
+        <button class="support-topic active" data-topic="order">📦 ${T("support_order")}</button>
+        <button class="support-topic" data-topic="payment">💳 ${T("support_payment")}</button>
+        <button class="support-topic" data-topic="delivery">🚚 ${T("support_delivery")}</button>
+        <button class="support-topic" data-topic="other">💬 ${T("support_other")}</button>
+      </div>
+      <textarea class="support-textarea" id="support-message" maxlength="1000" placeholder="${T("support_placeholder")}"></textarea>
+      <button class="btn-primary" id="support-send">${T("support_send")}</button></div>`;
+    let topic = "order";
+    el.querySelectorAll(".support-topic").forEach(btn => btn.onclick = () => {
+      topic = btn.dataset.topic;
+      el.querySelectorAll(".support-topic").forEach(x => x.classList.toggle("active", x === btn));
+    });
+    document.getElementById("support-send").onclick = async () => {
+      const message = document.getElementById("support-message").value.trim();
+      if (message.length < 5) return showToast(T("support_short"));
+      const btn = document.getElementById("support-send");
+      btn.disabled = true;
+      try {
+        const result = await apiCall("/api/support-request", { topic, message });
+        if (!result.success) throw new Error(result.error || T("load_error"));
+        showToast(T("support_sent"));
+        document.getElementById("support-message").value = "";
+      } catch (e) { showToast(e.message || T("connection_error")); }
+      finally { btn.disabled = false; }
+    };
+  }
+
   async function loadProfile() {
     const el = document.getElementById("profile-content");
     el.innerHTML = `<div class="loading">${T("loading_profile")}</div>`;
@@ -2358,16 +2587,26 @@
         return;
       }
 
-      let html = "";
+      const current = data.current_company;
+      let html = current ? `<div class="rating-me">
+        <div class="rating-me-rank">#${current.rank}</div>
+        <div class="rating-me-name">${escapeHtml(current.name)}</div>
+        <div class="rating-me-hint">${current.month_orders} ${T("rating_orders")}${current.orders_to_next > 0 ? ` · ${CURRENT_LANG === "uz" ? "Keyingi o'ringacha" : "До следующего места"}: ${current.orders_to_next}` : ""}</div>
+      </div>` : "";
+
+      const medals = ["🥇", "🥈", "🥉"];
+      const top = companies.slice(0, 3);
+      if (top.length) {
+        const podiumOrder = top.length >= 3 ? [top[1], top[0], top[2]] : top;
+        html += `<div class="rating-podium">${podiumOrder.map(c => {
+          const rank = companies.indexOf(c) + 1;
+          return `<div class="podium-card ${rank === 1 ? "first" : ""}"><div class="podium-medal">${medals[rank - 1]}</div><div class="podium-name">${escapeHtml(c.name)}</div><div class="podium-orders">${c.month_orders} ${T("rating_orders")}</div></div>`;
+        }).join("")}</div>`;
+      }
+      html += `<div class="section-heading">${CURRENT_LANG === "uz" ? "Bu oy reytingi" : "Рейтинг за этот месяц"}</div>`;
       companies.forEach((c, i) => {
         const rank = i + 1;
-        html += `
-          <div class="rating-row">
-            <div class="rating-rank ${rank === 1 ? "top1" : ""}">${rank}</div>
-            <div class="rating-name">${c.name}</div>
-            <div class="rating-count">${c.month_orders} ${T("rating_orders")}</div>
-          </div>
-        `;
+        html += `<div class="rating-row"><div class="rating-rank ${rank === 1 ? "top1" : ""}">${rank}</div><div class="rating-name">${escapeHtml(c.name)}</div><div class="rating-count">${c.month_orders} ${T("rating_orders")}</div></div>`;
       });
       el.innerHTML = html;
     } catch (e) {
@@ -2387,7 +2626,15 @@
         return;
       }
 
-      let html = `<div style="font-size: 13px; color: var(--ink-soft); margin-bottom: 12px;">${T("points_label")}: <b style="color: var(--ink);">${data.points}</b></div>`;
+      const nextGift = (data.gifts || []).find(g => !g.unlocked);
+      const progressTarget = nextGift ? Number(nextGift.points) : Math.max(1, Number(data.points));
+      const progress = Math.min(100, Math.round(Number(data.points || 0) / progressTarget * 100));
+      let html = `<div class="reward-hero">
+        <div class="reward-points">${Number(data.points || 0)}</div>
+        <div class="reward-label">${T("points_count")}</div>
+        <div class="reward-track"><div class="reward-fill" style="width:${progress}%"></div></div>
+        <div class="reward-next">${nextGift ? `${T("bonus_until")} «${escapeHtml(nextGift.name)}» — ${Math.max(0, nextGift.points - data.points)}` : T("bonus_all_done")}</div>
+      </div>`;
 
       // ─── Блок: серия заказов подряд (streak) ───
       const streak = data.streak;
@@ -2451,7 +2698,7 @@
       }
 
       // ─── Подарки за баллы ───
-      html += `<div style="font-size: 13px; font-weight: 700; margin: 4px 0 8px;">${T("gifts_section_title")}</div>`;
+      html += `<div class="section-heading">${T("gifts_section_title")}</div>`;
       data.gifts.forEach(g => {
         html += `
           <div class="gift-card ${g.unlocked ? "" : "locked"}">
@@ -2534,7 +2781,6 @@
         : T("not_selected");
 
       let html = `
-        <button class="back-link" id="settings-back-to-more">${T("back")}</button>
         <div class="profile-card" style="padding: 4px;">
           <button class="more-link" id="settings-profile-btn" style="display:flex; justify-content:space-between; align-items:center;">
             <span>👤 ${T("profile")}<br><span style="font-size:11px; color:var(--ink-soft); font-weight:400;">${data.full_name || "—"}</span></span>
@@ -2575,7 +2821,6 @@
       `;
       el.innerHTML = html;
 
-      document.getElementById("settings-back-to-more").onclick = () => switchPage("more");
       document.getElementById("settings-profile-btn").onclick = () => showProfileEditor(data);
       document.getElementById("settings-birthday-btn").onclick = () => showBirthdayPicker(data);
       document.getElementById("settings-lang-btn").onclick = () => showLangPicker(data);
