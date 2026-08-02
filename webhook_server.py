@@ -795,13 +795,22 @@ async def handle_webapp_menu(request):
         telegram_id = user_data.get("id")
         pool = await get_pool()
         async with pool.acquire() as db:
-            user = await db.fetchrow("SELECT id FROM users WHERE telegram_id = $1", telegram_id)
+            user = await db.fetchrow(
+                "SELECT id, full_name FROM users WHERE telegram_id = $1",
+                telegram_id
+            )
             if not user:
                 return web.json_response(
                     {"error": "User not registered. Напишите /start боту."},
                     status=404, headers=cors_headers()
                 )
             user_db_id = user["id"]
+            raw_display_name = (
+                user["full_name"] or user_data.get("first_name") or ""
+            ).strip()
+            display_name = (
+                raw_display_name.split()[0][:40] if raw_display_name else ""
+            )
             await ensure_sales_features_tables(db)
 
             favorite_rows = await db.fetch(
@@ -1029,6 +1038,8 @@ async def handle_webapp_menu(request):
             "orders_open": is_orders_open(),
             "order_close_time": ORDER_CLOSE_TIME,
             "is_first_order": total_orders == 0,
+            "display_name": display_name,
+            "tashkent_hour": tashkent_now().hour,
             "last_order_date": last_order_date,
             "last_order_items": last_order_items,
             "popular_items": popular_items,
