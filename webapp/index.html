@@ -123,6 +123,15 @@
     background: var(--green-600); color: var(--on-accent); font-size: 18px;
     font-weight: 700; cursor: pointer;
   }
+  .corporate-sales-card {
+    background: linear-gradient(135deg, #2D5F3E, #1C3F2B);
+    border-color: rgba(182,232,75,0.35);
+  }
+  .corporate-request-btn {
+    width: 100%; margin-top: 10px; border: none; border-radius: 12px;
+    padding: 12px; background: var(--green-600); color: var(--on-accent);
+    font-size: 13px; font-weight: 800; cursor: pointer;
+  }
 
   .tabs {
     display: flex; gap: 6px; padding: 16px 18px 4px;
@@ -142,8 +151,17 @@
   .list { padding: 12px 18px 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .item-card {
     background: var(--white); border-radius: 16px; border: 1px solid var(--line);
-    overflow: hidden; display: flex; flex-direction: column;
+    overflow: hidden; display: flex; flex-direction: column; position: relative;
   }
+  .favorite-btn {
+    position: absolute; top: 8px; right: 8px; z-index: 3;
+    width: 34px; height: 34px; border-radius: 50%;
+    border: 1px solid rgba(255,255,255,0.22);
+    background: rgba(22,22,22,0.78); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; cursor: pointer; backdrop-filter: blur(5px);
+  }
+  .favorite-btn.active { background: var(--green-600); color: var(--on-accent); }
   .item-thumb {
     width: 100%; aspect-ratio: 1.3; background: var(--cream-dark);
     display: flex; align-items: center; justify-content: center; font-size: 36px;
@@ -573,6 +591,7 @@
       salad:   { label: "Салаты",    icon: "🥗" },
       dessert: { label: "Десерты",   icon: "🍰" },
       drink:   { label: "Напитки",   icon: "🥤" },
+      favorite:{ label: "Избранное", icon: "❤️" },
     },
     uz: {
       breakfast: { label: "Nonushta", icon: "🌅" },
@@ -582,6 +601,7 @@
       salad:   { label: "Salatlar",  icon: "🥗" },
       dessert: { label: "Desertlar", icon: "🍰" },
       drink:   { label: "Ichimliklar", icon: "🥤" },
+      favorite:{ label: "Sevimlilar", icon: "❤️" },
     }
   };
 
@@ -687,6 +707,24 @@
       recommendations_subtitle: "Добавьте дополнение к обеду",
       continue_checkout: "Продолжить оформление",
       recommendation_added: "Добавлено",
+      personal_title: "✨ Для вас",
+      personal_subtitle: "Блюда, которые вы заказываете чаще всего",
+      favorite_added: "❤️ Добавлено в избранное",
+      favorite_removed: "Удалено из избранного",
+      corporate_title: "🏢 Обеды для всей компании",
+      corporate_subtitle: "Оставьте заявку — менеджер рассчитает меню и условия доставки",
+      corporate_button: "Оставить заявку",
+      corporate_form_title: "Корпоративное питание",
+      employees_label: "Количество сотрудников",
+      employees_placeholder: "Например, 25",
+      preferred_time_label: "Желаемое время доставки",
+      comment_label: "Комментарий",
+      comment_placeholder: "Пожелания по меню или доставке",
+      send_request: "Отправить заявку",
+      request_sending: "Отправляем…",
+      request_sent: "✅ Заявка принята! Менеджер свяжется с вами.",
+      request_already_sent: "✅ Ваша заявка уже принята. Менеджер скоро свяжется.",
+      invalid_employees: "Укажите количество сотрудников от 2",
     },
     uz: {
       menu: "Menyu", order: "Buyurtma", auto: "Avto", balance: "Hisob", more: "Yana",
@@ -784,6 +822,24 @@
       recommendations_subtitle: "Tushlikka qo'shimcha qo'shing",
       continue_checkout: "Rasmiylashtirishni davom ettirish",
       recommendation_added: "Qo'shildi",
+      personal_title: "✨ Siz uchun",
+      personal_subtitle: "Siz eng ko'p buyurtma qiladigan taomlar",
+      favorite_added: "❤️ Sevimlilarga qo'shildi",
+      favorite_removed: "Sevimlilardan olib tashlandi",
+      corporate_title: "🏢 Butun kompaniya uchun tushlik",
+      corporate_subtitle: "Ariza qoldiring — menejer menyu va yetkazib berish shartlarini hisoblaydi",
+      corporate_button: "Ariza qoldirish",
+      corporate_form_title: "Korporativ ovqatlanish",
+      employees_label: "Xodimlar soni",
+      employees_placeholder: "Masalan, 25",
+      preferred_time_label: "Kerakli yetkazib berish vaqti",
+      comment_label: "Izoh",
+      comment_placeholder: "Menyu yoki yetkazib berish bo'yicha istaklar",
+      send_request: "Arizani yuborish",
+      request_sending: "Yuborilmoqda…",
+      request_sent: "✅ Ariza qabul qilindi! Menejer siz bilan bog'lanadi.",
+      request_already_sent: "✅ Arizangiz qabul qilingan. Menejer tez orada bog'lanadi.",
+      invalid_employees: "Xodimlar sonini 2 dan boshlab kiriting",
     }
   };
 
@@ -869,6 +925,7 @@
   let lastOrderItems = [];
   let lastOrderDate = null;
   let popularItems = [];
+  let personalItems = [];
   let recommendations = [];
   let giftProgress = null;
   let recommendationOfferSeen = false;
@@ -970,6 +1027,7 @@
       lastOrderItems = data.last_order_items || [];
       lastOrderDate = data.last_order_date || null;
       popularItems = data.popular_items || [];
+      personalItems = data.personal_items || [];
       recommendations = data.recommendations || [];
       giftProgress = data.gift_progress || null;
       document.getElementById("balance-pill").textContent = fmt(userBalance);
@@ -1014,7 +1072,8 @@
         if (header) header.after(giftBanner);
       }
 
-      const availableCats = Object.keys(MENU).filter(c => MENU[c].length > 0);
+      rebuildFavoriteCategory();
+      const availableCats = getAvailableCategories();
       if (availableCats.length === 0) {
         document.getElementById("menu-list").innerHTML =
           `<div class="empty-state"><div class="empty-state-icon">🍽️</div><div class="empty-state-text">${T("empty_menu")}</div></div>`;
@@ -1034,6 +1093,74 @@
   function giftName(giftId) {
     const key = `gift_${giftId || "vip"}`;
     return T(key);
+  }
+
+  function getAvailableCategories() {
+    return Object.keys(MENU)
+      .filter(cat => (MENU[cat] || []).length > 0)
+      .sort((a, b) => (a === "favorite" ? -1 : b === "favorite" ? 1 : 0));
+  }
+
+  function rebuildFavoriteCategory() {
+    const favoriteItems = [];
+    Object.entries(MENU).forEach(([cat, items]) => {
+      if (cat === "favorite") return;
+      items.forEach(item => {
+        item.category = item.category || cat;
+        if (item.is_favorite) favoriteItems.push(item);
+      });
+    });
+    if (favoriteItems.length > 0) MENU.favorite = favoriteItems;
+    else delete MENU.favorite;
+  }
+
+  function setFavoriteFlag(itemName, category, value) {
+    const collections = [
+      ...Object.values(MENU),
+      popularItems,
+      personalItems,
+      recommendations,
+      lastOrderItems
+    ];
+    collections.forEach(items => {
+      (items || []).forEach(item => {
+        if (item.name === itemName && item.category === category) {
+          item.is_favorite = value;
+        }
+      });
+    });
+  }
+
+  async function toggleFavorite(item, button) {
+    const category = item.category || currentCat;
+    const nextValue = !item.is_favorite;
+    button.disabled = true;
+    try {
+      const result = await apiCall("/api/toggle-favorite", {
+        item_name: item.name,
+        category,
+        is_favorite: nextValue
+      });
+      if (!result.success) {
+        showToast(result.error || T("connection_error"));
+        button.disabled = false;
+        return;
+      }
+      setFavoriteFlag(item.name, category, nextValue);
+      rebuildFavoriteCategory();
+      const cats = getAvailableCategories();
+      if (!cats.includes(currentCat)) {
+        currentCat = cats.includes("second") ? "second" : cats[0];
+      }
+      renderTabs(cats);
+      renderMenuList();
+      renderSalesBlocks();
+      showToast(nextValue ? T("favorite_added") : T("favorite_removed"));
+      if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred("light");
+    } catch (e) {
+      button.disabled = false;
+      showToast(T("connection_error"));
+    }
   }
 
   function addItemToCart(item, category, qty = 1) {
@@ -1077,6 +1204,29 @@
         </div>`;
     }
 
+    if (personalItems.length > 0) {
+      html += `
+        <div class="sales-card">
+          <div class="sales-card-title">${T("personal_title")}</div>
+          <div class="sales-card-sub">${T("personal_subtitle")}</div>
+          <div class="popular-strip">
+            ${personalItems.map((item, index) => `
+              <div class="popular-mini-card">
+                ${item.photo_url
+                  ? `<img class="popular-mini-photo" src="${item.photo_url}" alt="${item.name}" loading="lazy">`
+                  : `<div class="popular-mini-placeholder">${getCategoryMeta()[item.category]?.icon || "🍽️"}</div>`}
+                <div class="popular-mini-body">
+                  <div class="popular-mini-name">${item.name}</div>
+                  <div class="popular-mini-bottom">
+                    <span class="popular-mini-price">${fmt(item.price)}</span>
+                    <button class="popular-add-btn personal-add-btn" data-personal-index="${index}">+</button>
+                  </div>
+                </div>
+              </div>`).join("")}
+          </div>
+        </div>`;
+    }
+
     if (popularItems.length > 0) {
       html += `
         <div class="sales-card">
@@ -1100,6 +1250,13 @@
         </div>`;
     }
 
+    html += `
+      <div class="sales-card corporate-sales-card">
+        <div class="sales-card-title">${T("corporate_title")}</div>
+        <div class="sales-card-sub">${T("corporate_subtitle")}</div>
+        <button class="corporate-request-btn" id="corporate-request-btn">${T("corporate_button")}</button>
+      </div>`;
+
     el.innerHTML = html;
 
     const repeatBtn = document.getElementById("repeat-last-order-btn");
@@ -1114,6 +1271,7 @@
     }
 
     el.querySelectorAll(".popular-add-btn").forEach(btn => {
+      if (btn.classList.contains("personal-add-btn")) return;
       btn.onclick = () => {
         const item = popularItems[Number(btn.dataset.popularIndex)];
         addItemToCart(item, item.category, 1);
@@ -1123,6 +1281,98 @@
         if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred("light");
       };
     });
+
+    el.querySelectorAll(".personal-add-btn").forEach(btn => {
+      btn.onclick = () => {
+        const item = personalItems[Number(btn.dataset.personalIndex)];
+        addItemToCart(item, item.category, 1);
+        renderMenuList();
+        renderCart();
+        showToast(T("added_to_cart"));
+        if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred("light");
+      };
+    });
+
+    const corporateBtn = document.getElementById("corporate-request-btn");
+    if (corporateBtn) corporateBtn.onclick = showCorporateRequestForm;
+  }
+
+  function showCorporateRequestForm() {
+    const existing = document.getElementById("corporate-request-modal");
+    if (existing) existing.remove();
+
+    const timeOptions = [];
+    for (let hour = 8; hour <= 16; hour += 1) {
+      for (const minute of [0, 30]) {
+        if (hour === 16 && minute === 30) continue;
+        const value = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+        timeOptions.push(value);
+      }
+    }
+
+    const modal = document.createElement("div");
+    modal.id = "corporate-request-modal";
+    modal.style.cssText = `
+      position:fixed;inset:0;background:rgba(0,0,0,.68);z-index:310;
+      display:flex;align-items:flex-end;justify-content:center;
+    `;
+    modal.innerHTML = `
+      <div style="background:var(--cream-dark);border-radius:20px 20px 0 0;padding:20px 18px;
+                  width:100%;max-width:420px;max-height:88vh;overflow-y:auto;">
+        <div style="font-size:17px;font-weight:800;margin-bottom:16px;">${T("corporate_form_title")}</div>
+        <label style="font-size:12px;color:var(--ink-soft);font-weight:700;">${T("employees_label")}</label>
+        <input id="corporate-employees" type="number" min="2" max="10000" inputmode="numeric"
+          placeholder="${T("employees_placeholder")}"
+          style="width:100%;margin:6px 0 14px;padding:13px;border-radius:12px;border:1px solid var(--line);
+                 background:var(--white);color:var(--ink);font-size:14px;">
+        <label style="font-size:12px;color:var(--ink-soft);font-weight:700;">${T("preferred_time_label")}</label>
+        <select id="corporate-time"
+          style="width:100%;margin:6px 0 14px;padding:13px;border-radius:12px;border:1px solid var(--line);
+                 background:var(--white);color:var(--ink);font-size:14px;">
+          ${timeOptions.map(value => `<option value="${value}" ${value === "12:00" ? "selected" : ""}>${value}</option>`).join("")}
+        </select>
+        <label style="font-size:12px;color:var(--ink-soft);font-weight:700;">${T("comment_label")}</label>
+        <textarea id="corporate-comment" maxlength="500" rows="3"
+          placeholder="${T("comment_placeholder")}"
+          style="width:100%;margin:6px 0 4px;padding:13px;border-radius:12px;border:1px solid var(--line);
+                 background:var(--white);color:var(--ink);font-size:14px;resize:none;"></textarea>
+        <button class="btn-primary" id="corporate-send-btn">${T("send_request")}</button>
+        <button class="btn-danger" id="corporate-cancel-btn">${T("cancel")}</button>
+      </div>`;
+    document.body.appendChild(modal);
+
+    document.getElementById("corporate-cancel-btn").onclick = () => modal.remove();
+    document.getElementById("corporate-send-btn").onclick = async () => {
+      const employees = Number(document.getElementById("corporate-employees").value);
+      if (!Number.isInteger(employees) || employees < 2 || employees > 10000) {
+        showToast(T("invalid_employees"));
+        return;
+      }
+      const btn = document.getElementById("corporate-send-btn");
+      btn.disabled = true;
+      btn.textContent = T("request_sending");
+      try {
+        const result = await apiCall("/api/corporate-request", {
+          employees,
+          preferred_time: document.getElementById("corporate-time").value,
+          comment: document.getElementById("corporate-comment").value.trim()
+        });
+        if (!result.success) {
+          showToast(result.error || T("connection_error"));
+          btn.disabled = false;
+          btn.textContent = T("send_request");
+          return;
+        }
+        modal.remove();
+        const message = result.already_received ? T("request_already_sent") : T("request_sent");
+        if (tg?.showAlert) tg.showAlert(message); else showToast(message);
+        if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred("success");
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = T("send_request");
+        showToast(T("connection_error"));
+      }
+    };
   }
 
   function renderTabs(cats) {
@@ -1150,14 +1400,17 @@
 
     items.forEach(item => {
       const qty = cart[item.id]?.qty || 0;
+      const itemCategory = item.category || currentCat;
       const card = document.createElement("div");
       card.className = "item-card";
 
       const thumbHtml = item.photo_url
         ? `<img class="item-thumb-img photo-clickable" src="${item.photo_url}" alt="${item.name}" loading="lazy" data-full-photo="${item.photo_url}" data-photo-name="${item.name.replace(/"/g, '&quot;')}">`
-        : `<div class="item-thumb">${getCategoryMeta()[currentCat]?.icon || "🍽"}</div>`;
+        : `<div class="item-thumb">${getCategoryMeta()[itemCategory]?.icon || "🍽"}</div>`;
 
       card.innerHTML = `
+        <button class="favorite-btn ${item.is_favorite ? "active" : ""}" type="button"
+          aria-label="${getCategoryMeta().favorite.label}">${item.is_favorite ? "♥" : "♡"}</button>
         ${thumbHtml}
         <div class="item-info">
           <div class="item-name">${item.name}</div>
@@ -1167,6 +1420,12 @@
       `;
       listEl.appendChild(card);
       renderStepper(item, qty);
+
+      const favoriteBtn = card.querySelector(".favorite-btn");
+      favoriteBtn.onclick = (event) => {
+        event.stopPropagation();
+        toggleFavorite(item, favoriteBtn);
+      };
 
       const photoEl = card.querySelector(".photo-clickable");
       if (photoEl) {
@@ -1218,7 +1477,7 @@
   }
 
   function handleStep(item, action) {
-    if (!cart[item.id]) cart[item.id] = { item, qty: 0, category: currentCat };
+    if (!cart[item.id]) cart[item.id] = { item, qty: 0, category: item.category || currentCat };
     recommendationOfferSeen = false;
     if (action === "inc") {
       cart[item.id].qty += 1;
