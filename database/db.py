@@ -200,6 +200,27 @@ async def init_db():
                 UNIQUE(user_id, delivery_route_id)
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS user_favorites (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                item_name TEXT NOT NULL,
+                category TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, item_name, category)
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS corporate_requests (
+                id BIGSERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                employees INTEGER NOT NULL,
+                preferred_time TEXT,
+                comment TEXT,
+                status TEXT NOT NULL DEFAULT 'new',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
 
         # Миграции
         await db.execute("""
