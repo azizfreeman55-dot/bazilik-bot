@@ -261,6 +261,40 @@
   .stat-box { background: var(--cream-dark); border-radius: 12px; padding: 12px; text-align: center; }
   .stat-value { font-size: 18px; font-weight: 700; color: var(--green-600); }
   .stat-label { font-size: 11px; color: var(--ink-soft); margin-top: 2px; }
+  .profile-hero {
+    background: linear-gradient(145deg, rgba(182,232,75,.22), rgba(182,232,75,.04));
+    border: 1px solid rgba(182,232,75,.3); border-radius: 20px; padding: 18px;
+    margin-bottom: 12px;
+  }
+  .profile-identity { display: flex; align-items: center; gap: 13px; }
+  .profile-avatar {
+    width: 54px; height: 54px; border-radius: 17px; background: var(--green-600);
+    color: var(--on-accent); display: flex; align-items: center; justify-content: center;
+    font-size: 23px; font-weight: 900; flex-shrink: 0;
+  }
+  .profile-status {
+    display: inline-flex; align-items: center; margin-top: 7px; padding: 4px 9px;
+    border-radius: 999px; background: rgba(182,232,75,.13); color: var(--green-600);
+    font-size: 10.5px; font-weight: 800;
+  }
+  .profile-detail-row {
+    display: flex; gap: 10px; align-items: flex-start; padding: 11px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .profile-detail-row:last-child { border-bottom: none; }
+  .profile-detail-icon { width: 28px; font-size: 17px; flex-shrink: 0; text-align: center; }
+  .profile-detail-label { color: var(--ink-soft); font-size: 10.5px; }
+  .profile-detail-value { font-size: 13px; font-weight: 700; margin-top: 2px; overflow-wrap: anywhere; }
+  .profile-metric-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
+  .profile-metric { background: var(--white); border: 1px solid var(--line); border-radius: 14px; padding: 12px 7px; text-align: center; }
+  .profile-metric-value { color: var(--green-600); font-size: 16px; font-weight: 900; overflow-wrap: anywhere; }
+  .profile-metric-label { color: var(--ink-soft); font-size: 9.5px; margin-top: 3px; }
+  .profile-quick-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .profile-quick-btn {
+    border: 1px solid var(--line); border-radius: 14px; padding: 12px;
+    background: var(--cream-dark); color: var(--ink); font-size: 12px;
+    font-weight: 800; cursor: pointer;
+  }
 
   .balance-hero {
     background: var(--green-600); color: var(--on-accent); border-radius: 16px;
@@ -770,6 +804,7 @@
       back: "Назад", history_title: "История операций", no_operations: "Операций пока нет",
       ok: "OK",
       profile_loading_err: "Не удалось загрузить профиль", company_not_set: "Компания не указана",
+      profile_company: "Компания",
       orders_count: "Заказов", points_count: "Баллов", invite_code_title: "Код для приглашения друзей",
       points_label: "Ваши баллы", gift_unlocked: "✓ Получено", gift_locked: "Закрыто",
       gifts_not_loaded: "Не удалось загрузить подарки", streak_title: "🔥 Серия заказов:",
@@ -909,6 +944,7 @@
       back: "Orqaga", history_title: "Amaliyotlar tarixi", no_operations: "Hozircha amaliyot yo'q",
       ok: "OK",
       profile_loading_err: "Profilni yuklab bo'lmadi", company_not_set: "Kompaniya ko'rsatilmagan",
+      profile_company: "Kompaniya",
       orders_count: "Buyurtmalar", points_count: "Ball", invite_code_title: "Do'stlarni taklif qilish kodi",
       points_label: "Ballaringiz", gift_unlocked: "✓ Olindi", gift_locked: "Yopiq",
       gifts_not_loaded: "Sovg'alarni yuklab bo'lmadi", streak_title: "🔥 Buyurtmalar seriyasi:",
@@ -2471,30 +2507,53 @@
     const el = document.getElementById("profile-content");
     el.innerHTML = `<div class="loading">${T("loading_profile")}</div>`;
     try {
-      const data = await apiCall("/api/profile");
+      const [data, giftsData] = await Promise.all([
+        apiCall("/api/profile"),
+        apiCall("/api/gifts").catch(() => ({}))
+      ]);
       if (data.error) {
         el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">${data.error}</div></div>`;
         return;
       }
 
+      const fullName = escapeHtml(data.full_name || "—");
+      const initial = escapeHtml((data.full_name || "B").trim().charAt(0).toUpperCase());
+      const nextGift = (giftsData.gifts || []).find(g => !g.unlocked);
+      const target = nextGift ? Number(nextGift.points) : Math.max(1, Number(data.points || 0));
+      const progress = Math.min(100, Math.round(Number(data.points || 0) / target * 100));
       el.innerHTML = `
-        <div class="profile-card">
-          <div class="profile-name">${data.full_name || "—"}</div>
-          <div class="profile-sub">${data.company_name || T("company_not_set")}</div>
-          <div class="profile-sub">📱 ${data.phone ? "+" + data.phone : "—"}</div>
-          <div class="profile-stats">
-            <div class="stat-box"><div class="stat-value">${data.total_orders}</div><div class="stat-label">${T("orders_count")}</div></div>
-            <div class="stat-box"><div class="stat-value">${data.points}</div><div class="stat-label">${T("points_count")}</div></div>
-          </div>
-          <div style="margin-top: 10px; text-align: center; font-size: 13px; color: var(--ink-soft);">
-            🏅 ${data.status || "—"}
+        <div class="profile-hero">
+          <div class="profile-identity">
+            <div class="profile-avatar">${initial}</div>
+            <div><div class="profile-name">${fullName}</div><div class="profile-status">🏅 ${escapeHtml(data.status || "—")}</div></div>
           </div>
         </div>
-        <div class="profile-card">
-          <div style="font-size: 13px; color: var(--ink-soft); margin-bottom: 4px;">${T("invite_code_title")}</div>
-          <div style="font-size: 18px; font-weight: 700; letter-spacing: 1px;">${data.referral_code || "—"}</div>
+        <div class="profile-metric-grid">
+          <div class="profile-metric"><div class="profile-metric-value">${Number(data.total_orders || 0)}</div><div class="profile-metric-label">${T("orders_count")}</div></div>
+          <div class="profile-metric"><div class="profile-metric-value">${Number(data.points || 0)}</div><div class="profile-metric-label">${T("points_count")}</div></div>
+          <div class="profile-metric"><div class="profile-metric-value" style="font-size:12px;">${fmt(Number(data.balance || 0))}</div><div class="profile-metric-label">${T("balance")}</div></div>
         </div>
-      `;
+        ${nextGift ? `<div class="profile-card">
+          <div style="display:flex;justify-content:space-between;gap:8px;font-size:12px;"><b>${T("bonus_until")}</b><span style="color:var(--green-600);font-weight:800;">${escapeHtml(nextGift.name)}</span></div>
+          <div class="gift-progress-track"><div class="gift-progress-fill" style="width:${progress}%"></div></div>
+          <div class="profile-sub" style="margin-top:7px;">${Math.max(0, nextGift.points - data.points)} ${T("bonus_left")}</div>
+        </div>` : ""}
+        <div class="profile-card">
+          <div class="profile-detail-row"><div class="profile-detail-icon">🏢</div><div><div class="profile-detail-label">${T("profile_company")}</div><div class="profile-detail-value">${escapeHtml(data.company_name || T("company_not_set"))}</div></div></div>
+          <div class="profile-detail-row"><div class="profile-detail-icon">📱</div><div><div class="profile-detail-label">${T("phone_label")}</div><div class="profile-detail-value">${data.phone ? "+" + escapeHtml(data.phone) : "—"}</div></div></div>
+          <div class="profile-detail-row"><div class="profile-detail-icon">🔑</div><div style="flex:1;"><div class="profile-detail-label">${T("invite_code_title")}</div><div class="profile-detail-value" id="profile-referral-code">${escapeHtml(data.referral_code || "—")}</div></div><button class="profile-quick-btn" id="copy-profile-code" style="padding:8px 10px;">⧉</button></div>
+        </div>
+        <div class="profile-quick-grid">
+          <button class="profile-quick-btn" id="profile-gifts-btn">🎁 ${T("gifts")}</button>
+          <button class="profile-quick-btn" id="profile-achievements-btn">🏅 ${T("achievements")}</button>
+        </div>`;
+      document.getElementById("profile-gifts-btn").onclick = () => switchPage("gifts");
+      document.getElementById("profile-achievements-btn").onclick = () => switchPage("achievements");
+      document.getElementById("copy-profile-code").onclick = async () => {
+        const code = data.referral_code || "";
+        try { await navigator.clipboard.writeText(code); } catch (e) {}
+        showToast(T("link_copied"));
+      };
     } catch (e) {
       el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">${T("profile_loading_err")}</div></div>`;
     }
