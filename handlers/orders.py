@@ -17,19 +17,21 @@ TASHKENT_TZ = ZoneInfo("Asia/Tashkent")
 
 
 def is_orders_open() -> bool:
-    """Заказы принимаются ежедневно, кроме воскресенья (время Ташкента)."""
-    return datetime.now(TASHKENT_TZ).weekday() != 6
+    """Заказы принимаются ежедневно с 09:00 до 22:00 (время Ташкента)."""
+    now = datetime.now(TASHKENT_TZ)
+    current_minutes = now.hour * 60 + now.minute
+    return 9 * 60 <= current_minutes < 22 * 60
 
 
 def orders_closed_text(lang: str) -> str:
     if lang == "uz":
         return (
-            "😌 *Bugun dam olish kuni.*\n\n"
-            "Buyurtmalar dushanbadan shanbagacha qabul qilinadi."
+            "🔒 *Buyurtmalar qabuli hozir yopiq.*\n\n"
+            "Buyurtmalar har kuni 09:00 dan 22:00 gacha qabul qilinadi."
         )
     return (
-        "😌 *Сегодня выходной.*\n\n"
-        "Заказы принимаются с понедельника по субботу."
+        "🔒 *Приём заказов сейчас закрыт.*\n\n"
+        "Заказы принимаются ежедневно с 09:00 до 22:00."
     )
 
 
