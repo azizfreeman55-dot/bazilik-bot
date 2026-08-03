@@ -8,11 +8,11 @@ ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "123456789").split(",")))
 DATABASE_URL = os.getenv("DATABASE_URL", "lunch_bot.db")
 
 # Время работы системы
-MENU_SEND_TIME = "10:00"       # Отправка меню
+MENU_SEND_TIME = "09:00"       # Открытие приёма и отправка меню
 REMINDER_TIME = "16:00"        # Напоминание
-ORDER_CLOSE_TIME = "23:59"     # Закрытие заказов
-DELIVERY_START = "12:00"       # Начало доставки
-DELIVERY_END = "13:00"         # Конец доставки
+ORDER_CLOSE_TIME = "22:00"     # Закрытие заказов
+DELIVERY_START = "10:00"       # Самая ранняя доставка
+DELIVERY_END = "23:00"         # Последняя доставка
 
 # Система лояльности (баллы не сгорают!)
 LOYALTY_LEVELS = {

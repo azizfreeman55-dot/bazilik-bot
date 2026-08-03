@@ -20,12 +20,10 @@ CLICK_SERVICE_ID = os.getenv("CLICK_SERVICE_ID")
 CLICK_MERCHANT_ID = os.getenv("CLICK_MERCHANT_ID")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Заказы принимаются круглосуточно:
-# до 15:00 — на сегодня, с 15:00 — на следующий календарный день.
+# Заказы принимаются ежедневно с 09:00 до 22:00 на текущий день.
 DELIVERY_MINUTES = 60
-ORDER_OPEN_TIME  = "00:00"  # принимаем заказы круглосуточно
-ORDER_CLOSE_TIME = "23:59"
-ORDER_DAY_CUTOFF_HOUR = 15
+ORDER_OPEN_TIME = "09:00"
+ORDER_CLOSE_TIME = "22:00"
 TASHKENT_TZ = timezone(timedelta(hours=5))
 
 # Категории, скрытые только от клиентов. Данные и управление в админ-панели
@@ -34,7 +32,9 @@ HIDDEN_CLIENT_CATEGORIES = {"main"}  # «Вторые блюда»
 
 
 def is_orders_open() -> bool:
-    return True  # круглосуточно
+    current = tashkent_now()
+    current_minutes = current.hour * 60 + current.minute
+    return 9 * 60 <= current_minutes < 22 * 60
 
 
 def tashkent_now() -> datetime:
@@ -42,12 +42,9 @@ def tashkent_now() -> datetime:
 
 
 def get_active_order_date(now=None) -> str:
-    """Дата нового заказа: сегодня до 15:00, после 15:00 — завтра."""
+    """Новые заказы оформляются только на текущий день."""
     current = now or tashkent_now()
-    target = current.date()
-    if current.hour >= ORDER_DAY_CUTOFF_HOUR:
-        target += timedelta(days=1)
-    return target.isoformat()
+    return current.date().isoformat()
 
 
 def is_tomorrow_order(order_date: str, now=None) -> bool:
@@ -56,14 +53,14 @@ def is_tomorrow_order(order_date: str, now=None) -> bool:
 
 
 def get_delivery_time(order_date=None, now=None) -> str:
-    """Самое раннее время: через 60 минут сегодня или 08:00 завтра."""
+    """Самое раннее время доставки: через 60 минут, но не раньше 10:00."""
     current = now or tashkent_now()
     target = order_date or get_active_order_date(current)
     if is_tomorrow_order(target, current):
-        return "08:00"
+        return "10:00"
 
     earliest_minutes = max(
-        8 * 60,
+        10 * 60,
         current.hour * 60 + current.minute + DELIVERY_MINUTES,
     )
     return f"{earliest_minutes // 60:02d}:{earliest_minutes % 60:02d}"
@@ -83,8 +80,8 @@ def resolve_order_date(value, *, require_active: bool = False):
         return None, "Недопустимая дата заказа"
 
     today = tashkent_now().date()
-    if parsed not in (today, today + timedelta(days=1)):
-        return None, "Можно выбрать доставку только на сегодня или завтра"
+    if parsed != today:
+        return None, "Заказы принимаются только на сегодня"
     if require_active and order_date != active_date:
         return None, "Дата заказа изменилась. Обновите меню и выберите время заново."
     return order_date, None
@@ -1280,7 +1277,11 @@ async def handle_webapp_order(request):
         user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
         if not user_data:
             return web.json_response({"success": False, "error": "Invalid auth"}, status=401, headers=cors_headers())
-
+        if not is_orders_open():
+            return web.json_response({
+                "success": False,
+                "error": f"Заказы принимаются ежедневно с {ORDER_OPEN_TIME} до {ORDER_CLOSE_TIME}."
+            }, status=400, headers=cors_headers())
 
         telegram_id = user_data.get("id")
         if not items:
@@ -2049,6 +2050,8 @@ async def handle_webapp_balance_history(request):
 
 async def prepare_pending_click_order(db, user, order_payload):
     """Проверяет корзину и сохраняет её до перехода клиента в Click."""
+    if not is_orders_open():
+        return {"error": f"Заказы принимаются ежедневно с {ORDER_OPEN_TIME} до {ORDER_CLOSE_TIME}."}
     items = order_payload.get("items") or []
     order_date, date_error = resolve_order_date(
         order_payload.get("order_date"), require_active=True
@@ -2666,8 +2669,8 @@ async def handle_webapp_update_profile(request):
         return web.json_response({"success": False, "error": str(e)}, status=500, headers=cors_headers())
 
 
-DELIVERY_START_MINUTES = 8 * 60
-DELIVERY_END_MINUTES = 16 * 60
+DELIVERY_START_MINUTES = 10 * 60
+DELIVERY_END_MINUTES = 23 * 60
 
 
 def validate_delivery_slot(slot, order_date):
@@ -2676,7 +2679,7 @@ def validate_delivery_slot(slot, order_date):
 
     Mini App отправляет конкретное время в формате HH:MM:
     самое быстрое — через 60 минут, остальные варианты — с шагом 30 минут.
-    Доставка доступна с 08:00 до 16:00 по времени Ташкента.
+    Доставка доступна с 10:00 до 23:00 по времени Ташкента.
     """
     if not isinstance(slot, str):
         return False, "Недопустимое время доставки"
@@ -2694,7 +2697,7 @@ def validate_delivery_slot(slot, order_date):
 
     selected_minutes = hours * 60 + minutes
     if not DELIVERY_START_MINUTES <= selected_minutes <= DELIVERY_END_MINUTES:
-        return False, "Доставка доступна с 08:00 до 16:00"
+        return False, "Доставка доступна с 10:00 до 23:00"
 
     now = tashkent_now()
     try:
@@ -2702,8 +2705,7 @@ def validate_delivery_slot(slot, order_date):
     except (TypeError, ValueError):
         return False, "Недопустимая дата заказа"
 
-    # Для завтрашнего заказа доступны все интервалы с 08:00.
-    # Правило «через 60 минут» применяется только к доставке сегодня.
+    # Для доставки сегодня действует правило «не раньше чем через 60 минут».
     earliest_minutes = now.hour * 60 + now.minute + DELIVERY_MINUTES
     if target_date == now.date() and selected_minutes < earliest_minutes:
         return False, "Выберите время не раньше чем через 60 минут"
@@ -2718,6 +2720,11 @@ async def handle_webapp_set_delivery_slot(request):
         user_data = await verify_telegram_init_data(init_data, BOT_TOKEN)
         if not user_data:
             return web.json_response({"success": False, "error": "Invalid auth"}, status=401, headers=cors_headers())
+        if not is_orders_open():
+            return web.json_response({
+                "success": False,
+                "error": f"Заказы принимаются ежедневно с {ORDER_OPEN_TIME} до {ORDER_CLOSE_TIME}."
+            }, status=400, headers=cors_headers())
 
         telegram_id = user_data.get("id")
         body = await request.json()

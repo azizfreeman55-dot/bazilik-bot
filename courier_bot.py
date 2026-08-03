@@ -127,11 +127,14 @@ def admin_main_keyboard() -> ReplyKeyboardMarkup:
 
 
 def manual_delivery_times() -> list:
-    """Доступные варианты сегодня: минимум через 60 минут, до 16:00."""
+    """Доступные варианты сегодня: минимум через 60 минут, до 23:00."""
     tz_tashkent = ZoneInfo("Asia/Tashkent")
     now = datetime.now(tz_tashkent)
-    opening = now.replace(hour=8, minute=0, second=0, microsecond=0)
-    closing = now.replace(hour=16, minute=0, second=0, microsecond=0)
+    current_minutes = now.hour * 60 + now.minute
+    if not 9 * 60 <= current_minutes < 22 * 60:
+        return []
+    opening = now.replace(hour=10, minute=0, second=0, microsecond=0)
+    closing = now.replace(hour=23, minute=0, second=0, microsecond=0)
     fastest = now + timedelta(minutes=60)
     fastest = fastest.replace(second=0, microsecond=0)
     if fastest < opening:
@@ -1099,7 +1102,7 @@ async def manual_order_choose_time(callback: CallbackQuery, state: FSMContext):
     times = manual_delivery_times()
     if not times:
         await callback.answer(
-            "На сегодня время доставки закончилось (до 16:00)",
+            "Заказы принимаются ежедневно с 09:00 до 22:00",
             show_alert=True
         )
         return
