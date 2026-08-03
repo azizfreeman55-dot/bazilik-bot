@@ -923,6 +923,7 @@
       greeting_night: "Здравствуйте",
       greeting_today_sub: "Что выберете сегодня на обед?",
       greeting_tomorrow_sub: "Выберите обед на завтра — мы доставим в удобное время.",
+      orders_closed_schedule: "Приём заказов закрыт. Заказы принимаются ежедневно с 09:00 до 22:00.",
     },
     uz: {
       menu: "Menyu", order: "Buyurtma", auto: "Avto", balance: "Hisob", more: "Yana",
@@ -1070,6 +1071,7 @@
       greeting_night: "Assalomu alaykum",
       greeting_today_sub: "Bugun tushlikka nimani tanlaysiz?",
       greeting_tomorrow_sub: "Ertangi tushlikni tanlang — qulay vaqtda yetkazib beramiz.",
+      orders_closed_schedule: "Buyurtmalar qabuli yopiq. Buyurtmalar har kuni 09:00 dan 22:00 gacha qabul qilinadi.",
     }
   };
 
@@ -1153,7 +1155,7 @@
   let selectedDeliverySlot = localStorage.getItem("selectedDeliverySlot") || null;
   let activeOrderDate = null;
   let orderIsTomorrow = false;
-  let earliestDeliverySlot = "08:00";
+  let earliestDeliverySlot = "10:00";
   let currentPage = "menu";
   let pageHistory = [];
   let lastOrderItems = [];
@@ -1261,7 +1263,8 @@
       const previousOrderDate = activeOrderDate;
       activeOrderDate = data.order_date || data.date_label || null;
       orderIsTomorrow = Boolean(data.is_tomorrow);
-      earliestDeliverySlot = data.earliest_delivery_slot || "08:00";
+      earliestDeliverySlot = data.earliest_delivery_slot || "10:00";
+      ordersOpen = Boolean(data.orders_open);
 
       if (previousOrderDate && previousOrderDate !== activeOrderDate) {
         cart = {};
@@ -1434,6 +1437,11 @@
     if (!el) return;
 
     let html = "";
+    if (!ordersOpen) {
+      html += `<div class="sales-card" style="border-color:rgba(255,82,82,.35);background:rgba(255,82,82,.08);">
+        <div class="sales-card-title">🔒 ${T("orders_closed_schedule")}</div>
+      </div>`;
+    }
     if (greetingName) {
       let greetingKey = "greeting_night";
       if (greetingHour >= 5 && greetingHour < 12) greetingKey = "greeting_morning";
@@ -1783,6 +1791,11 @@
   }
 
   function submitOrder() {
+    if (!ordersOpen) {
+      if (tg?.showAlert) tg.showAlert(T("orders_closed_schedule"));
+      else showToast(T("orders_closed_schedule"));
+      return;
+    }
     const items = Object.values(cart).map(c => ({ menu_id: c.item.id, qty: c.qty, category: c.category }));
     if (items.length === 0) return;
 
@@ -1938,8 +1951,8 @@
     };
   }
 
-  const DELIVERY_START_HOUR = 8;
-  const DELIVERY_END_HOUR = 16;
+  const DELIVERY_START_HOUR = 10;
+  const DELIVERY_END_HOUR = 23;
   const DELIVERY_STEP_MINUTES = 30;
 
   function parseDeliveryMinutes(value) {
@@ -2008,13 +2021,9 @@
     const title = CURRENT_LANG === "uz"
       ? "Yetkazib berish vaqtini tanlang"
       : "Выберите время доставки";
-    const subtitle = orderIsTomorrow
-      ? (CURRENT_LANG === "uz"
-          ? "Ertaga yetkazib berish: 08:00 dan 16:00 gacha"
-          : "Доставка завтра с 08:00 до 16:00")
-      : (CURRENT_LANG === "uz"
-          ? "Eng tez yetkazib berish — kamida 60 daqiqadan keyin"
-          : "Самая быстрая доставка — не раньше чем через 60 минут");
+    const subtitle = CURRENT_LANG === "uz"
+      ? "Eng tez yetkazib berish — kamida 60 daqiqadan keyin (10:00–23:00)"
+      : "Самая быстрая доставка — не раньше чем через 60 минут (10:00–23:00)";
     modal.innerHTML = `
       <div style="background: var(--cream-dark); border-radius: 20px 20px 0 0; padding: 20px 18px;
                   width: 100%; max-width: 420px; max-height: 80vh; overflow-y: auto;">
@@ -3260,8 +3269,8 @@
 
       const now = data.now_stats || {};
       const todayLabel = now.date_today || "";
-      const openTime = now.open_time || "07:00";
-      const closeTime = now.close_time || "15:00";
+      const openTime = now.open_time || "09:00";
+      const closeTime = now.close_time || "22:00";
       const isOpenNow = now.orders_open;
 
       let html = `
@@ -3273,7 +3282,7 @@
               ${isOpenNow ? "Приём открыт" : "Приём закрыт"}
             </div>
           </div>
-          <div style="font-size: 11px; color: var(--ink-soft); margin-bottom: 10px;">Рабочие часы: ${openTime} – ${closeTime} · Доставка ~45 минут</div>
+          <div style="font-size: 11px; color: var(--ink-soft); margin-bottom: 10px;">Рабочие часы: ${openTime} – ${closeTime} · Доставка ~${now.delivery_minutes || 60} минут</div>
 
           <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 8px;">
             <div style="background: var(--green-600); border-radius: 10px; padding: 10px 8px; text-align: center;">
