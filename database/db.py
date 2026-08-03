@@ -2312,12 +2312,12 @@ async def toggle_notification(telegram_id: int, notify_type: str) -> bool | None
 
 # ─── Интервалы доставки ─────────────────────────────────────────────────────────
 
-DELIVERY_START_MINUTES = 8 * 60
-DELIVERY_END_MINUTES = 16 * 60
+DELIVERY_START_MINUTES = 10 * 60
+DELIVERY_END_MINUTES = 23 * 60
 
 
 def is_valid_delivery_time(slot: str) -> bool:
-    """Проверяет точное время доставки в формате HH:MM и диапазоне 08:00–16:00."""
+    """Проверяет точное время доставки в формате HH:MM и диапазоне 10:00–23:00."""
     if not isinstance(slot, str):
         return False
     try:
