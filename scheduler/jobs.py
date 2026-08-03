@@ -52,15 +52,15 @@ async def send_menu_notification(bot: Bot):
                 text = (
                     f"🌅 *Bugun ({today}) — {day_name}*\n\n"
                     f"Buyurtmalar qabul qilinmoqda!\n"
-                    f"⏰ 07:00 dan 15:00 gacha\n"
-                    f"🚚 Yetkazib berish ~45 daqiqa\n\n"
+                    f"⏰ 09:00 dan 22:00 gacha\n"
+                    f"🚚 Yetkazib berish ~60 daqiqa\n\n"
                 )
             else:
                 text = (
                     f"🌅 *Сегодня ({today}) — {day_name}*\n\n"
                     f"Принимаем заказы прямо сейчас!\n"
-                    f"⏰ с 07:00 до 15:00\n"
-                    f"🚚 Доставка ~45 минут\n\n"
+                    f"⏰ с 09:00 до 22:00\n"
+                    f"🚚 Доставка ~60 минут\n\n"
                 )
 
             for item in menu[:5]:  # показываем первые 5 позиций
@@ -197,7 +197,7 @@ async def send_reminder_notification(bot: Bot):
 
 async def close_orders_notification(bot: Bot):
     """
-    15:00 — закрывает приём заказов на сегодня,
+    22:00 — закрывает приём заказов на сегодня,
     отправляет сводку для кухни и курьеров.
     """
     today = str(date.today())
@@ -222,8 +222,7 @@ async def close_orders_notification(bot: Bot):
 
     logger.info(f"✅ Заказы закрыты. Всего: {summary['total']}")
 
-    # Автоматическое распределение по курьерам
-    await auto_assign_couriers(bot, tomorrow)
+    # Онлайн-заказы распределяются администраторами по мере поступления.
 
 
 async def auto_assign_couriers(bot: Bot, delivery_date: str):
@@ -440,17 +439,17 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         args=[bot], id="birthday_greetings", replace_existing=True
     )
 
-    # 📋 Утреннее уведомление — "Принимаем заказы с 07:00!" в 07:00
+    # 📋 Уведомление об открытии приёма заказов в 09:00
     scheduler.add_job(
         send_menu_notification,
-        trigger=CronTrigger(hour=7, minute=0),
+        trigger=CronTrigger(hour=9, minute=0),
         args=[bot], id="send_menu", replace_existing=True
     )
 
-    # 🔒 Закрытие приёма в 15:00 — уведомление + автораспределение курьерам
+    # 🔒 Закрытие приёма в 22:00 — уведомление и итоговая сводка
     scheduler.add_job(
         close_orders_notification,
-        trigger=CronTrigger(hour=15, minute=0),
+        trigger=CronTrigger(hour=22, minute=0),
         args=[bot], id="close_orders", replace_existing=True
     )
 
@@ -462,7 +461,7 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     )
 
     logger.info(
-        "✅ Планировщик (онлайн-режим): 07:00 меню+заказы, "
-        "09:00 ДР, 15:00 закрытие+курьеры, 1-го компания месяца"
+        "✅ Планировщик (онлайн-режим): 09:00 меню+заказы и ДР, "
+        "22:00 закрытие и сводка, 1-го компания месяца"
     )
     return scheduler
